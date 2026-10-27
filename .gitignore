@@ -1,0 +1,18 @@
+.env
+__pycache__/
+*.pyc
+node_modules/
+data/videos/*
+data/frames/*
+data/manuals/*
+!data/**/.gitkeep
+killcheck_results.json
+.DS_Store
+Thumbs.db
+
+# Source documents are never committed - see .claude/rules/source-documents.md
+*.pdf
+data/**/*.txt
+data/**/*.json
+**/ocr_output/
+**/*_extracted.*

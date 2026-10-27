@@ -1,0 +1,146 @@
+{
+  "schema_version": "0.1",
+  "note": "Seed rule set, hand-written from NCC 2022 Housing Provisions Part 10.2 as the TARGET SCHEMA the Muse Wonder extractor must produce. Verify every value against the published NCC before relying on it.",
+  "sources": [
+    {
+      "id": "NCC2022-HP-10.2",
+      "title": "NCC 2022 Housing Provisions, Part 10.2 Wet area waterproofing",
+      "url": "https://abcb.gov.au/editions/ncc-2022/adopted/housing-provisions/10-health-and-amenity/part-102-wet-area-waterproofing",
+      "authority": "Australian Building Codes Board"
+    }
+  ],
+  "rules": [
+    {
+      "id": "NCC-10.2-shower-stepdown",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "shower_floor",
+      "parameter": "stepdown_below_ffl_mm",
+      "operator": ">=",
+      "value": 25,
+      "unit": "mm",
+      "text": "The shower area floor must be at least 25 mm below the finished floor level outside the shower.",
+      "drives_geometry": true
+    },
+    {
+      "id": "NCC-10.2-waterstop-leg",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "level_threshold_shower",
+      "parameter": "waterstop_vertical_leg_above_ffl_mm",
+      "operator": ">=",
+      "value": 5,
+      "unit": "mm",
+      "text": "Where a shower screen is installed on a level-threshold shower, the waterstop vertical leg must finish at least 5 mm above finished floor level.",
+      "drives_geometry": true
+    },
+    {
+      "id": "NCC-10.2-wallfloor-vertical-leg",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "wall_floor_junction",
+      "parameter": "flashing_vertical_leg_above_ffl_mm",
+      "operator": ">=",
+      "value": 25,
+      "unit": "mm",
+      "text": "Wall/floor flashing vertical leg must be at least 25 mm above finished floor level, except across doorways.",
+      "drives_geometry": true
+    },
+    {
+      "id": "NCC-10.2-wallfloor-horizontal-leg",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "wall_floor_junction",
+      "parameter": "flashing_horizontal_leg_mm",
+      "operator": ">=",
+      "value": 50,
+      "unit": "mm",
+      "text": "Wall/floor flashing horizontal leg must be at least 50 mm wide.",
+      "drives_geometry": true
+    },
+    {
+      "id": "NCC-10.2-vertical-flashing-height",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "shower_wall",
+      "parameter": "vertical_flashing_above_ffl_mm",
+      "operator": ">=",
+      "value": 1800,
+      "unit": "mm",
+      "text": "Vertical flashings must extend at least 1800 mm above finished floor level.",
+      "drives_geometry": true
+    },
+    {
+      "id": "NCC-10.2-membrane-wall-height",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "shower_wall",
+      "parameter": "membrane_above_finished_tile_mm",
+      "operator": ">=",
+      "value": 1800,
+      "unit": "mm",
+      "text": "For hobless showers and showers with hobs or stepdowns, the membrane must run up the wall to at least 1800 mm above the finished tile level of the floor.",
+      "drives_geometry": true
+    },
+    {
+      "id": "NCC-10.2-hob-membrane-return",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "shower_hob",
+      "parameter": "membrane_return_onto_floor_mm",
+      "operator": ">=",
+      "value": 50,
+      "unit": "mm",
+      "text": "For showers with hobs, the membrane must pass over the top of the hob, down the outside face, and terminate at least 50 mm onto the floor.",
+      "drives_geometry": true
+    },
+    {
+      "id": "NCC-10.2-internal-flashing-overlap",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "internal_corner",
+      "parameter": "flashing_leg_overlap_mm",
+      "operator": ">=",
+      "value": 40,
+      "unit": "mm",
+      "text": "Internal flashings must have each leg overlapping at least 40 mm.",
+      "drives_geometry": true
+    },
+    {
+      "id": "NCC-10.2-external-flashing-overlap",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "external_corner",
+      "parameter": "flashing_overlap_with_sheeting_mm",
+      "operator": ">=",
+      "value": 32,
+      "unit": "mm",
+      "text": "External flashing legs must allow at least 32 mm overlap with wall sheeting or render.",
+      "drives_geometry": true
+    },
+    {
+      "id": "NCC-10.2-washing-machine-height",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "laundry_wall",
+      "parameter": "water_resistant_above_tap_outlets_mm",
+      "operator": ">=",
+      "value": 75,
+      "unit": "mm",
+      "text": "Wall area behind a washing machine must be water resistant from finished floor level to at least 75 mm above the tap outlets, and at least 75 mm either side of them.",
+      "drives_geometry": false
+    },
+    {
+      "id": "NCC-10.2-inset-vessel-junction",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "inset_vessel",
+      "parameter": "water_resistant_above_vessel_mm",
+      "operator": ">=",
+      "value": 150,
+      "unit": "mm",
+      "text": "Wall junctions and joints within 150 mm above an inset vessel must be water resistant, across the full width of the vessel.",
+      "drives_geometry": false
+    },
+    {
+      "id": "NCC-10.2-bidet-waterproof-radius",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "wc_bidet_spray",
+      "parameter": "waterproof_radius_mm",
+      "operator": ">=",
+      "value": 900,
+      "unit": "mm",
+      "text": "Where a handheld bidet spray is installed, the area within a 900 mm radius of the wall connection must be waterproof up to at least 150 mm above the floor substrate.",
+      "drives_geometry": false
+    }
+  ]
+}
