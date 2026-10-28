@@ -47,10 +47,11 @@ the geometry is built from the number, not drawn around it.
 
 ```
 spec/SPEC.md            The plan. Read this first.
-rules/rules.json        12 NCC rules as structured data. The schema the
-                        Muse Wonder extractor must produce.
+rules/rules.json        31 NCC rules as structured data (schema v1.0,
+                        locked and validated). Values human-verified 28 Oct.
 generator/              THE TECHNICAL CORE. Builds 3D from rule numbers.
                         Every solid carries the rule id that set it.
+extractor/              Rule extraction + schema validator. Stdlib only.
 viewer/index.html       Three.js viewer. Layer toggles, clause on click.
 perception/             Day 1 SAM 3.1 kill-check. Read the docstring.
 benchmark/              Seeded with 12 questions. Grow to 60-100.

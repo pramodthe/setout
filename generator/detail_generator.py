@@ -210,7 +210,7 @@ def _rules_used(solids, rules):
         for v in s.get("path", []) or []:
             if v.get("rule_id"):
                 ids.add(v["rule_id"])
-    return {rid: rules[rid] for rid in ids if rid in rules}
+    return {rid: rules[rid] for rid in sorted(ids) if rid in rules}
 
 
 BUILDERS = {"shower_hob": build_shower_hob}

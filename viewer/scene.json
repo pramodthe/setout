@@ -180,17 +180,6 @@
     }
   ],
   "rules_used": {
-    "NCC-10.2-membrane-wall-height": {
-      "id": "NCC-10.2-membrane-wall-height",
-      "source": "NCC2022-HP-10.2",
-      "applies_to": "shower_wall",
-      "parameter": "membrane_above_finished_tile_mm",
-      "operator": ">=",
-      "value": 1800,
-      "unit": "mm",
-      "text": "For hobless showers and showers with hobs or stepdowns, the membrane must run up the wall to at least 1800 mm above the finished tile level of the floor.",
-      "drives_geometry": true
-    },
     "NCC-10.2-hob-membrane-return": {
       "id": "NCC-10.2-hob-membrane-return",
       "source": "NCC2022-HP-10.2",
@@ -200,6 +189,17 @@
       "value": 50,
       "unit": "mm",
       "text": "For showers with hobs, the membrane must pass over the top of the hob, down the outside face, and terminate at least 50 mm onto the floor.",
+      "drives_geometry": true
+    },
+    "NCC-10.2-membrane-wall-height": {
+      "id": "NCC-10.2-membrane-wall-height",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "shower_wall",
+      "parameter": "membrane_above_finished_tile_mm",
+      "operator": ">=",
+      "value": 1800,
+      "unit": "mm",
+      "text": "For hobless showers and showers with hobs or stepdowns, the membrane must run up the wall to at least 1800 mm above the finished tile level of the floor.",
       "drives_geometry": true
     },
     "NCC-10.2-shower-stepdown": {
