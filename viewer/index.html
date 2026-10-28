@@ -13,7 +13,10 @@
   html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
     font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
   #app{display:grid;grid-template-columns:272px 1fr;height:100%}
-  @media (max-width:800px){#app{grid-template-columns:1fr;grid-template-rows:auto 1fr}}
+  @media (max-width:800px){#app{grid-template-columns:1fr;grid-template-rows:46vh 1fr}
+    main{order:-1;min-height:0}
+    #details{flex-direction:column}
+    #app #details button{flex:none}}
   aside{background:var(--panel);border-right:1px solid var(--line);
     padding:16px;overflow:auto}
   h1{font-size:15px;margin:0 0 2px;letter-spacing:.2px}
@@ -42,6 +45,11 @@
     border-left:2px solid var(--accent);padding-left:9px;max-width:720px}
   #hud .cl{color:var(--accent);font-weight:600}
   #hint{position:absolute;top:14px;right:18px;color:var(--muted);font-size:12px}
+  #details{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px}
+  #details button{background:#121823;color:var(--ink);border:1px solid var(--line);
+    border-radius:7px;padding:6px 10px;font-size:12px;cursor:pointer;
+    flex:1 1 140px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #details button.on{border-color:var(--accent);color:var(--accent)}
 </style>
 </head>
 <body>
@@ -49,6 +57,7 @@
   <aside>
     <h1 id="title">Setout</h1>
     <div class="sub" id="units"></div>
+    <div id="details"></div>
     <h2>Build-up</h2>
     <div id="layers"></div>
     <h2>Rule checks</h2>
@@ -62,9 +71,19 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="scenes.js"></script>
 <script src="scene.js"></script>
 <script>
-const S = window.SCENE;
+const ALL = window.SCENES || {shower_hob: window.SCENE};
+const KEYS = Object.keys(ALL);
+const S = ALL[(location.hash || '').slice(1)] || ALL[KEYS[0]];
+const detEl = document.getElementById('details');
+KEYS.forEach(k=>{
+  const b=document.createElement('button');
+  b.textContent=ALL[k].title; if(ALL[k]===S) b.className='on';
+  b.onclick=()=>{ location.hash=k; location.reload(); };
+  detEl.appendChild(b);
+});
 const K = 0.01; // mm -> scene units
 
 document.getElementById('title').textContent = S.title;
@@ -74,8 +93,8 @@ document.getElementById('units').textContent =
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0e1116);
-scene.add(new THREE.HemisphereLight(0xffffff, 0x27303d, 1.05));
-const key = new THREE.DirectionalLight(0xffffff, .85);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x27303d, 0.85));
+const key = new THREE.DirectionalLight(0xffffff, .6);
 key.position.set(6, 10, 8); scene.add(key);
 
 const main = document.querySelector('main');
@@ -125,8 +144,12 @@ S.solids.forEach(s=>{
 
 // frame the model
 const box = new THREE.Box3().setFromObject(root);
-const ctr = box.getCenter(new THREE.Vector3());
 const size = box.getSize(new THREE.Vector3());
+// pivot on the ruled layer so the detail, not the blank wall, fills the frame
+const memb = new THREE.Box3();
+picks.forEach(m=>{ if(m.userData.layer==='membrane') memb.expandByObject(m); });
+const ctr = memb.isEmpty() ? box.getCenter(new THREE.Vector3())
+                            : memb.getCenter(new THREE.Vector3());
 root.position.sub(ctr);
 const radius = Math.max(size.x, size.y, size.z);
 
