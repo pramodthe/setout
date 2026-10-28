@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setout — door-sill playground</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230e1116'/%3E%3Crect x='3' y='9' width='10' height='4' fill='%234ea1ff'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b23; --line:#263040; --ink:#e7edf5;
+    --muted:#8fa0b5; --accent:#4ea1ff; --ok:#3ecf8e; --bad:#ff6b6b;
+    --amber:#e0a63f; --teal:#3ecf8e; --cyan:#7fd4c1; --grey:#6b7686;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{display:flex;align-items:center;gap:12px;padding:10px 16px;
+    background:var(--panel);border-bottom:1px solid var(--line)}
+  header h1{font-size:15px;margin:0}
+  header .sub{color:var(--muted);font-size:12px}
+  #verdict{margin-left:auto;font-size:12px;font-weight:600;padding:4px 10px;
+    border:1px solid var(--line);border-radius:6px;color:var(--muted)}
+  #verdict.pass{color:var(--ok);border-color:var(--ok)}
+  #verdict.fail{color:var(--bad);border-color:var(--bad)}
+  #app{display:grid;grid-template-columns:308px 1fr 348px;
+    height:calc(100% - 49px)}
+  aside{background:var(--panel);overflow:auto;padding:14px 16px}
+  aside.left{border-right:1px solid var(--line)}
+  aside.right{border-left:1px solid var(--line)}
+  h2{font-size:11px;text-transform:uppercase;letter-spacing:.9px;
+    color:var(--muted);margin:18px 0 8px;font-weight:600}
+  h2:first-child{margin-top:0}
+  .step{font-size:12px;color:var(--muted);margin-bottom:6px}
+  .crop{border:1px solid var(--line);border-radius:8px;margin-bottom:8px;
+    overflow:hidden;cursor:pointer;background:#10151d}
+  .crop.sel{border-color:var(--accent)}
+  .crop img{width:100%;display:block}
+  .crop .cap{font-size:11px;color:var(--muted);padding:5px 8px}
+  #overlayWrap{position:relative}
+  #overlayWrap img{width:100%;display:block;border-radius:8px}
+  #overlayWrap svg{position:absolute;inset:0;width:100%;height:100%}
+  #overlayWrap rect{fill:rgba(78,161,255,.12);stroke:var(--accent);
+    stroke-width:1;cursor:pointer}
+  #overlayWrap rect.sel{fill:rgba(78,161,255,.3)}
+  .comp{display:flex;align-items:center;gap:8px;padding:5px 7px;
+    border-radius:6px;cursor:pointer;font-size:13px}
+  .comp:hover{background:#1d2430}
+  .comp.sel{background:#1d2430;outline:1px solid var(--accent)}
+  .comp input{accent-color:var(--accent);margin:0}
+  .sw{width:11px;height:11px;border-radius:3px;flex:none}
+  .badge{font-size:10px;font-weight:700;padding:1px 6px;border-radius:5px;
+    margin-left:auto;flex:none}
+  .b-draw{background:#173a5e;color:#9cc8ff}
+  .b-assump{background:#4a3517;color:#f0c27a}
+  .b-user{background:#14402f;color:#7fe0ae}
+  .b-manu{background:#1d443c;color:#8fe3cf}
+  .b-mixed{background:#2a2f38;color:var(--muted)}
+  button{background:#1d2634;color:var(--ink);border:1px solid var(--line);
+    border-radius:7px;padding:7px 12px;font-size:13px;cursor:pointer}
+  button:hover:not(:disabled){border-color:var(--accent)}
+  button:disabled{opacity:.45;cursor:default}
+  button.primary{background:#173a5e;border-color:var(--accent)}
+  #progress{font-size:12px;color:var(--muted);margin-top:8px;white-space:pre-line}
+  #progress .run{color:var(--accent)}
+  main{position:relative;min-height:0;display:flex;flex-direction:column}
+  #toolbar{display:flex;align-items:center;gap:14px;padding:8px 14px;
+    border-bottom:1px solid var(--line);font-size:12px;color:var(--muted);
+    flex-wrap:wrap}
+  #toolbar label{display:flex;align-items:center;gap:6px}
+  #toolbar input[type=range]{width:110px;accent-color:var(--accent)}
+  #gl{flex:1;position:relative;min-height:0}
+  #gl canvas{display:block}
+  #hud{position:absolute;left:0;right:0;bottom:0;padding:12px 16px;
+    background:linear-gradient(transparent,rgba(10,13,18,.93) 40%);
+    pointer-events:none}
+  #hud .t{font-size:15px;font-weight:600}
+  #hud .n{color:var(--muted);font-size:13px;margin-top:2px}
+  #hud .q{margin-top:6px;font-size:12.5px;color:#cfe0f5;
+    border-left:2px solid var(--accent);padding-left:9px;max-width:720px}
+  .kv{font-size:12px;margin:3px 0}
+  .kv .k{color:var(--muted)}
+  .param{display:flex;align-items:center;gap:6px;font-size:12px;margin:3px 0}
+  .param input{width:76px;background:#10151d;color:var(--ink);
+    border:1px solid var(--line);border-radius:5px;padding:2px 6px}
+  .param input:disabled{opacity:.5}
+  .chk{padding:7px 10px;border:1px solid var(--line);border-radius:7px;
+    margin-bottom:6px;background:#121823;font-size:12px}
+  .chk .s{font-weight:700;font-size:11px}
+  .pass{border-left:3px solid var(--ok)} .fail{border-left:3px solid var(--bad)}
+  .unv{border-left:3px solid var(--amber)} .na{border-left:3px solid var(--grey)}
+  .s-PASS{color:var(--ok)} .s-FAIL{color:var(--bad)}
+  .s-UNVERIFIED{color:var(--amber)} .s-N\/A{color:var(--grey)}
+  .unres{font-size:12px;color:var(--muted);border:1px dashed var(--line);
+    border-radius:7px;padding:6px 9px;margin-bottom:6px}
+  .unres b{color:var(--ink)}
+  a{color:var(--accent)}
+  #err{position:absolute;top:10px;left:50%;transform:translateX(-50%);
+    background:#3a1720;border:1px solid var(--bad);color:#ffd9d9;
+    padding:8px 14px;border-radius:8px;font-size:13px;display:none;z-index:5}
+  @media (max-width:1100px){#app{grid-template-columns:1fr;grid-auto-rows:auto}
+    aside{border:none;border-bottom:1px solid var(--line)} #gl{min-height:52vh}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Setout — door-sill playground</h1>
+  <span class="sub" id="docline">no document uploaded</span>
+  <span id="verdict">no build</span>
+</header>
+<div id="app">
+  <aside class="left">
+    <h2>1 · Source PDF</h2>
+    <div><input type="file" id="pdf" accept="application/pdf">
+    <button id="upload" class="primary">Upload</button></div>
+    <div class="step" id="docmeta"></div>
+    <h2>2 · Detail variant + crop</h2>
+    <div id="variants" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+    <div class="step" id="variantNote"></div>
+    <div id="crops"><div class="step">Upload the reference PDF to list its
+      embedded drawing figures.</div></div>
+    <div id="overlayWrap" style="display:none;margin-top:8px">
+      <img id="cropimg" alt="detail crop">
+      <svg id="overlay" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
+    </div>
+    <div class="step" id="overlayNote" style="display:none">Boxes are
+      indicative regions from the spec — not SAM masks.</div>
+    <h2>3 · Components</h2>
+    <div id="comps"><div class="step">Select the D3 crop to load its
+      specification.</div></div>
+    <h2>4 · Build</h2>
+    <button id="build" class="primary" disabled>Generate assembly</button>
+    <label style="font-size:12px;color:var(--muted);margin-left:8px">
+      <input type="checkbox" id="dispt"> display thickness</label>
+    <div id="progress"></div>
+    <div id="downloads" style="margin-top:8px;font-size:12px"></div>
+  </aside>
+  <main>
+    <div id="err"></div>
+    <div id="toolbar">
+      <span id="sceneTitle">no assembly</span>
+      <label>explode <input type="range" id="explode" min="0" max="300"
+        value="0"></label>
+      <label><input type="checkbox" id="clipOn"> section z&lt;
+        <input type="range" id="clipZ" min="0" max="600" value="600"
+        style="width:80px"></label>
+      <label><input type="checkbox" id="seqOn"> install order</label>
+      <button id="seqPlay" disabled>play</button>
+      <span id="seqLabel"></span>
+    </div>
+    <div id="gl"><div id="hud"><div class="t">Generate the assembly</div>
+      <div class="n">Upload → crop → components → build.</div></div></div>
+  </main>
+  <aside class="right">
+    <h2>Evidence</h2>
+    <div id="evidence"><div class="step">Click a component in the list, the
+      crop overlay, or the 3D view.</div></div>
+    <h2>Verification</h2>
+    <div id="checks"><div class="step">Checks appear after a build.</div></div>
+    <h2>Unresolved</h2>
+    <div id="unres"><div class="step">—</div></div>
+  </aside>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.149.0/three.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

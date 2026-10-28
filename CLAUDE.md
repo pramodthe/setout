@@ -107,5 +107,6 @@ been confirmed, raise it before building anything that assumes it.
 
 ## Submission
 
-Public repo, MIT, **own work only** — the hackathon requires the entrant to own
-everything submitted. Reserve all of day 8 for the demo video.
+Public repo, Apache-2.0 (matches `LICENSE`), **own work only** — the
+hackathon requires the entrant to own everything submitted. Reserve all of
+day 8 for the demo video.

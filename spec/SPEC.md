@@ -207,7 +207,7 @@ Good closing slide. Not a week-1 build.
 ## Submission checklist
 
 - [ ] Demo video (3 min). Shot on day 8.
-- [ ] Public repo, MIT, **your own work only**
+- [ ] Public repo, Apache-2.0 (matches `LICENSE`), **your own work only**
 - [ ] README with the NSW defect stat up top
 - [ ] Benchmark chart
 - [ ] Live demo link or hosted build

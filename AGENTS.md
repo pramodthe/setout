@@ -2,11 +2,17 @@
 
 ## Commands
 
-- `scripts\regen.bat`: build the project
+- `scripts\regen.bat`: build the NCC viewer payloads
+- `python -m pytest tests/ -q`: playground test suite (29 tests)
+- `SETOUT_VAR=var python -m uvicorn app.main:app --port 8000`: playground server
 
 ## Code Map
 
-- `generator/`: application source
-- `viewer/`: application source
-- `perception/`: application source
-- `spec/`: project documentation
+- `app/`: door-sill playground backend + wired viewer (FastAPI, spec,
+  generators, verification, `app/static/`)
+- `tests/`: playground pytest suite
+- `docs/`: GAP_ANALYSIS, PLAN, STATUS, EVAL, ARCH, DEMO
+- `generator/`: NCC parametric details
+- `viewer/`: NCC static viewers
+- `perception/`: SAM kill-check
+- `spec/`: original plan documentation

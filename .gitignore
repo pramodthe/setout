@@ -16,3 +16,7 @@ data/**/*.txt
 data/**/*.json
 **/ocr_output/
 **/*_extracted.*
+
+# Vertical-slice runtime (gitignored)
+var/
+.venv/
