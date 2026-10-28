@@ -1,0 +1,717 @@
+import { useEffect, useRef, useState } from "react";
+import type { JSX } from "react";
+import { api } from "./api";
+import type {
+  Build,
+  CheckStatus,
+  Component,
+  DetailSpec,
+  Doc,
+  Scene,
+} from "./types";
+import ViewportView from "./ViewportView";
+
+import { badgeClass, badgeLabel, worstProv } from "./provenance";
+
+function Badge({ prov }: { prov: string }): JSX.Element {
+  return <span className={badgeClass(prov)}>{badgeLabel(prov)}</span>;
+}
+
+interface Variant {
+  detail_id: string;
+  title: string;
+  crop_id: string;
+  location: string;
+}
+
+export default function App(): JSX.Element {
+  const [doc, setDoc] = useState<Doc | null>(null);
+  const [variants, setVariants] = useState<Variant[]>([]);
+  const [spec, setSpec] = useState<DetailSpec | null>(null);
+  const [crop, setCrop] = useState<string | null>(null);
+  const [job, setJob] = useState<Build | null>(null);
+  const [scene, setScene] = useState<Scene | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [visible, setVisible] = useState<Record<string, boolean>>({});
+  const [order, setOrder] = useState<string[]>([]);
+  const [explode, setExplode] = useState(0);
+  const [clipOn, setClipOn] = useState(false);
+  const [clipZ, setClipZ] = useState(600);
+  const [clipMax, setClipMax] = useState(600);
+  const [seqOn, setSeqOn] = useState(false);
+  const [seqIdx, setSeqIdx] = useState(-1);
+  const [playing, setPlaying] = useState(false);
+  const [ovr, setOvr] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const fileRef = useRef<HTMLInputElement>(null);
+  const disptRef = useRef<HTMLInputElement>(null);
+  const explodeRef = useRef<HTMLInputElement>(null);
+  const clipZRef = useRef<HTMLInputElement>(null);
+  const evRef = useRef<HTMLDivElement>(null);
+  const timer = useRef<number | null>(null);
+  const errTimer = useRef<number | null>(null);
+  const pollToken = useRef(0);
+
+  // Native listeners: the drive sets .value + dispatches a non-bubbling
+  // 'input' event, which React synthetic onChange would miss.
+  useEffect(() => {
+    const ex = explodeRef.current;
+    const cz = clipZRef.current;
+    const onEx = () => ex && setExplode(parseFloat(ex.value));
+    const onCz = () => cz && setClipZ(parseFloat(cz.value));
+    ex?.addEventListener("input", onEx);
+    cz?.addEventListener("input", onCz);
+    return () => {
+      ex?.removeEventListener("input", onEx);
+      cz?.removeEventListener("input", onCz);
+    };
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (timer.current) window.clearInterval(timer.current);
+      if (errTimer.current) window.clearTimeout(errTimer.current);
+      pollToken.current++;
+    },
+    [],
+  );
+
+  const showErr = (msg: string | null): void => {
+    setErr(msg);
+    if (errTimer.current) window.clearTimeout(errTimer.current);
+    if (msg) errTimer.current = window.setTimeout(() => setErr(null), 6000);
+  };
+
+  const upload = async (): Promise<void> => {
+    const f = fileRef.current?.files?.[0];
+    if (!f) {
+      showErr("Choose a PDF first.");
+      return;
+    }
+    showErr(null);
+    try {
+      const d = await api.uploadDocument(f);
+      setDoc(d);
+      setSpec(null);
+      setCrop(null);
+      setScene(null);
+      setJob(null);
+      setSelected(null);
+      const list = (await api.listSpecs()).specs;
+      const vs: Variant[] = [];
+      for (const s of list) {
+        const full = await api.getSpec(s.detail_id);
+        vs.push({
+          detail_id: s.detail_id,
+          title: s.title,
+          crop_id: full.source.crop_id,
+          location: (full.context.location as string) || s.detail_id,
+        });
+      }
+      setVariants(vs);
+    } catch (e) {
+      showErr("Upload failed: " + (e as Error).message.slice(0, 200));
+    }
+  };
+
+  const selectCrop = async (cropId: string): Promise<void> => {
+    setCrop(cropId);
+    setSelected(null);
+    setOvr(false);
+    let matched: DetailSpec | null = null;
+    for (const s of variants) {
+      if (s.crop_id === cropId) {
+        matched = await api.getSpec(s.detail_id);
+        break;
+      }
+    }
+    if (!matched) {
+      setSpec(null);
+      return;
+    }
+    const m: DetailSpec = matched;
+    setSpec(m);
+    setVisible((prev) => {
+      const next = { ...prev };
+      for (const c of m.components) if (!(c.id in next)) next[c.id] = true;
+      return next;
+    });
+  };
+
+  const poll = async (jobId: string): Promise<void> => {
+    const my = ++pollToken.current;
+    for (;;) {
+      const b = await api.getBuild(jobId);
+      if (my !== pollToken.current) return;
+      setJob(b);
+      if (b.state === "done" || b.state === "failed") break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    const b = await api.getBuild(jobId);
+    if (my !== pollToken.current) return;
+    setJob(b);
+    if (b.state === "failed") {
+      const t = await api.errorText(jobId);
+      showErr("Build failed: " + t.split("\n")[0]);
+      return;
+    }
+    const s = await api.getScene(jobId);
+    setScene(s);
+    setOrder(s.install_order);
+    setSeqIdx(s.install_order.length - 1);
+    setSpec((prev) =>
+      prev ? { ...prev, verification: s.verification } : prev,
+    );
+    const ext = Number(s.context.illustrative_extent_z_mm || 600);
+    setClipMax(ext);
+    setClipZ(ext);
+    if (clipZRef.current) clipZRef.current.value = String(ext);
+  };
+
+  const build = async (): Promise<void> => {
+    if (!spec || !doc) return;
+    showErr(null);
+    try {
+      const b = await api.createBuild(
+        spec.detail_id,
+        doc.id,
+        disptRef.current?.checked || false,
+      );
+      setJob(b);
+      void poll(b.id);
+    } catch (e) {
+      showErr("Build request failed: " + (e as Error).message.slice(0, 200));
+    }
+  };
+
+  const togglePlay = (): void => {
+    if (playing) {
+      if (timer.current) window.clearInterval(timer.current);
+      timer.current = null;
+      setPlaying(false);
+      return;
+    }
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setSeqOn(true);
+      setSeqIdx(order.length - 1);
+      return;
+    }
+    setSeqOn(true);
+    setSeqIdx(-1);
+    setPlaying(true);
+    let i = -1;
+    timer.current = window.setInterval(() => {
+      i++;
+      if (i >= order.length) {
+        if (timer.current) window.clearInterval(timer.current);
+        timer.current = null;
+        setPlaying(false);
+        return;
+      }
+      setSeqIdx(i);
+    }, 900);
+  };
+
+  const applyParams = async (comp: Component): Promise<void> => {
+    const inputs = [
+      ...(
+        evRef.current?.querySelectorAll<HTMLInputElement>("input[data-p]") ||
+        []
+      ),
+    ].filter((el) => !el.disabled);
+    try {
+      let cur = spec;
+      for (const el of inputs) {
+        const pname = el.dataset.p!;
+        const p = comp.params.find((x) => x.name === pname)!;
+        if (parseFloat(el.value) !== p.value) {
+          cur = await api.patchSpec(spec!.detail_id, {
+            component_id: comp.id,
+            param: pname,
+            value: parseFloat(el.value),
+          });
+        }
+      }
+      if (cur) setSpec(cur);
+      await build();
+    } catch (e) {
+      showErr("Correction rejected: " + (e as Error).message.slice(0, 200));
+    }
+  };
+
+  const selComp: Component | null =
+    spec?.components.find((c) => c.id === selected) || null;
+  const verdict = job?.report?.verdict || "no build";
+  const verdictCls =
+    !job || job.state !== "done"
+      ? ""
+      : job.report && job.report.failed.length
+        ? "fail"
+        : "pass";
+
+  const seqLabel =
+    seqOn && seqIdx >= 0 && seqIdx < order.length
+      ? `step ${seqIdx + 1}/${order.length}: ${order[seqIdx]}`
+      : "";
+
+  const hud = selComp ? (
+    <div id="hud">
+      <div className="t">
+        {selComp.id}{" "}
+        <span style={{ fontWeight: 400, color: "var(--muted)" }}>
+          · {selComp.type}
+        </span>
+      </div>
+      <div className="n">{selComp.note || ""}</div>
+      {selComp.source_label ? (
+        <div className="q">drawing: “{selComp.source_label}”</div>
+      ) : (
+        <div className="q">
+          no drawing label — dimensions are assumptions unless marked
+          drawing/user.
+        </div>
+      )}
+    </div>
+  ) : (
+    <div id="hud">
+      <div className="t">Generate the assembly</div>
+      <div className="n">Upload → crop → components → build.</div>
+    </div>
+  );
+
+  return (
+    <>
+      <header>
+        <h1>Setout — door-sill playground</h1>
+        <span className="sub" id="docline">
+          {doc
+            ? `${doc.filename} · sha256 ${doc.sha256.slice(0, 12)}…`
+            : "no document uploaded"}
+        </span>
+        <span id="verdict" className={verdictCls}>
+          {verdict}
+        </span>
+      </header>
+      <div id="app">
+        <aside className="left">
+          <h2>1 · Source PDF</h2>
+          <div>
+            <input type="file" id="pdf" ref={fileRef} accept="application/pdf" />
+            <button id="upload" className="primary" onClick={() => void upload()}>
+              Upload
+            </button>
+          </div>
+          <div className="step" id="docmeta">
+            {doc &&
+              `${doc.pages} page(s), ${doc.figures.length} embedded figure(s). Crops are extracted embedded figures (lossless).`}
+          </div>
+          <h2>2 · Detail variant + crop</h2>
+          <div id="variants" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {variants.map((v) => (
+              <button
+                key={v.detail_id}
+                data-detail={v.detail_id}
+                title={v.location}
+                className={spec?.detail_id === v.detail_id ? "primary" : ""}
+                onClick={() => void selectCrop(v.crop_id)}
+              >
+                {v.title}
+              </button>
+            ))}
+          </div>
+          <div className="step" id="variantNote">
+            {variants.length > 0 &&
+              "Each variant is a separate spec (components, parameters, install order) from its own drawing crop — not a rename."}
+          </div>
+          <div id="crops">
+            {!doc && (
+              <div className="step">
+                Upload the reference PDF to list its embedded drawing figures.
+              </div>
+            )}
+            {doc &&
+              doc.figures.length === 0 &&
+              "No embedded figures in this PDF — nothing to select. Vector-only pages are not rasterized in v0."}
+            {doc?.figures.map((f) => (
+              <div
+                key={f.crop_id}
+                className={"crop" + (crop === f.crop_id ? " sel" : "")}
+                data-crop={f.crop_id}
+                onClick={() => void selectCrop(f.crop_id)}
+              >
+                <img
+                  loading="lazy"
+                  src={api.figureUrl(doc.id, f.crop_id)}
+                  alt={f.crop_id}
+                />
+                <div className="cap">
+                  {f.crop_id} · p{f.page + 1} · {f.width}×{f.height}px
+                </div>
+              </div>
+            ))}
+          </div>
+          <div
+            id="overlayWrap"
+            style={{ display: spec ? "block" : "none", marginTop: 8 }}
+          >
+            {doc && crop && (
+              <img id="cropimg" src={api.figureUrl(doc.id, crop)} alt="detail crop" />
+            )}
+            <svg id="overlay" viewBox="0 0 100 100" preserveAspectRatio="none">
+              {spec?.components.flatMap((c) =>
+                (c.source_regions || []).map((r, i) => (
+                  <rect
+                    key={`${c.id}-${i}`}
+                    x={r.x0 * 100}
+                    y={r.y0 * 100}
+                    width={(r.x1 - r.x0) * 100}
+                    height={(r.y1 - r.y0) * 100}
+                    className={c.id === selected ? "sel" : ""}
+                    onClick={() => setSelected(c.id)}
+                  >
+                    <title>{c.id}</title>
+                  </rect>
+                )),
+              )}
+            </svg>
+          </div>
+          <div
+            className="step"
+            id="overlayNote"
+            style={{ display: spec ? "block" : "none" }}
+          >
+            Boxes are indicative regions from the spec — not SAM masks.
+          </div>
+          <h2>3 · Components</h2>
+          <div id="comps">
+            {!spec && (
+              <div className="step">
+                {crop ? (
+                  <>
+                    No specification covers crop <b>{crop}</b> yet. Only the D3
+                    seed spec exists in v0.
+                  </>
+                ) : (
+                  "Select the D3 crop to load its specification."
+                )}
+              </div>
+            )}
+            {spec?.components.map((c) => (
+              <div
+                key={c.id}
+                className={"comp" + (c.id === selected ? " sel" : "")}
+                onClick={() => setSelected(c.id)}
+              >
+                <input
+                  type="checkbox"
+                  aria-label={`toggle ${c.id}`}
+                  checked={visible[c.id] !== false}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) =>
+                    setVisible((prev) => ({ ...prev, [c.id]: e.target.checked }))
+                  }
+                />
+                <span className="sw" style={{ background: c.color }} />
+                <span>{c.id}</span>
+                <Badge prov={worstProv(c.params.map((p) => p.provenance))} />
+              </div>
+            ))}
+          </div>
+          <h2>4 · Build</h2>
+          <button
+            id="build"
+            className="primary"
+            disabled={!spec}
+            onClick={() => void build()}
+          >
+            Generate assembly
+          </button>
+          <label
+            style={{ fontSize: 12, color: "var(--muted)", marginLeft: 8 }}
+          >
+            <input type="checkbox" id="dispt" ref={disptRef} /> display thickness
+          </label>
+          <div id="progress">
+            {job?.progress.map((p, i) => (
+              <div
+                key={i}
+                className={
+                  i === job.progress.length - 1 && job.state === "running"
+                    ? "run"
+                    : ""
+                }
+              >
+                ▸ {p}
+              </div>
+            ))}
+            {job && (
+              <div>
+                state: <b>{job.state}</b>
+              </div>
+            )}
+          </div>
+          <div id="downloads" style={{ marginTop: 8, fontSize: 12 }}>
+            {job?.state === "done" &&
+              job.artifacts &&
+              job.artifacts.length > 0 && (
+                <>
+                  artifacts:{" "}
+                  {job.artifacts.map((a, i) => (
+                    <span key={a}>
+                      {i > 0 && " · "}
+                      <a href={api.artifactUrl(job.id, a)} download>
+                        {a}
+                      </a>
+                    </span>
+                  ))}
+                </>
+              )}
+          </div>
+        </aside>
+        <main>
+          <div id="err" style={{ display: err ? "block" : "none" }}>
+            {err}
+          </div>
+          <div id="toolbar">
+            <span id="sceneTitle">
+              {scene ? `${scene.title} · ${scene.detail_id}` : "no assembly"}
+            </span>
+            <label>
+              explode{" "}
+              <input type="range" id="explode" ref={explodeRef} min="0" max="300" defaultValue="0" />
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                id="clipOn"
+                checked={clipOn}
+                onChange={(e) => setClipOn(e.target.checked)}
+              />{" "}
+              section z&lt;
+              <input
+                type="range"
+                id="clipZ"
+                ref={clipZRef}
+                min="0"
+                max={clipMax}
+                defaultValue={clipMax}
+                style={{ width: 80 }}
+              />
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                id="seqOn"
+                checked={seqOn}
+                onChange={(e) => {
+                  const on = e.target.checked;
+                  setSeqOn(on);
+                  if (on && seqIdx < 0) setSeqIdx(order.length - 1);
+                }}
+              />{" "}
+              install order
+            </label>
+            <button id="seqPlay" disabled={!scene} onClick={togglePlay}>
+              {playing ? "stop" : "play"}
+            </button>
+            <span id="seqLabel">{seqLabel}</span>
+          </div>
+          <ViewportView
+            scene={scene}
+            visible={visible}
+            explode={explode}
+            clipOn={clipOn}
+            clipZ={clipZ}
+            seqOn={seqOn}
+            seqIdx={seqIdx}
+            selected={selected}
+            onPick={setSelected}
+            hud={hud}
+          />
+        </main>
+        <aside className="right">
+          <h2>Evidence</h2>
+          <div id="evidence" ref={evRef}>
+            {!selComp && (
+              <div className="step">
+                {spec
+                  ? "Nothing selected."
+                  : "Click a component in the list, the crop overlay, or the 3D view."}
+              </div>
+            )}
+            {selComp && spec && (
+              <>
+                <div className="kv">
+                  <span className="k">component:</span> <b>{selComp.id}</b> (
+                  {selComp.type})
+                </div>
+                <div className="kv">
+                  <span className="k">drawing label:</span>{" "}
+                  {selComp.source_label ? (
+                    <>“{selComp.source_label}”</>
+                  ) : (
+                    <i>none — not invented</i>
+                  )}
+                </div>
+                {selComp.note && (
+                  <div className="kv">
+                    <span className="k">role:</span> {selComp.note}
+                  </div>
+                )}
+                <div className="kv">
+                  <span className="k">representation:</span>{" "}
+                  {selComp.representation} · generator {selComp.generator.id}{" "}
+                  {selComp.generator.version}
+                </div>
+                {(() => {
+                  const solid = scene?.solids.find((x) => x.id === selComp.id);
+                  return solid && solid.tri_count ? (
+                    <div className="kv">
+                      <span className="k">mesh:</span> {solid.tri_count} tris
+                    </div>
+                  ) : null;
+                })()}
+                <h2 style={{ marginTop: 10 }}>Parameters</h2>
+                {selComp.params.map((prm) => {
+                  const lock =
+                    prm.provenance === "drawing" &&
+                    prm.role === "physical" &&
+                    !ovr;
+                  return (
+                    <div key={prm.name}>
+                      <div className="param">
+                        <Badge prov={prm.provenance} />
+                        <span style={{ minWidth: 0 }}>{prm.name}</span>
+                        <input
+                          type="number"
+                          step="any"
+                          key={`${selComp.id}-${prm.name}`}
+                          defaultValue={prm.value}
+                          data-p={prm.name}
+                          disabled={lock}
+                          title={
+                            lock
+                              ? "drawing value — tick override to edit"
+                              : undefined
+                          }
+                        />
+                        <span className="k">
+                          {prm.unit}
+                          {prm.role !== "physical" ? ` · ${prm.role}` : ""}
+                        </span>
+                      </div>
+                      {(prm.source_quote || prm.note) && (
+                        <div className="kv" style={{ marginLeft: 4 }}>
+                          <span className="k">↳</span>{" "}
+                          {[prm.source_quote ? `“${prm.source_quote}”` : "", prm.note || ""]
+                            .filter(Boolean)
+                            .join(" — ")}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                <label style={{ fontSize: 12 }}>
+                  <input
+                    type="checkbox"
+                    id="ovr"
+                    checked={ovr}
+                    onChange={(e) => setOvr(e.target.checked)}
+                  />{" "}
+                  override drawing values
+                </label>{" "}
+                <button id="applyP" onClick={() => void applyParams(selComp)}>
+                  Apply &amp; rebuild
+                </button>
+                <h2 style={{ marginTop: 10 }}>Product</h2>
+                <div className="kv">
+                  {selComp.product?.ref ? (
+                    selComp.product.ref
+                  ) : (
+                    <i>null — unresolved, no claim made</i>
+                  )}
+                  {selComp.product?.note ? ` · ${selComp.product.note}` : ""}
+                </div>
+                <h2 style={{ marginTop: 10 }}>Relations</h2>
+                {spec.relations
+                  .filter((r) => r.source === selComp.id || r.target === selComp.id)
+                  .map((r, i) => (
+                    <div className="kv" key={i}>
+                      {r.source} <b>{r.kind.replace(/_/g, " ")}</b> {r.target}
+                    </div>
+                  ))}
+                <h2 style={{ marginTop: 10 }}>Install</h2>
+                <div className="kv">
+                  after: {selComp.install_after.join(", ") || "— (first)"}
+                </div>
+              </>
+            )}
+          </div>
+          <h2>Verification</h2>
+          <div id="checks">
+            {!scene && (
+              <div className="step">Checks appear after a build.</div>
+            )}
+            {scene && (
+              <>
+                <div className="step">
+                  PASS {scene.verification.filter((c) => c.status === "PASS").length} · FAIL{" "}
+                  {scene.verification.filter((c) => c.status === "FAIL").length} · UNVERIFIED{" "}
+                  {scene.verification.filter((c) => c.status === "UNVERIFIED").length} · N/A{" "}
+                  {scene.verification.filter((c) => c.status === "N/A").length}
+                </div>
+                {scene.verification.map((c: (typeof scene.verification)[number]) => {
+                  const cls =
+                    c.status === "PASS"
+                      ? "pass"
+                      : c.status === "FAIL"
+                        ? "fail"
+                        : c.status === "UNVERIFIED"
+                          ? "unv"
+                          : "na";
+                  const st: CheckStatus = c.status;
+                  return (
+                    <div className={`chk ${cls}`} key={c.id}>
+                      <span className={`s s-${st}`}>{st}</span> <b>[{c.stage}] {c.id}</b> —{" "}
+                      {c.description}
+                      {c.expected != null && (
+                        <div className="kv">
+                          <span className="k">expected:</span> {String(c.expected)}
+                        </div>
+                      )}
+                      {c.actual != null && (
+                        <div className="kv">
+                          <span className="k">actual:</span> {String(c.actual)}
+                        </div>
+                      )}
+                      {c.evidence && (
+                        <div className="kv">
+                          <span className="k">evidence:</span> {c.evidence}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </div>
+          <h2>Unresolved</h2>
+          <div id="unres">
+            {!spec && <div className="step">—</div>}
+            {spec?.unresolved.map((u) => (
+              <div className="unres" key={u.id}>
+                <b>{u.id}</b> — {u.description}
+                <br />
+                <span>
+                  impacts: {u.impacts.join(", ") || "—"}
+                  {u.blocks_geometry ? " · BLOCKS GEOMETRY" : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        </aside>
+      </div>
+    </>
+  );
+}

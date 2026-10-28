@@ -8,8 +8,9 @@
 
 ## Code Map
 
-- `app/`: door-sill playground backend + wired viewer (FastAPI, spec,
-  generators, verification, `app/static/`)
+- `app/`: playground backend (FastAPI, spec, generators, verification)
+- `web/`: React + TS viewer (Vite; `npm run build` → served at /)
+- `e2e/drive.py`: headless browser acceptance pass
 - `tests/`: playground pytest suite
 - `docs/`: GAP_ANALYSIS, PLAN, STATUS, EVAL, ARCH, DEMO
 - `generator/`: NCC parametric details

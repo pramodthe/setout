@@ -28,9 +28,10 @@ from .verify import summarize, verify_all
 
 app = FastAPI(title="Setout", version="0.1.0")
 
-STATIC = Path(__file__).resolve().parent / "static"
-STATIC.mkdir(exist_ok=True)
-app.mount("/static", StaticFiles(directory=STATIC), name="static")
+ROOT = Path(__file__).resolve().parent.parent
+DIST = ROOT / "web" / "dist"
+if (DIST / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
 
 
 def _set_build(job_id: str, state: str, progress: list[str] | None = None,
@@ -274,7 +275,8 @@ async def evaluate(job_id: str) -> dict:
 
 @app.get("/", response_class=HTMLResponse)
 async def index() -> str:
-    p = STATIC / "app.html"
+    p = DIST / "index.html"
     if p.exists():
         return p.read_text()
-    return "<h1>Setout</h1><p>Viewer not built yet. See /docs.</p>"
+    return ("<h1>Setout</h1><p>Web bundle not built. Run "
+            "<code>npm run build</code> in <code>web/</code>.</p>")

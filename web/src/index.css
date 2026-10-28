@@ -1,11 +1,6 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Setout — door-sill playground</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230e1116'/%3E%3Crect x='3' y='9' width='10' height='4' fill='%234ea1ff'/%3E%3C/svg%3E">
-<style>
+/* Ported verbatim from app/static/app.html */
+#root{height:100%}
+
   :root{
     --bg:#0e1116; --panel:#161b23; --line:#263040; --ink:#e7edf5;
     --muted:#8fa0b5; --accent:#4ea1ff; --ok:#3ecf8e; --bad:#ff6b6b;
@@ -99,68 +94,3 @@
     padding:8px 14px;border-radius:8px;font-size:13px;display:none;z-index:5}
   @media (max-width:1100px){#app{grid-template-columns:1fr;grid-auto-rows:auto}
     aside{border:none;border-bottom:1px solid var(--line)} #gl{min-height:52vh}}
-</style>
-</head>
-<body>
-<header>
-  <h1>Setout — door-sill playground</h1>
-  <span class="sub" id="docline">no document uploaded</span>
-  <span id="verdict">no build</span>
-</header>
-<div id="app">
-  <aside class="left">
-    <h2>1 · Source PDF</h2>
-    <div><input type="file" id="pdf" accept="application/pdf">
-    <button id="upload" class="primary">Upload</button></div>
-    <div class="step" id="docmeta"></div>
-    <h2>2 · Detail variant + crop</h2>
-    <div id="variants" style="display:flex;gap:6px;flex-wrap:wrap"></div>
-    <div class="step" id="variantNote"></div>
-    <div id="crops"><div class="step">Upload the reference PDF to list its
-      embedded drawing figures.</div></div>
-    <div id="overlayWrap" style="display:none;margin-top:8px">
-      <img id="cropimg" alt="detail crop">
-      <svg id="overlay" viewBox="0 0 100 100" preserveAspectRatio="none"></svg>
-    </div>
-    <div class="step" id="overlayNote" style="display:none">Boxes are
-      indicative regions from the spec — not SAM masks.</div>
-    <h2>3 · Components</h2>
-    <div id="comps"><div class="step">Select the D3 crop to load its
-      specification.</div></div>
-    <h2>4 · Build</h2>
-    <button id="build" class="primary" disabled>Generate assembly</button>
-    <label style="font-size:12px;color:var(--muted);margin-left:8px">
-      <input type="checkbox" id="dispt"> display thickness</label>
-    <div id="progress"></div>
-    <div id="downloads" style="margin-top:8px;font-size:12px"></div>
-  </aside>
-  <main>
-    <div id="err"></div>
-    <div id="toolbar">
-      <span id="sceneTitle">no assembly</span>
-      <label>explode <input type="range" id="explode" min="0" max="300"
-        value="0"></label>
-      <label><input type="checkbox" id="clipOn"> section z&lt;
-        <input type="range" id="clipZ" min="0" max="600" value="600"
-        style="width:80px"></label>
-      <label><input type="checkbox" id="seqOn"> install order</label>
-      <button id="seqPlay" disabled>play</button>
-      <span id="seqLabel"></span>
-    </div>
-    <div id="gl"><div id="hud"><div class="t">Generate the assembly</div>
-      <div class="n">Upload → crop → components → build.</div></div></div>
-  </main>
-  <aside class="right">
-    <h2>Evidence</h2>
-    <div id="evidence"><div class="step">Click a component in the list, the
-      crop overlay, or the 3D view.</div></div>
-    <h2>Verification</h2>
-    <div id="checks"><div class="step">Checks appear after a build.</div></div>
-    <h2>Unresolved</h2>
-    <div id="unres"><div class="step">—</div></div>
-  </aside>
-</div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.149.0/three.min.js"></script>
-<script src="/static/app.js"></script>
-</body>
-</html>

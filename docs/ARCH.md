@@ -30,8 +30,8 @@
                         (viewer)   |    | (dl)  spec.json
                                    |    |
                         +----------v----v----------+
-                        | viewer (app/static/)    |
-                        | three.js r149 pinned:   |
+                        | viewer (web/: React+TS, |
+                        | Vite; three r149 npm):  |
                         | crop+overlay, 3D, layer |
                         | toggle, evidence, checks|
                         +-------------------------+

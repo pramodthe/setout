@@ -87,6 +87,16 @@
   interference still UNVERIFIED (AABB-level v0); Spark/SAM
   interpretation, CadQuery/Blender, Modal still future per PLAN.
 
+## 2026-10-29 — frontend migrated to React + TypeScript
+
+- Rebuilt the viewer as `web/` (Vite + React + strict TS, three 0.149
+  npm, no UI framework): same layout/CSS, same element IDs, verbatim
+  Three.js viewport port. FastAPI serves `web/dist` at /.
+- Unmodified drive script passes against the new UI (both variants,
+  0 console errors); screenshots match. Vitest covers badge logic
+  (4 tests). Legacy `app/static/` deleted; drive moved to `e2e/drive.py`.
+- Suite: 29 pytest + tsc + 4 vitest green. See `docs/FRONTEND_MIGRATION.md`.
+
 ## Milestone ledger
 
 | Milestone | State | Evidence |
