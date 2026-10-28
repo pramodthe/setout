@@ -1,6 +1,6 @@
 {
-  "schema_version": "0.1",
-  "note": "Seed rule set, hand-written from NCC 2022 Housing Provisions Part 10.2 as the TARGET SCHEMA the Muse Wonder extractor must produce. Verify every value against the published NCC before relying on it.",
+  "schema_version": "1.0",
+  "note": "NCC 2022 Housing Provisions Part 10.2, schema v1.0. 12 seed rules verified against the published NCC on 28 Oct 2026 (internal/external flashing overlaps trace to explanatory text, not normative clauses); 19 further rules extracted and human-verified the same day.",
   "sources": [
     {
       "id": "NCC2022-HP-10.2",
@@ -140,6 +140,215 @@
       "value": 900,
       "unit": "mm",
       "text": "Where a handheld bidet spray is installed, the area within a 900 mm radius of the wall connection must be waterproof up to at least 150 mm above the floor substrate.",
+      "drives_geometry": false
+    },
+    {
+      "id": "NCC-10.2-washing-machine-tap-width",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "laundry_wall",
+      "parameter": "water_resistant_width_each_side_of_taps_mm",
+      "operator": ">=",
+      "value": 75,
+      "unit": "mm",
+      "text": "Wall area behind a washing machine must be water resistant at least 75 mm to each side of the tap outlets.",
+      "drives_geometry": false
+    },
+    {
+      "id": "NCC-10.2-shower-wall-substrate-height",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "shower_wall",
+      "parameter": "waterproof_above_floor_substrate_mm",
+      "operator": ">=",
+      "value": 1800,
+      "unit": "mm",
+      "text": "Shower area walls must be waterproof to at least 1800 mm above the floor substrate.",
+      "drives_geometry": false
+    },
+    {
+      "id": "NCC-10.2-shower-junction-extent",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "shower_junction",
+      "parameter": "waterproof_each_side_of_junction_mm",
+      "operator": ">=",
+      "value": 40,
+      "unit": "mm",
+      "text": "Wall junctions and joints in the shower area must be waterproof at least 40 mm each side of the junction.",
+      "drives_geometry": false
+    },
+    {
+      "id": "NCC-10.2-room-junction-flashing-leg",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "room_wall_floor_junction",
+      "parameter": "flashing_horizontal_leg_mm",
+      "operator": ">=",
+      "value": 40,
+      "unit": "mm",
+      "text": "Outside the shower area, wall/floor junction flashing must have a horizontal leg at least 40 mm wide.",
+      "drives_geometry": false
+    },
+    {
+      "id": "NCC-10.2-bath-wall-height",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "bath_adjacent_wall",
+      "parameter": "water_resistant_above_vessel_mm",
+      "operator": ">=",
+      "value": 150,
+      "unit": "mm",
+      "text": "Walls beside non-freestanding baths and spas must be water resistant to at least 150 mm above the vessel.",
+      "drives_geometry": false
+    },
+    {
+      "id": "NCC-10.2-bath-wall-clearance",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "bath_adjacent_wall",
+      "parameter": "vessel_wall_proximity_trigger_mm",
+      "operator": "<=",
+      "value": 75,
+      "unit": "mm",
+      "text": "The bath-adjacent wall rules apply where the vessel is within 75 mm of the wall.",
+      "drives_geometry": false
+    },
+    {
+      "id": "NCC-10.2-bath-junction-height",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "bath_adjacent_junction",
+      "parameter": "water_resistant_above_vessel_mm",
+      "operator": ">=",
+      "value": 150,
+      "unit": "mm",
+      "text": "Wall junctions and joints beside baths and spas must be water resistant within 150 mm above the vessel.",
+      "drives_geometry": false
+    },
+    {
+      "id": "NCC-10.2-inserted-bath-wall",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "inserted_bath_wall",
+      "parameter": "waterproof_above_lip_mm",
+      "operator": ">=",
+      "value": 150,
+      "unit": "mm",
+      "text": "Walls around inserted baths and spas must be waterproof to at least 150 mm above the lip.",
+      "drives_geometry": false
+    },
+    {
+      "id": "NCC-10.2-inserted-bath-junction",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "inserted_bath_junction",
+      "parameter": "waterproof_zone_around_bath_mm",
+      "operator": ">=",
+      "value": 150,
+      "unit": "mm",
+      "text": "Wall junctions and joints within 150 mm of an inserted bath or spa must be waterproof.",
+      "drives_geometry": false
+    },
+    {
+      "id": "NCC-10.2-sink-wall-height",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "vessel_adjacent_wall",
+      "parameter": "water_resistant_above_vessel_mm",
+      "operator": ">=",
+      "value": 150,
+      "unit": "mm",
+      "text": "Walls behind other vessels must be water resistant to at least 150 mm above the vessel.",
+      "drives_geometry": false
+    },
+    {
+      "id": "NCC-10.2-sink-wall-clearance",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "vessel_adjacent_wall",
+      "parameter": "vessel_wall_proximity_trigger_mm",
+      "operator": "<=",
+      "value": 75,
+      "unit": "mm",
+      "text": "The other-vessel wall rules apply where the vessel is within 75 mm of the wall.",
+      "drives_geometry": false
+    },
+    {
+      "id": "NCC-10.2-laundry-wc-junction-flashing",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "laundry_wc_junction",
+      "parameter": "flashing_horizontal_leg_mm",
+      "operator": ">=",
+      "value": 40,
+      "unit": "mm",
+      "text": "Laundry and WC wall/floor junction flashing must have a horizontal leg at least 40 mm wide.",
+      "drives_geometry": false
+    },
+    {
+      "id": "NCC-10.2-bidet-waterproof-height",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "wc_bidet_wall",
+      "parameter": "waterproof_above_floor_substrate_mm",
+      "operator": ">=",
+      "value": 150,
+      "unit": "mm",
+      "text": "WC walls near a handheld bidet spray must be waterproof to at least 150 mm above the floor substrate.",
+      "drives_geometry": false
+    },
+    {
+      "id": "NCC-10.2-bidet-resistant-radius",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "wc_bidet_wall",
+      "parameter": "water_resistant_radius_mm",
+      "operator": ">=",
+      "value": 900,
+      "unit": "mm",
+      "text": "WC walls near a handheld bidet spray must be water resistant within a 900 mm radius of the wall connection.",
+      "drives_geometry": false
+    },
+    {
+      "id": "NCC-10.2-bidet-resistant-height",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "wc_bidet_wall",
+      "parameter": "water_resistant_above_ffl_mm",
+      "operator": ">=",
+      "value": 1200,
+      "unit": "mm",
+      "text": "WC walls near a handheld bidet spray must be water resistant to at least 1200 mm above finished floor level.",
+      "drives_geometry": false
+    },
+    {
+      "id": "NCC-10.2-bidet-junction-radius",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "wc_bidet_junction",
+      "parameter": "waterproof_radius_mm",
+      "operator": ">=",
+      "value": 900,
+      "unit": "mm",
+      "text": "Wall junctions in the WC area within a 900 mm radius of a handheld bidet connection must be waterproof.",
+      "drives_geometry": false
+    },
+    {
+      "id": "NCC-10.2-bidet-floor-junction-radius",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "wc_bidet_floor_junction",
+      "parameter": "waterproof_radius_mm",
+      "operator": ">=",
+      "value": 1000,
+      "unit": "mm",
+      "text": "Wall/floor junctions in the WC area within a 1000 mm radius of a handheld bidet connection must be waterproof.",
+      "drives_geometry": false
+    },
+    {
+      "id": "NCC-10.2-unenclosed-waterstop-distance",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "unenclosed_shower",
+      "parameter": "waterstop_distance_from_rose_mm",
+      "operator": ">=",
+      "value": 1500,
+      "unit": "mm",
+      "text": "In unenclosed showers the waterstop must sit at least 1500 mm horizontally from the shower rose.",
+      "drives_geometry": false
+    },
+    {
+      "id": "NCC-10.2-framed-screen-membrane",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "shower_waterstop",
+      "parameter": "membrane_above_tile_at_screen_mm",
+      "operator": ">=",
+      "value": 5,
+      "unit": "mm",
+      "text": "Where a membrane runs under a framed shower screen it must terminate at least 5 mm above the finished tile surface.",
       "drives_geometry": false
     }
   ]

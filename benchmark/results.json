@@ -1,0 +1,858 @@
+{
+  "model": "muse-spark-1.3",
+  "n": 31,
+  "conditions": {
+    "cold": {
+      "accuracy": 0.3548387096774194,
+      "rows": [
+        {
+          "id": "q001",
+          "ok": false,
+          "answer": {
+            "answer_mm": 100,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q002",
+          "ok": true,
+          "answer": {
+            "answer_mm": 25,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q003",
+          "ok": false,
+          "answer": {
+            "answer_mm": 100,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q004",
+          "ok": true,
+          "answer": {
+            "answer_mm": 50,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q005",
+          "ok": false,
+          "answer": {
+            "answer_mm": 75,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q006",
+          "ok": true,
+          "answer": {
+            "answer_mm": 5,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q007",
+          "ok": false,
+          "answer": {
+            "answer_mm": 75,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q008",
+          "ok": false,
+          "answer": {
+            "answer_mm": 50,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q009",
+          "ok": false,
+          "answer": {
+            "answer_mm": 100,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q010",
+          "ok": true,
+          "answer": {
+            "answer_mm": 75,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q011",
+          "ok": false,
+          "answer": {
+            "answer_mm": 150,
+            "operator": "<="
+          },
+          "retried": false
+        },
+        {
+          "id": "q012",
+          "ok": false,
+          "answer": {
+            "answer_mm": 1500,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q013",
+          "ok": false,
+          "answer": {
+            "answer_mm": 300,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q014",
+          "ok": true,
+          "answer": {
+            "answer_mm": 1800,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q015",
+          "ok": false,
+          "answer": {
+            "answer_mm": 75,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q016",
+          "ok": false,
+          "answer": {
+            "answer_mm": 50,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q017",
+          "ok": true,
+          "answer": {
+            "answer_mm": 150,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q018",
+          "ok": true,
+          "answer": {
+            "answer_mm": 75,
+            "operator": "<="
+          },
+          "retried": false
+        },
+        {
+          "id": "q019",
+          "ok": false,
+          "answer": {
+            "answer_mm": 150,
+            "operator": "<="
+          },
+          "retried": false
+        },
+        {
+          "id": "q020",
+          "ok": true,
+          "answer": {
+            "answer_mm": 150,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q021",
+          "ok": false,
+          "answer": {
+            "answer_mm": 150,
+            "operator": "<="
+          },
+          "retried": false
+        },
+        {
+          "id": "q022",
+          "ok": true,
+          "answer": {
+            "answer_mm": 150,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q023",
+          "ok": true,
+          "answer": {
+            "answer_mm": 75,
+            "operator": "<="
+          },
+          "retried": false
+        },
+        {
+          "id": "q024",
+          "ok": false,
+          "answer": {
+            "answer_mm": 50,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q025",
+          "ok": false,
+          "answer": {
+            "answer_mm": 1800,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q026",
+          "ok": false,
+          "answer": {
+            "answer_mm": 1500,
+            "operator": "<="
+          },
+          "retried": false
+        },
+        {
+          "id": "q027",
+          "ok": false,
+          "answer": {
+            "answer_mm": 1800,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q028",
+          "ok": false,
+          "answer": {
+            "answer_mm": 1000,
+            "operator": "<="
+          },
+          "retried": false
+        },
+        {
+          "id": "q029",
+          "ok": false,
+          "answer": {
+            "answer_mm": 1500,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q030",
+          "ok": true,
+          "answer": {
+            "answer_mm": 1500,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q031",
+          "ok": false,
+          "answer": {
+            "answer_mm": 25,
+            "operator": ">="
+          },
+          "retried": false
+        }
+      ]
+    },
+    "grounded": {
+      "accuracy": 1.0,
+      "rows": [
+        {
+          "id": "q001",
+          "ok": true,
+          "answer": {
+            "answer_mm": 50,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q002",
+          "ok": true,
+          "answer": {
+            "answer_mm": 25,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q003",
+          "ok": true,
+          "answer": {
+            "answer_mm": 1800,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q004",
+          "ok": true,
+          "answer": {
+            "answer_mm": 50,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q005",
+          "ok": true,
+          "answer": {
+            "answer_mm": 25,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q006",
+          "ok": true,
+          "answer": {
+            "answer_mm": 5,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q007",
+          "ok": true,
+          "answer": {
+            "answer_mm": 40,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q008",
+          "ok": true,
+          "answer": {
+            "answer_mm": 32,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q009",
+          "ok": true,
+          "answer": {
+            "answer_mm": 1800,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q010",
+          "ok": true,
+          "answer": {
+            "answer_mm": 75,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q011",
+          "ok": true,
+          "answer": {
+            "answer_mm": 150,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q012",
+          "ok": true,
+          "answer": {
+            "answer_mm": 900,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q013",
+          "ok": true,
+          "answer": {
+            "answer_mm": 75,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q014",
+          "ok": true,
+          "answer": {
+            "answer_mm": 1800,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q015",
+          "ok": true,
+          "answer": {
+            "answer_mm": 40,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q016",
+          "ok": true,
+          "answer": {
+            "answer_mm": 40,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q017",
+          "ok": true,
+          "answer": {
+            "answer_mm": 150,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q018",
+          "ok": true,
+          "answer": {
+            "answer_mm": 75,
+            "operator": "<="
+          },
+          "retried": false
+        },
+        {
+          "id": "q019",
+          "ok": true,
+          "answer": {
+            "answer_mm": 150,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q020",
+          "ok": true,
+          "answer": {
+            "answer_mm": 150,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q021",
+          "ok": true,
+          "answer": {
+            "answer_mm": 150,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q022",
+          "ok": true,
+          "answer": {
+            "answer_mm": 150,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q023",
+          "ok": true,
+          "answer": {
+            "answer_mm": 75,
+            "operator": "<="
+          },
+          "retried": false
+        },
+        {
+          "id": "q024",
+          "ok": true,
+          "answer": {
+            "answer_mm": 40,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q025",
+          "ok": true,
+          "answer": {
+            "answer_mm": 150,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q026",
+          "ok": true,
+          "answer": {
+            "answer_mm": 900,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q027",
+          "ok": true,
+          "answer": {
+            "answer_mm": 1200,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q028",
+          "ok": true,
+          "answer": {
+            "answer_mm": 900,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q029",
+          "ok": true,
+          "answer": {
+            "answer_mm": 1000,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q030",
+          "ok": true,
+          "answer": {
+            "answer_mm": 1500,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q031",
+          "ok": true,
+          "answer": {
+            "answer_mm": 5,
+            "operator": ">="
+          },
+          "retried": false
+        }
+      ]
+    },
+    "retry": {
+      "accuracy": 1.0,
+      "rows": [
+        {
+          "id": "q001",
+          "ok": true,
+          "answer": {
+            "answer_mm": 50,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q002",
+          "ok": true,
+          "answer": {
+            "answer_mm": 25,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q003",
+          "ok": true,
+          "answer": {
+            "answer_mm": 1800,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q004",
+          "ok": true,
+          "answer": {
+            "answer_mm": 50,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q005",
+          "ok": true,
+          "answer": {
+            "answer_mm": 25,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q006",
+          "ok": true,
+          "answer": {
+            "answer_mm": 5,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q007",
+          "ok": true,
+          "answer": {
+            "answer_mm": 40,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q008",
+          "ok": true,
+          "answer": {
+            "answer_mm": 32,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q009",
+          "ok": true,
+          "answer": {
+            "answer_mm": 1800,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q010",
+          "ok": true,
+          "answer": {
+            "answer_mm": 75,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q011",
+          "ok": true,
+          "answer": {
+            "answer_mm": 150,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q012",
+          "ok": true,
+          "answer": {
+            "answer_mm": 900,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q013",
+          "ok": true,
+          "answer": {
+            "answer_mm": 75,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q014",
+          "ok": true,
+          "answer": {
+            "answer_mm": 1800,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q015",
+          "ok": true,
+          "answer": {
+            "answer_mm": 40,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q016",
+          "ok": true,
+          "answer": {
+            "answer_mm": 40,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q017",
+          "ok": true,
+          "answer": {
+            "answer_mm": 150,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q018",
+          "ok": true,
+          "answer": {
+            "answer_mm": 75,
+            "operator": "<="
+          },
+          "retried": false
+        },
+        {
+          "id": "q019",
+          "ok": true,
+          "answer": {
+            "answer_mm": 150,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q020",
+          "ok": true,
+          "answer": {
+            "answer_mm": 150,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q021",
+          "ok": true,
+          "answer": {
+            "answer_mm": 150,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q022",
+          "ok": true,
+          "answer": {
+            "answer_mm": 150,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q023",
+          "ok": true,
+          "answer": {
+            "answer_mm": 75,
+            "operator": "<="
+          },
+          "retried": false
+        },
+        {
+          "id": "q024",
+          "ok": true,
+          "answer": {
+            "answer_mm": 40,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q025",
+          "ok": true,
+          "answer": {
+            "answer_mm": 150,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q026",
+          "ok": true,
+          "answer": {
+            "answer_mm": 900,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q027",
+          "ok": true,
+          "answer": {
+            "answer_mm": 1200,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q028",
+          "ok": true,
+          "answer": {
+            "answer_mm": 900,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q029",
+          "ok": true,
+          "answer": {
+            "answer_mm": 1000,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q030",
+          "ok": true,
+          "answer": {
+            "answer_mm": 1500,
+            "operator": ">="
+          },
+          "retried": false
+        },
+        {
+          "id": "q031",
+          "ok": true,
+          "answer": {
+            "answer_mm": 5,
+            "operator": ">="
+          },
+          "retried": false
+        }
+      ]
+    }
+  }
+}

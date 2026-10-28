@@ -16,7 +16,7 @@
       "kind": "box",
       "color": "#8d8d8d",
       "rule_id": null,
-      "note": "Structural substrate, bathroom side",
+      "note": "Structural substrate, bathroom side (product dimension, no governing rule)",
       "x": 0,
       "y": -60,
       "z": 0,
@@ -44,7 +44,7 @@
       "kind": "box",
       "color": "#9a9a9a",
       "rule_id": null,
-      "note": "Wall substrate behind membrane",
+      "note": "Wall substrate behind membrane (product dimension, no governing rule)",
       "x": -960,
       "y": -25,
       "z": 0,
@@ -82,7 +82,7 @@
       "kind": "coat",
       "color": "#c98f4a",
       "rule_id": null,
-      "note": "Bond breaker at wall/floor junction and all internal corners",
+      "note": "Bond breaker at wall/floor junction and all internal corners (product dimension, no governing rule)",
       "x": -900,
       "y": -25,
       "z": 0,
@@ -150,12 +150,26 @@
       "kind": "box",
       "color": "#bdb6a8",
       "rule_id": null,
-      "note": "Screed to falls over the membrane",
+      "note": "Screed to falls over the membrane (product dimension, no governing rule)",
       "x": -900,
       "y": -21,
       "z": 0,
       "w": 810,
       "h": 22,
+      "d": 1200
+    },
+    {
+      "name": "Bathroom floor tiles",
+      "layer": "screed",
+      "kind": "box",
+      "color": "#cfc9bd",
+      "rule_id": null,
+      "note": "Floor tile finish (product dimension, no governing rule)",
+      "x": 0,
+      "y": 4,
+      "z": 0,
+      "w": 700,
+      "h": 8,
       "d": 1200
     }
   ],
@@ -180,17 +194,6 @@
     }
   ],
   "rules_used": {
-    "NCC-10.2-membrane-wall-height": {
-      "id": "NCC-10.2-membrane-wall-height",
-      "source": "NCC2022-HP-10.2",
-      "applies_to": "shower_wall",
-      "parameter": "membrane_above_finished_tile_mm",
-      "operator": ">=",
-      "value": 1800,
-      "unit": "mm",
-      "text": "For hobless showers and showers with hobs or stepdowns, the membrane must run up the wall to at least 1800 mm above the finished tile level of the floor.",
-      "drives_geometry": true
-    },
     "NCC-10.2-hob-membrane-return": {
       "id": "NCC-10.2-hob-membrane-return",
       "source": "NCC2022-HP-10.2",
@@ -200,6 +203,17 @@
       "value": 50,
       "unit": "mm",
       "text": "For showers with hobs, the membrane must pass over the top of the hob, down the outside face, and terminate at least 50 mm onto the floor.",
+      "drives_geometry": true
+    },
+    "NCC-10.2-membrane-wall-height": {
+      "id": "NCC-10.2-membrane-wall-height",
+      "source": "NCC2022-HP-10.2",
+      "applies_to": "shower_wall",
+      "parameter": "membrane_above_finished_tile_mm",
+      "operator": ">=",
+      "value": 1800,
+      "unit": "mm",
+      "text": "For hobless showers and showers with hobs or stepdowns, the membrane must run up the wall to at least 1800 mm above the finished tile level of the floor.",
       "drives_geometry": true
     },
     "NCC-10.2-shower-stepdown": {

@@ -113,7 +113,7 @@ def build_shower_hob(rules, overrides=None):
 
     solids.append(solid(
         "Bathroom floor substrate", "substrate", "box", "#8d8d8d",
-        note="Structural substrate, bathroom side",
+        note="Structural substrate, bathroom side (product dimension, no governing rule)",
         x=0, y=-slab_thickness, z=0, w=700, h=slab_thickness, d=length))
 
     solids.append(solid(
@@ -125,7 +125,7 @@ def build_shower_hob(rules, overrides=None):
 
     solids.append(solid(
         "Shower wall substrate", "substrate", "box", "#9a9a9a",
-        note="Wall substrate behind membrane",
+        note="Wall substrate behind membrane (product dimension, no governing rule)",
         x=wall_x - 60, y=shower_y, z=0, w=60, h=wall_h + 200, d=length))
 
     solids.append(solid(
@@ -140,7 +140,7 @@ def build_shower_hob(rules, overrides=None):
 
     solids.append(solid(
         "Bond breaker", "bond_breaker", "coat", "#c98f4a",
-        note="Bond breaker at wall/floor junction and all internal corners",
+        note="Bond breaker at wall/floor junction and all internal corners (product dimension, no governing rule)",
         x=wall_x, y=shower_y, z=0, w=12, h=12, d=length))
 
     # --- the membrane: every vertex placed by a rule ------------------------
@@ -177,9 +177,14 @@ def build_shower_hob(rules, overrides=None):
 
     solids.append(solid(
         "Screed", "screed", "box", "#bdb6a8",
-        note="Screed to falls over the membrane",
+        note="Screed to falls over the membrane (product dimension, no governing rule)",
         x=wall_x, y=shower_y + membrane_t, z=0,
         w=shower_run - hob_width, h=22, d=length))
+
+    solids.append(solid(
+        "Bathroom floor tiles", "screed", "box", "#cfc9bd",
+        note="Floor tile finish (product dimension, no governing rule)",
+        x=0, y=membrane_t, z=0, w=700, h=8, d=length))
 
     checks = [
         {"parameter": "stepdown_below_ffl_mm", "value": stepdown,
@@ -197,12 +202,12 @@ def build_shower_hob(rules, overrides=None):
         "layer_order": ["substrate", "primer", "bond_breaker", "membrane", "screed"],
         "solids": solids,
         "checks": checks,
-        "rules_used": _rules_used(solids, rules),
+        "rules_used": _rules_used(solids, checks, rules),
     }
 
 
-def _rules_used(solids, rules):
-    """Every rule referenced by a solid OR by a polyline vertex."""
+def _rules_used(solids, checks, rules):
+    """Every rule referenced by a solid, a polyline vertex, or a check."""
     ids = set()
     for s in solids:
         if s.get("rule_id"):
@@ -210,10 +215,161 @@ def _rules_used(solids, rules):
         for v in s.get("path", []) or []:
             if v.get("rule_id"):
                 ids.add(v["rule_id"])
-    return {rid: rules[rid] for rid in ids if rid in rules}
+    for c in checks or []:
+        if c.get("rule_id"):
+            ids.add(c["rule_id"])
+    return {rid: rules[rid] for rid in sorted(ids) if rid in rules}
 
 
-BUILDERS = {"shower_hob": build_shower_hob}
+def build_wall_floor_junction(rules, overrides=None):
+    """
+    Wall/floor junction with flashing.
+
+    Cross-section profile, extruded along +z. FFL at y=0, wall substrate
+    face at x=0. The flashing L is placed by rules; substrates and tile
+    finish are product dimensions.
+    """
+    overrides = overrides or {}
+    length = 1200
+    floor_run = 600
+    wall_h = 400
+    slab_thickness = 60
+    wall_t = 60
+    flash_t = 6          # drawn flashing thickness so it is visible
+
+    vleg, r_vleg, ok_vleg = resolve(
+        rules, "wall_floor_junction", "flashing_vertical_leg_above_ffl_mm",
+        overrides.get("flashing_vertical_leg_above_ffl_mm"))
+    hleg, r_hleg, ok_hleg = resolve(
+        rules, "wall_floor_junction", "flashing_horizontal_leg_mm",
+        overrides.get("flashing_horizontal_leg_mm"))
+
+    solids = []
+    solids.append(solid(
+        "Floor substrate", "substrate", "box", "#8d8d8d",
+        note="Structural substrate (product dimension, no governing rule)",
+        x=0, y=-slab_thickness, z=0, w=floor_run, h=slab_thickness, d=length))
+    solids.append(solid(
+        "Wall substrate", "substrate", "box", "#9a9a9a",
+        note="Wall substrate (product dimension, no governing rule)",
+        x=-wall_t, y=0, z=0, w=wall_t, h=wall_h, d=length))
+    solids.append(solid(
+        "Flashing vertical leg", "membrane", "box", "#2f6fb8",
+        rule_id=r_vleg,
+        note=f"Flashing up the wall {vleg:g} mm above FFL",
+        x=-flash_t, y=0, z=0, w=flash_t, h=vleg, d=length))
+    solids.append(solid(
+        "Flashing horizontal leg", "membrane", "box", "#2f6fb8",
+        rule_id=r_hleg,
+        note=f"Flashing {hleg:g} mm out onto the floor",
+        x=0, y=0, z=0, w=hleg, h=flash_t, d=length))
+    solids.append(solid(
+        "Floor tiles", "screed", "box", "#cfc9bd",
+        note="Floor tile finish (product dimension, no governing rule)",
+        x=hleg, y=0, z=0, w=floor_run - hleg, h=8, d=length))
+
+    checks = [
+        {"parameter": "flashing_vertical_leg_above_ffl_mm", "value": vleg,
+         "rule_id": r_vleg, "satisfied": ok_vleg},
+        {"parameter": "flashing_horizontal_leg_mm", "value": hleg,
+         "rule_id": r_hleg, "satisfied": ok_hleg},
+    ]
+
+    return {
+        "detail_id": "wall_floor_junction",
+        "title": "Wall/floor junction — flashing",
+        "units": "mm",
+        "layer_order": ["substrate", "membrane", "screed"],
+        "solids": solids,
+        "checks": checks,
+        "rules_used": _rules_used(solids, checks, rules),
+    }
+
+
+def build_internal_corner(rules, overrides=None):
+    """
+    Internal (concave) wall corner with flashing.
+
+    Two wall faces meet at a vertical corner line at x=0, z=0, FFL at y=0.
+    Wall A runs in +x, wall B runs in +z. A flashing leg on each face extends
+    `overlap` mm out from the corner and `flash_h` mm up from FFL — both
+    placed by rules. Substrates are product dimensions.
+    """
+    overrides = overrides or {}
+    wall_run = 500        # how far each wall face is drawn from the corner
+    floor_run = 500
+    slab_thickness = 60
+    wall_t = 60
+    flash_t = 6           # drawn flashing thickness so it is visible
+    margin = 100          # substrate drawn past the flashing top (product)
+
+    overlap, r_overlap, ok_overlap = resolve(
+        rules, "internal_corner", "flashing_leg_overlap_mm",
+        overrides.get("flashing_leg_overlap_mm"))
+    flash_h, r_flash_h, ok_flash_h = resolve(
+        rules, "shower_wall", "vertical_flashing_above_ffl_mm",
+        overrides.get("vertical_flashing_above_ffl_mm"))
+
+    solids = []
+    solids.append(solid(
+        "Floor substrate", "substrate", "box", "#8d8d8d",
+        note="Structural substrate (product dimension, no governing rule)",
+        x=0, y=-slab_thickness, z=0,
+        w=floor_run, h=slab_thickness, d=floor_run))
+    solids.append(solid(
+        "Wall A substrate", "substrate", "box", "#9a9a9a",
+        note="Wall substrate (product dimension, no governing rule)",
+        x=0, y=0, z=-wall_t, w=wall_run, h=flash_h + margin, d=wall_t))
+    solids.append(solid(
+        "Wall B substrate", "substrate", "box", "#9a9a9a",
+        note="Wall substrate (product dimension, no governing rule)",
+        x=-wall_t, y=0, z=0, w=wall_t, h=flash_h + margin, d=wall_run))
+    solids.append(solid(
+        "Bond breaker", "bond_breaker", "box", "#c98f4a",
+        note="Bond breaker fillet up the corner (product dimension, no governing rule)",
+        x=0, y=0, z=0, w=12, h=flash_h, d=12))
+    solids.append(solid(
+        "Flashing leg on wall A", "membrane", "box", "#2f6fb8",
+        rule_id=r_overlap,
+        note=f"Flashing {overlap:g} mm out from the corner, {flash_h:g} mm up from FFL",
+        x=0, y=0, z=0, w=overlap, h=flash_h, d=flash_t))
+    solids.append(solid(
+        "Flashing leg on wall B", "membrane", "box", "#2f6fb8",
+        rule_id=r_overlap,
+        note=f"Flashing {overlap:g} mm out from the corner, {flash_h:g} mm up from FFL",
+        x=0, y=0, z=0, w=flash_t, h=flash_h, d=overlap))
+
+    checks = [
+        {"parameter": "flashing_leg_overlap_mm", "value": overlap,
+         "rule_id": r_overlap, "satisfied": ok_overlap},
+        {"parameter": "vertical_flashing_above_ffl_mm", "value": flash_h,
+         "rule_id": r_flash_h, "satisfied": ok_flash_h},
+    ]
+
+    return {
+        "detail_id": "internal_corner",
+        "title": "Internal corner — flashing",
+        "units": "mm",
+        "layer_order": ["substrate", "bond_breaker", "membrane"],
+        "solids": solids,
+        "checks": checks,
+        "rules_used": _rules_used(solids, checks, rules),
+    }
+
+
+BUILDERS = {
+    "shower_hob": build_shower_hob,
+    "wall_floor_junction": build_wall_floor_junction,
+    "internal_corner": build_internal_corner,
+}
+
+# Canonical "built wrong" demo per detail, shipped as scenes_violate.js for the
+# Jarvis violation toggle. Each override MUST fail its rule; main() asserts it.
+VIOLATIONS = {
+    "shower_hob": {"membrane_return_onto_floor_mm": 20},
+    "wall_floor_junction": {"flashing_horizontal_leg_mm": 20},
+    "internal_corner": {"flashing_leg_overlap_mm": 20},
+}
 
 
 def main():
@@ -242,8 +398,28 @@ def main():
     js.write_text("window.SCENE = " + json.dumps(scene, indent=2) + ";",
                   encoding="utf-8")
 
+    # Every detail in one payload - feeds the viewer's detail switcher.
+    # Overrides apply only to the detail being (mis)built.
+    scenes = {k: BUILDERS[k](rules, overrides if k == args.detail else {})
+              for k in sorted(BUILDERS)}
+    scenes_js = ROOT / "viewer" / "scenes.js"
+    scenes_js.write_text("window.SCENES = " + json.dumps(scenes, indent=2) + ";",
+                         encoding="utf-8")
+
+    # Canonical wrong builds for the Jarvis violation toggle. A violation
+    # payload that accidentally passes its rule would lie in the demo.
+    violated = {k: BUILDERS[k](rules, dict(v)) for k, v in VIOLATIONS.items()}
+    for k, s in violated.items():
+        if all(c["satisfied"] for c in s["checks"]):
+            raise SystemExit(f"VIOLATIONS[{k}] passes all checks - fix the override")
+    viol_js = ROOT / "viewer" / "scenes_violate.js"
+    viol_js.write_text("window.SCENES_VIOLATE = " + json.dumps(violated, indent=2) + ";",
+                       encoding="utf-8")
+
     print(f"wrote {out}")
     print(f"wrote {js}")
+    print(f"wrote {scenes_js} ({', '.join(scenes)})")
+    print(f"wrote {viol_js} ({', '.join(sorted(violated))})")
     print(f"  solids: {len(scene['solids'])}   rules used: {len(scene['rules_used'])}")
     for c in scene["checks"]:
         flag = "PASS" if c["satisfied"] else "FAIL"

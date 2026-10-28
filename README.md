@@ -47,13 +47,20 @@ the geometry is built from the number, not drawn around it.
 
 ```
 spec/SPEC.md            The plan. Read this first.
-rules/rules.json        12 NCC rules as structured data. The schema the
-                        Muse Wonder extractor must produce.
+rules/rules.json        31 NCC rules as structured data (schema v1.0,
+                        locked and validated). Values human-verified 28 Oct.
 generator/              THE TECHNICAL CORE. Builds 3D from rule numbers.
                         Every solid carries the rule id that set it.
-viewer/index.html       Three.js viewer. Layer toggles, clause on click.
+                        3 details: shower hob, wall/floor junction,
+                        internal corner. Also emits scenes_violate.js.
+extractor/              Rule extraction + schema validator + merge tool
+                        for second manuals. Stdlib only.
+viewer/jarvis.html      Phone-first Jarvis view: site photo + SAM boxes,
+                        layer stepper, violation toggle, evidence capture.
+                        Works from file://. index.html is the desktop orbit view.
 perception/             Day 1 SAM 3.1 kill-check. Read the docstring.
-benchmark/              Seeded with 12 questions. Grow to 60-100.
+benchmark/run.py        Cold vs +rules vs +retry runner. Writes results.json
+                        + chart.html. 12 questions. Grow to 60-100.
 data/                   Your footage and manuals (gitignored).
 ```
 
