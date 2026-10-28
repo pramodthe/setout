@@ -1,4 +1,138 @@
 window.SCENES = {
+  "internal_corner": {
+    "detail_id": "internal_corner",
+    "title": "Internal corner \u2014 flashing",
+    "units": "mm",
+    "layer_order": [
+      "substrate",
+      "bond_breaker",
+      "membrane"
+    ],
+    "solids": [
+      {
+        "name": "Floor substrate",
+        "layer": "substrate",
+        "kind": "box",
+        "color": "#8d8d8d",
+        "rule_id": null,
+        "note": "Structural substrate (product dimension, no governing rule)",
+        "x": 0,
+        "y": -60,
+        "z": 0,
+        "w": 500,
+        "h": 60,
+        "d": 500
+      },
+      {
+        "name": "Wall A substrate",
+        "layer": "substrate",
+        "kind": "box",
+        "color": "#9a9a9a",
+        "rule_id": null,
+        "note": "Wall substrate (product dimension, no governing rule)",
+        "x": 0,
+        "y": 0,
+        "z": -60,
+        "w": 500,
+        "h": 1900,
+        "d": 60
+      },
+      {
+        "name": "Wall B substrate",
+        "layer": "substrate",
+        "kind": "box",
+        "color": "#9a9a9a",
+        "rule_id": null,
+        "note": "Wall substrate (product dimension, no governing rule)",
+        "x": -60,
+        "y": 0,
+        "z": 0,
+        "w": 60,
+        "h": 1900,
+        "d": 500
+      },
+      {
+        "name": "Bond breaker",
+        "layer": "bond_breaker",
+        "kind": "box",
+        "color": "#c98f4a",
+        "rule_id": null,
+        "note": "Bond breaker fillet up the corner (product dimension, no governing rule)",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "w": 12,
+        "h": 1800,
+        "d": 12
+      },
+      {
+        "name": "Flashing leg on wall A",
+        "layer": "membrane",
+        "kind": "box",
+        "color": "#2f6fb8",
+        "rule_id": "NCC-10.2-internal-flashing-overlap",
+        "note": "Flashing 40 mm out from the corner, 1800 mm up from FFL",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "w": 40,
+        "h": 1800,
+        "d": 6
+      },
+      {
+        "name": "Flashing leg on wall B",
+        "layer": "membrane",
+        "kind": "box",
+        "color": "#2f6fb8",
+        "rule_id": "NCC-10.2-internal-flashing-overlap",
+        "note": "Flashing 40 mm out from the corner, 1800 mm up from FFL",
+        "x": 0,
+        "y": 0,
+        "z": 0,
+        "w": 6,
+        "h": 1800,
+        "d": 40
+      }
+    ],
+    "checks": [
+      {
+        "parameter": "flashing_leg_overlap_mm",
+        "value": 40,
+        "rule_id": "NCC-10.2-internal-flashing-overlap",
+        "satisfied": true
+      },
+      {
+        "parameter": "vertical_flashing_above_ffl_mm",
+        "value": 1800,
+        "rule_id": "NCC-10.2-vertical-flashing-height",
+        "satisfied": true
+      }
+    ],
+    "rules_used": {
+      "NCC-10.2-internal-flashing-overlap": {
+        "id": "NCC-10.2-internal-flashing-overlap",
+        "source": "NCC2022-HP-10.2",
+        "applies_to": "internal_corner",
+        "parameter": "flashing_leg_overlap_mm",
+        "operator": ">=",
+        "value": 40,
+        "unit": "mm",
+        "text": "Internal flashings must have each leg overlapping at least 40 mm.",
+        "drives_geometry": true
+      },
+      "NCC-10.2-vertical-flashing-height": {
+        "id": "NCC-10.2-vertical-flashing-height",
+        "source": "NCC2022-HP-10.2",
+        "applies_to": "shower_wall",
+        "parameter": "vertical_flashing_above_ffl_mm",
+        "operator": ">=",
+        "value": 1800,
+        "unit": "mm",
+        "text": "Vertical flashings must extend at least 1800 mm above finished floor level.",
+        "drives_geometry": true
+      }
+    }
+  },
   "shower_hob": {
     "detail_id": "shower_hob",
     "title": "Shower hob \u2014 waterproofing membrane",
