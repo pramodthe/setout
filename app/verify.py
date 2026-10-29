@@ -197,6 +197,74 @@ def verify_dimensions(spec: DetailSpec, meshes: dict[str, Mesh]
     return out
 
 
+def verify_program_dims(spec: DetailSpec, meshes: dict[str, Mesh]
+                        ) -> list[CheckResult]:
+    """Stage B/C for spec v2 (program-compiled) details: every box is built
+    to its program extents, and every drawing value drives some geometry."""
+    out: list[CheckResult] = []
+    for c in spec.components:
+        m = meshes.get(c.id)
+        if not m or not m.positions:
+            continue
+        b = m.bounds()
+        assert b is not None
+        g = {p.name: p.value for p in c.params}
+        gid = c.generator.id
+        if gid == "box" and all(k in g for k in ("x0", "x1", "y0", "y1")):
+            want = (g["x0"], g["y0"], g.get("z0", b[2]),
+                    g["x1"], g["y1"], g.get("z1", b[5]))
+        elif gid == "profile" and c.path:
+            want = (min(p.x for p in c.path), min(p.y for p in c.path), g.get("z0", b[2]),
+                    max(p.x for p in c.path), max(p.y for p in c.path), g.get("z1", b[5]))
+        elif gid == "revolve" and c.path:
+            r = max(p.x for p in c.path)
+            want = (g["cx"] - r, min(p.y for p in c.path), g["cz"] - r,
+                    g["cx"] + r, max(p.y for p in c.path), g["cz"] + r)
+        elif gid.startswith("fixture_") or gid == "cad_mesh":
+            env = (g["x0"], g["y0"], g["z0"], g["x1"], g["y1"], g["z1"])
+            over = max([env[i] - b[i] for i in range(3)] + [b[i] - env[i] for i in range(3, 6)])
+            out.append(_c(f"B-built-{c.id}", "B",
+                          f"{c.id}: " + ("AI-modelled part" if gid == "cad_mesh"
+                                         else f"{gid[8:]} fixture") + " stays inside its envelope",
+                          "PASS" if over <= 0.01 else "FAIL",
+                          expected=[round(v, 2) for v in env], actual=round(max(over, 0), 4),
+                          tolerance=0.01, evidence="mm outside the program envelope"))
+            if gid == "cad_mesh":
+                info = (spec.context.get("cad_parts") or {}).get(c.id, {})
+                out.append(_c(f"C-cad-{c.id}", "C",
+                              f"{c.id}: AI-modelled geometry is illustrative only",
+                              "N/A", actual=f"scale {info.get('scale', 1):.3g}",
+                              evidence=f"CadQuery in a no-network sandbox; code sha "
+                                       f"{str(info.get('code_sha', ''))[:12]}; never a "
+                                       "verified dimension"))
+            continue
+        else:
+            continue
+        err = max(abs(a - w) for a, w in zip(b, want))
+        out.append(_c(f"B-built-{c.id}", "B",
+                      f"{c.id}: built extents match the program",
+                      "PASS" if err <= 0.01 else "FAIL",
+                      expected=[round(v, 2) for v in want],
+                      actual=round(err, 4), tolerance=0.01,
+                      evidence="max |mesh bound - program value| in mm"))
+    for q in spec.context.get("drawing_params", []):
+        used = q.get("used_by") or []
+        out.append(_c(f"C-trace-{q['name']}", "C",
+                      f"Drawing value {q['value']:g} {q['unit']} "
+                      f"({q['name']}) drives geometry",
+                      "PASS" if used else "UNVERIFIED",
+                      expected=q.get("source_quote"),
+                      actual=", ".join(used) or "not used by any part",
+                      evidence=f"kind: {q.get('kind', 'exact')}"))
+    n_assump = sum(1 for c in spec.components for p in c.params
+                   if p.provenance == Provenance.ASSUMPTION)
+    out.append(_c("B-assumptions", "B",
+                  f"{n_assump} assumption values excluded from verification",
+                  "N/A", actual=n_assump,
+                  evidence="assumptions never count as verified dims"))
+    return out
+
+
 def verify_meshes(spec: DetailSpec, meshes: dict[str, Mesh]) -> list[CheckResult]:
     out: list[CheckResult] = []
     for c in spec.components:
@@ -276,8 +344,10 @@ def verify_end_to_end(spec: DetailSpec, doc_sha256: str | None
 
 def verify_all(spec: DetailSpec, meshes: dict[str, Mesh],
                doc_sha256: str | None) -> list[CheckResult]:
+    dims = (verify_program_dims if spec.context.get("program_version")
+            else verify_dimensions)
     results = (verify_spec_structure(spec)
-               + verify_dimensions(spec, meshes)
+               + dims(spec, meshes)
                + verify_meshes(spec, meshes)
                + verify_end_to_end(spec, doc_sha256))
     spec.verification = results

@@ -331,6 +331,7 @@ def door_sill_d3() -> DetailSpec:
             crop_id=CROP, page_width_pt=540, page_height_pt=780),
         context={
             "location": "door sill at slab edge with step down to exterior",
+            "situation": ["Residential", "External", "Balcony / Doorway", "Door sill"],
             "substrate": "concrete slab (assumed; material not labelled)",
             "system": None,
             "illustrative_extent_z_mm": 600,
@@ -608,6 +609,7 @@ def door_subsill_d4() -> DetailSpec:
             crop_id=CROPD, page_width_pt=540, page_height_pt=780),
         context={
             "location": "sub-sill section fixed in 80mm slab set-down",
+            "situation": ["Residential", "External", "Balcony / Doorway", "Sub-sill fixing"],
             "substrate": "concrete slab (assumed; material not labelled)",
             "system": None,
             "illustrative_extent_z_mm": 600,

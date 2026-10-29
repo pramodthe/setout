@@ -72,11 +72,18 @@ def store_pdf(filename: str, data: bytes) -> dict:
                 from PIL import Image as PILImage
                 with PILImage.open(__import__("io").BytesIO(payload)) as im:
                     w, h = im.size
+                    fmt = im.format
+                    if fmt not in ("JPEG", "PNG"):
+                        # e.g. JPEG 2000: browsers and the model API can't
+                        # read it; re-encode the decoded pixels as PNG
+                        buf = __import__("io").BytesIO()
+                        im.save(buf, "PNG")
+                        payload, fmt = buf.getvalue(), "PNG"
             except Exception:
                 continue
             if w < 200 or h < 200:
                 continue
-            ext = "jpg" if name.lower().endswith(".jpg") else "png"
+            ext = "jpg" if fmt == "JPEG" else "png"
             stem = name.rsplit(".", 1)[0]
             crop_id = f"p{i}_{stem}"
             (d / f"{crop_id}.{ext}").write_bytes(payload)
@@ -98,6 +105,15 @@ def store_pdf(filename: str, data: bytes) -> dict:
     con.close()
     return {"id": doc_id, "filename": filename, "sha256": sha,
             "pages": len(reader.pages), "figures": figures}
+
+
+def find_document_by_sha(sha256: str) -> dict | None:
+    """Most recent upload of this exact PDF (crops are stored per upload)."""
+    con = db()
+    row = con.execute("SELECT id FROM documents WHERE sha256=? ORDER BY created DESC",
+                      (sha256,)).fetchone()
+    con.close()
+    return get_document(row[0]) if row else None
 
 
 def get_document(doc_id: str) -> dict | None:
