@@ -26,6 +26,7 @@ const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export default function Guide(p: {
   detailId: string;
   run: (a: GuideAction) => void;
+  off?: boolean; // AI not configured on this server (e.g. browse-only demo)
 }): JSX.Element {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [busy, setBusy] = useState(false);
@@ -88,7 +89,11 @@ export default function Guide(p: {
         <span>Muse narrates and drives the 3D. Numbers are checked against this detail.</span>
       </div>
       <div className="gmsgs" id="guideMsgs">
-        {msgs.length === 0 && (
+        {p.off && (
+          <div className="gempty k">The AI guide is switched off on this server. Everything else works: orbit,
+            explode, cut and step through the install.</div>
+        )}
+        {msgs.length === 0 && !p.off && (
           <div className="gempty">
             {QUICK.map((x) => (
               <button key={x} className="chip" onClick={() => void ask(x)}>
@@ -144,7 +149,7 @@ export default function Guide(p: {
           id="guideInput"
           placeholder="Ask the guide… e.g. what goes on first?"
           value={q}
-          disabled={busy}
+          disabled={busy || p.off}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && void ask(q)}
         />

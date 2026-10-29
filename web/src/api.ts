@@ -7,6 +7,7 @@ import type {
   Doc,
   GenJob,
   LibraryEntry,
+  ReviewData,
   Scene,
   SpecSummary,
 } from "./types";
@@ -37,7 +38,26 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ detail_id: detailId, doc_id: docId, use_display_thickness: useDisplay }),
     }),
-  aiStatus: (): Promise<{ configured: boolean; model: string }> => req("/api/ai/status"),
+  aiStatus: (): Promise<{ configured: boolean; model: string; public: boolean }> => req("/api/ai/status"),
+  drawingUrl: (detailId: string): string => `/api/specs/${encodeURIComponent(detailId)}/drawing`,
+  review: (detailId: string): Promise<ReviewData> => req(`/api/specs/${encodeURIComponent(detailId)}/review`),
+  saveReview: (
+    detailId: string,
+    body: {
+      edits?: { name: string; value: number }[];
+      accept?: string[];
+      labels?: { part_id: string; label: string | null }[];
+      publish?: boolean;
+      reviewer?: string;
+    },
+  ): Promise<ReviewData> =>
+    req(`/api/specs/${encodeURIComponent(detailId)}/review`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  locate: (detailId: string): Promise<GenJob> =>
+    req(`/api/specs/${encodeURIComponent(detailId)}/locate`, { method: "POST" }),
   library: (): Promise<{ details: LibraryEntry[]; components: ComponentGroup[] }> => req("/api/library"),
   scene: (detailId: string): Promise<Scene> => req(`/api/specs/${encodeURIComponent(detailId)}/scene`),
   thumbUrl: (detailId: string): string => `/api/specs/${encodeURIComponent(detailId)}/thumb`,

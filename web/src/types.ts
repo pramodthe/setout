@@ -178,6 +178,8 @@ export interface LibraryEntry {
   parts: number;
   drawing_values: number;
   labels: number;
+  review: "draft" | "reviewed" | null;
+  located: number;
   components: { id: string; type: string; label: string | null }[];
 }
 
@@ -204,4 +206,38 @@ export interface GuideResult {
   follow_up: string;
   ungrounded: number;
   retried: boolean;
+}
+
+export interface ReviewParam {
+  name: string;
+  value: number;
+  unit: string;
+  provenance: string;
+  source_quote: string | null;
+  kind: string;
+  note: string | null;
+  used_by: string[];
+  accepted: boolean;
+  edited: { from: number; to: number } | null;
+}
+
+export interface ReviewData {
+  detail_id: string;
+  status: "draft" | "reviewed";
+  by: string | null;
+  at: string | null;
+  params: ReviewParam[];
+  parts: { id: string; type: string; label: string | null; shape: string }[];
+  read_labels: string[];
+  gate_notes: string[];
+  revisions: { accepted: boolean; reason: string; issues: { part_id: string; problem: string; fix: string }[] }[];
+}
+
+export interface Region {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  c: number;
+  prompt: string;
 }
