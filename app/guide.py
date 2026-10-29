@@ -61,8 +61,22 @@ does not answer the question, say so plainly.
 """
 
 
+_NUM = r"(?<![\w.])\d+(?:\.\d+)?"
+_RATIO = re.compile(r"(?<![\w.])(\d+(?:\.\d+)?)\s*(?::|\bin\b)\s*(\d+(?:\.\d+)?)(?!\w|\.\d)")
+
+
+def _extract(s: str) -> tuple[list[float], list[tuple[float, str]]]:
+    """Plain numbers and ratios in text. "1:80" and "1 in 80" are one ratio
+    (0.0125), never the numbers 1 and 80."""
+    s = s or ""
+    ratios = [(float(a) / float(b), m.group(0))
+              for m in _RATIO.finditer(s) for a, b in [m.groups()] if float(b)]
+    plain = [float(x) for x in re.findall(_NUM, _RATIO.sub(" ", s))]
+    return plain, ratios
+
+
 def _numbers(s: str) -> list[float]:
-    return [float(x) for x in re.findall(r"(?<![\w.])\d+(?:\.\d+)?", s or "")]
+    return _extract(s)[0]
 
 
 def context(spec: DetailSpec) -> dict:
@@ -100,11 +114,23 @@ def allowed_numbers(spec: DetailSpec) -> set[float]:
     return nums
 
 
-def ungrounded(steps: list[dict], spec: DetailSpec) -> dict[int, list[float]]:
+def allowed_ratios(spec: DetailSpec) -> list[float]:
+    out = [p.value for c in spec.components for p in c.params if p.unit == "ratio"]
+    for c in spec.components:
+        for text in [c.source_label or ""] + [p.source_quote or "" for p in c.params]:
+            out += [r for r, _ in _extract(text)[1]]
+    return out
+
+
+def ungrounded(steps: list[dict], spec: DetailSpec) -> dict[int, list[float | str]]:
     ok = allowed_numbers(spec)
-    bad: dict[int, list[float]] = {}
+    ratios = allowed_ratios(spec)
+    bad: dict[int, list[float | str]] = {}
     for i, st in enumerate(steps):
-        miss = [n for n in _numbers(st["say"]) if round(n, 3) not in ok]
+        plain, said = _extract(st["say"])
+        miss: list[float | str] = [n for n in plain if round(n, 3) not in ok]
+        miss += [txt for r, txt in said
+                 if not any(abs(r - a) <= 1e-3 * max(abs(a), 1e-9) for a in ratios)]
         if miss:
             bad[i] = miss
     return bad
@@ -144,7 +170,8 @@ def ask(spec: DetailSpec, question: str, history: list[dict] | None = None,
     retried = False
     if bad:
         retried = True
-        fb = "; ".join(f"step {i + 1}: {', '.join(f'{n:g}' for n in v)}" for i, v in bad.items())
+        fb = "; ".join(f"step {i + 1}: " + ", ".join(n if isinstance(n, str) else f"{n:g}" for n in v)
+                       for i, v in bad.items())
         out, u = meta_client.respond_json(
             [{"type": "input_text", "text": base + "\n\nYOUR PREVIOUS ANSWER USED NUMBERS "
               f"THAT ARE NOT IN THE DETAIL ({fb}). Remove them or use the detail's own values."}],

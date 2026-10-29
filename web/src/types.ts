@@ -196,7 +196,7 @@ export interface GuideAction {
 export interface GuideStep {
   say: string;
   actions: GuideAction[];
-  ungrounded: number[];
+  ungrounded: (number | string)[]; // numbers, or ratio text like "1:100"
 }
 
 export interface GuideResult {
