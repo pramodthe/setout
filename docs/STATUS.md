@@ -367,6 +367,32 @@
   the old code. Result: 3 correct links (WC 0.88, vanity 0.61, shower rose
   0.62). Clicking the WC box on the drawing flies the camera to the WC.
 
+## 2026-10-29 (late) — video dress rehearsal on our own PDF
+
+Every shot in `docs/DEMO.md` was run in Chrome. Fixed along the way:
+- **Library cards showed "0 drawing values" on AI details.** They now count the
+  printed values confirmed against the drawing.
+- **The workbench self-check could render the wrong detail.** Switching detail
+  kept the old 3D, so the self-check compared detail A's render with detail B's
+  drawing and reported bogus issues. Switching now clears the 3D, and the check
+  runs only on the 3D of the detail being checked.
+- **Build-up order.** Compose and self-check produced "tiles before membrane",
+  and one accepted self-check moved a membrane in front of the tiles. Both
+  prompts now carry a general build-up rule: a covered layer lies behind what
+  covers it and is installed first; never bring one forward to make it
+  visible. The regenerated elevation is correct: membranes, then tiles, then
+  fixtures.
+- **Review:** the whole value description is clickable (it isolates the
+  parts it drives).
+- **Viewer:** parts between the camera and the focused part fade (raycast),
+  so a room wall no longer hides the part the camera flew to. Snapshots ignore
+  the fade.
+
+Also:
+- The AI library moved from the session scratchpad to `var/demo` (gitignored),
+  and the batch evaluation to `var/eval-run`.
+- e2e: DRIVE OK, 0 console errors.
+
 ## Milestone ledger
 
 | Milestone | State | Evidence |

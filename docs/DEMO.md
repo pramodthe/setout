@@ -16,12 +16,17 @@ the 1800 mm membrane height and the 150 mm water-resistant zone above the
 basin. Every other dimension comes out as an assumption.
 
 Show the SAM link on page 2. SAM finds nothing in a flat section, but on the
-elevation it locates the WC (0.88), the vanity (0.61) and the shower rose
-(0.62); click the WC box and the camera flies to the WC.
+elevation it locates the WC (0.88), the basin (0.77), the basin tap (0.66) and
+the vanity (0.61). Click the WC box and the camera flies to the WC.
 
-Before recording: generate your own detail once, so the 1–3 minute generation can
-be shown as a short cut rather than live. Warm up Modal (one CAD run) and the
-guide (one question).
+**Before recording:**
+1. Run the server on the rehearsed library:
+   `SETOUT_VAR=var/demo python -m uvicorn app.main:app --port 8000`
+   (`var/demo` is gitignored and local to this machine).
+2. Delete any `var/demo/spec-*.json`. The e2e pass leaves a D3 edit behind.
+3. Warm up Modal (one CAD run) and the guide (one question).
+
+Generation takes 1–3 minutes, so show it as a short cut rather than live.
 
 | Time | Shot | Say |
 |---|---|---|
@@ -31,8 +36,21 @@ guide (one question).
 | 1:10–1:30 | The self-check result panel (issues found, *correction accepted*) | "Then it checks its own work: it renders the 3D, compares it with the drawing, and fixes what's wrong. A fix is only accepted if the verifier says nothing got worse." |
 | 1:30–1:55 | **Review**: printed values first → click one → its parts isolate; click a box on the drawing panel → the camera flies to that part | "An expert reviews before anything is published. Every printed value shows its exact quote and the parts it drives. SAM 3.1 links each part to where it is on the drawing." |
 | 1:55–2:30 | Guide: *Walk me through the install* → camera moves, parts isolate, install steps play | "Then anyone on site can ask. The guide drives the 3D while it explains — and every number it says is checked against the detail. If it invents one, it's flagged." |
-| 2:30–2:45 | A part → **Model with AI (CadQuery)** → the perforated grate | "For shapes our grammar can't express, Muse writes CAD code that runs in an isolated Modal sandbox with no network. Always labelled illustrative." |
+| 2:30–2:45 | A part → **Model with AI (CadQuery)** → the shower rose | "For shapes our grammar can't express, Muse writes CAD code that runs in an isolated Modal sandbox with no network. Always labelled illustrative." |
 | 2:45–3:00 | Back to the library; the live link | "Any installation manual becomes an interactive, traceable 3D guide. Muse and SAM do the reading; code does the checking." |
+
+**Rehearsal notes (29 Oct, run in Chrome on our own PDF):**
+- **0:40.** Upload `data/demo/setout-demo.pdf`, pick page 1, press Generate.
+  The verifier may reject the first program ("profile outline
+  self-intersects") and retry. Keep that in: it shows the gate working.
+- **1:10.** The self-check doesn't always find something. On the elevation it
+  once found 6 issues and the correction was accepted; other runs found 0.
+  Record it live and say what it found. Never stage it.
+- **1:30.** In Review, click anywhere in a printed value's description to
+  isolate the parts it drives. On the drawing panel, click the WC box.
+- **2:30.** In the workbench, pick page 2 and press Generate assembly, select
+  `shower_rose`, then press Model with AI (CadQuery). It takes about 60 s.
+  Then, on the detail page, click SHOWER ROSE: any wall in the way fades.
 
 **Numbers to have ready** (from `docs/EVAL.md` and the README): the batch
 evaluation result, the guide's grounding rule, and the NCC benchmark (35% cold,

@@ -135,6 +135,11 @@ Parts:
 - label: copy one READ label verbatim if it names this part, else "".
 - install_after: parts installed before this one (substrate, then membrane, then
   finishes).
+- Build-up rule: a layer that is covered in the finished work (membrane, primer,
+  insulation, wrap, adhesive, bed) lies behind whatever covers it and is installed
+  before it. A zone the drawing marks on a finished face (an extent shown over
+  tiles or cladding) is still built where the material really goes: behind the
+  finish.
 - Show what the drawing shows: substrates, every waterproofing zone at its printed
   height, junction parts (waterstops, angles, hobs, bond breakers), fixtures as
   simple boxes/posts, finishes where shown. 8 to 30 parts.
@@ -571,6 +576,9 @@ position, size or proportion, a printed dimension attached to the wrong part, a
 label on the wrong part, wrong layer order. Then return the corrected FULL program
 in the same grammar (below).
 Rules: keep part ids for parts that stay. Do not change parts whose shape is "cad".
+A covered layer (membrane, primer, insulation, wrap, adhesive, bed) stays behind
+whatever covers it and is installed before it. Being hidden in the render is not
+a problem: the viewer's cutaway shows it. Never move one in front of a finish.
 Never invent printed values: provenance "drawing" only with the exact printed
 words as source_quote. If nothing is wrong, return the program unchanged and no
 issues.

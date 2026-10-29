@@ -81,6 +81,9 @@ export class Viewport3D {
   private seqIdx = -1;
   private explode = 0;
   private focusSet: Set<string> | null = null;
+  private focusTarget: string[] | null = null; // parts the camera was sent to
+  private occluders = new Set<string>(); // parts between the camera and focusTarget
+  private occludedAt = 0;
   private selected: string | null = null;
   private tween: Tween | null = null;
   private intro: { t0: number; stepMs: number } | null = null;
@@ -146,6 +149,7 @@ export class Viewport3D {
       if (this.disposed) return;
       this.step(now);
       this.controls.update();
+      this.updateOccluders(now);
       this.renderer.render(this.scene, this.camera);
       this.labels.render(this.scene, this.camera);
       this.declutter();
@@ -209,6 +213,8 @@ export class Viewport3D {
       (m.material as THREE.Material).dispose();
     });
     this.meshes.clear();
+    this.focusTarget = null;
+    this.occluders.clear();
     this.baseY.clear();
     this.tags.forEach((t) => t.element.remove());
     this.tags.clear();
@@ -340,7 +346,7 @@ export class Viewport3D {
         alpha = p;
       }
       m.position.y = (this.baseY.get(id) || 0) + (i * f) / 8 + lift;
-      const ghosted = this.focusSet !== null && !this.focusSet.has(id);
+      const ghosted = (this.focusSet !== null && !this.focusSet.has(id)) || this.occluders.has(id);
       const base = (m.userData as { baseOpacity: number }).baseOpacity;
       const opacity = Math.min(alpha, ghosted ? GHOST : base);
       const mat = m.material as THREE.MeshStandardMaterial;
@@ -400,9 +406,40 @@ export class Viewport3D {
     };
   }
 
+  /* Parts between the camera and the parts it was sent to fade, so a wall
+     never hides what the camera is looking at (also while orbiting). */
+  private updateOccluders(now: number): void {
+    if (now - this.occludedAt < 100) return;
+    this.occludedAt = now;
+    const next = new Set<string>();
+    const focus = this.focusTarget;
+    if (focus) {
+      const others = [...this.meshes.entries()]
+        .filter(([id, m]) => m.visible && !focus.includes(id))
+        .map(([, m]) => m);
+      const cam = this.camera.position;
+      for (const id of focus) {
+        const m = this.meshes.get(id);
+        if (!m || !m.visible) continue;
+        const to = new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3()).sub(cam);
+        this.ray.set(cam, to.clone().normalize());
+        this.ray.far = to.length();
+        for (const hit of this.ray.intersectObjects(others, false)) {
+          next.add((hit.object.userData as { id: string }).id);
+        }
+      }
+      this.ray.far = Infinity;
+    }
+    if (next.size !== this.occluders.size || [...next].some((id) => !this.occluders.has(id))) {
+      this.occluders = next;
+      this.layout(now);
+    }
+  }
+
   /** Fly the camera to frame these components (all when null/empty),
       keeping the current viewing direction unless a preset is given. */
   flyTo(ids: string[] | null, opts: { view?: ViewPreset; ms?: number; pad?: number } = {}): void {
+    this.focusTarget = ids && ids.length ? [...ids] : null;
     const dir = opts.view
       ? opts.view === "iso" ? this.isoDir() : VIEW_DIRS[opts.view]
       : this.camera.position.clone().sub(this.controls.target).normalize();
@@ -410,6 +447,7 @@ export class Viewport3D {
   }
 
   setView(view: ViewPreset, ms = 900): void {
+    this.focusTarget = null;
     this.frame(null, view === "iso" ? this.isoDir() : VIEW_DIRS[view], 0.95, ms);
   }
 
@@ -592,6 +630,8 @@ export class Viewport3D {
   snapshot(view: ViewPreset, maxW = 1024, tags = true): string {
     const pos = this.camera.position.clone();
     const tgt = this.controls.target.clone();
+    const faded = this.occluders;
+    this.occluders = new Set();
     this.skipIntro();
     this.frame(null, view === "iso" ? this.isoDir() : VIEW_DIRS[view], 0.95, 0);
     this.controls.update();
@@ -634,6 +674,8 @@ export class Viewport3D {
       ctx.fillText(id, x - w / 2 + 4 * px, y - lift - h / 2);
     }
     const url = out.toDataURL("image/jpeg", 0.85);
+    this.occluders = faded;
+    this.layout();
     this.camera.position.copy(pos);
     this.controls.target.copy(tgt);
     this.controls.update();
