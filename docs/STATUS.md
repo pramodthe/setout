@@ -285,6 +285,35 @@
   own PDFs.
 - Suite: 82 pytest, 13 vitest, e2e drive green.
 
+## 2026-10-29 (night) — review, SAM links, batch eval, hosted demo
+
+- Review and publish (`app/review.py`, `web/src/ReviewPanel.tsx`):
+  - printed values listed first, with quote and driven parts (click to isolate);
+  - accept or fix (edits recompile, so dependent dimensions move); labels only
+    from printed text;
+  - publish as reviewed by a named person;
+  - a reviewer can never promote a value to "drawing".
+- SAM 3.1 drawing links (`app/sam.py`):
+  - the drawing is turned upright using the READ rotation (SAM finds nothing
+    sideways);
+  - up to three names per part (label, type, everyday synonym); best box ≥ 0.5;
+    thin layers are skipped;
+  - bathroom: 5 parts located (bathtub 0.92, sink 0.84, floor drain 0.80, tap
+    0.70, waterproofed walls 0.50);
+  - drawing panel on the detail page: click a box to fly to the part.
+- Batch evaluation (`eval/batch_eval.py`, `docs/EVAL.md`), 24 drawings:
+  - 24/24 built, 0 FAIL;
+  - 86 printed values confirmed (55 drive geometry);
+  - 173/221 labels used verbatim;
+  - 0 gate demotions; median 111 s, ~30k tokens.
+- Hosted demo (`deploy/modal_app.py`) at
+  https://pthebe-sfsu--setout-demo-web.us-east.modal.run:
+  - public mode is read-only, never serves source drawings, and rate-limits
+    the guide;
+  - currently shows only the two built-in seeds, with the AI guide off.
+- `docs/DEMO.md` rewritten for the new flow, with the rule: no third-party
+  drawings on screen.
+
 ## Milestone ledger
 
 | Milestone | State | Evidence |

@@ -65,3 +65,37 @@ headless drive). D4-specific results: `B-step` PASS (80.0 == 80 exact),
 5/5 declared contacts PASS with measured 0.0 gaps, `C-source` PASS.
 This is the documented selector variation: a genuinely different
 build-up evaluated by the same checks, not a renamed D3.
+
+## Batch evaluation — AI generation on a 24-drawing guide (2026-10-29)
+
+`eval/batch_eval.py` runs the whole AI pipeline (read → compose → gates → compile
+→ build → optional CAD → verify) on every embedded drawing of one 22-page
+wet-area waterproofing guide, in its own storage folder. The guide is a
+third-party document: it is not committed, and only counts are reported here.
+Model: `muse-spark-1.3`, 4 drawings in parallel.
+
+| Measure | Result |
+|---|---|
+| Drawings generated and built | **24/24** (16 sections, 7 room isometrics, 1 other) |
+| Verification FAILs | **0** across all 24 details |
+| Printed values confirmed against the drawing | **86**, of which **55** drive geometry; 19 of 24 details have at least one |
+| Distinct drawing labels used verbatim | **173 of 221** read (78%); 198 of 364 parts carry one |
+| Values demoted / labels dropped by the gates | **0** |
+| Time per drawing | median **111 s** (54–212 s) |
+| Tokens | median ~29.6k per drawing, ~715k in total |
+| Shapes chosen by the model | box 258, profile 34, sheet 23, wedge 11, post 9, fixture 9, fillet 8, rod 7, revolve 2, cad 2, sweep 1 |
+
+**What this does and does not show.**
+
+- It shows the pipeline is robust: every drawing produced a buildable,
+  verifiable detail.
+- It shows the honesty gates hold: no value was claimed from the drawing
+  without its printed words and number.
+- "Confirmed" means the independent read and compose passes agree on the printed
+  words and number. It does **not** prove the value is attached to the right
+  part. That is what the review screen is for: in one bathroom detail a single
+  printed "50mm" drove four unrelated parts, and the review panel shows exactly
+  that.
+- Zero FAILs means each detail was built exactly as its program says. It is not
+  a claim that the program matches the drawing; the self-check and the human
+  review address that.
