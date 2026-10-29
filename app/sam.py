@@ -107,24 +107,60 @@ def _call(png: bytes, prompt: str) -> list[dict]:
     return parse_boxes("".join(text))
 
 
+def _same(a: dict, b: dict) -> bool:
+    """Two boxes cover the same thing (IoU >= 0.7)."""
+    w = max(0.0, min(a["x1"], b["x1"]) - max(a["x0"], b["x0"]))
+    h = max(0.0, min(a["y1"], b["y1"]) - max(a["y0"], b["y0"]))
+    inter = w * h
+    area = lambda r: (r["x1"] - r["x0"]) * (r["y1"] - r["y0"])  # noqa: E731
+    return inter > 0 and inter / (area(a) + area(b) - inter) >= 0.7
+
+
 def locate(png: bytes, parts: list[tuple[str, str, str | None]],
            call=None) -> dict[str, dict]:
-    """parts: (id, type, label). Returns {part_id: best box with prompt, c}."""
+    """parts: (id, type, label). Returns {part_id: box with prompt, c}.
+
+    Each part ranks what SAM found: hits from its own drawing label first,
+    then by confidence. When two parts want the same box, the one that found
+    it with its own label keeps it. If neither or both did, nobody can tell
+    them apart (a basin tap and a shower mixer both asking for "tap"), so the
+    box goes to neither. A part that loses a box falls back to its next one."""
     call = call or _call
-    todo = [(pid, pr) for pid, t, lab in parts for pr in prompts_for(t, lab)]
+    todo = [(pid, pr, pr == lab) for pid, t, lab in parts for pr in prompts_for(t, lab)]
 
     def one(item):
-        pid, prompt = item
+        pid, prompt, own = item
         try:
             boxes = [b for b in call(png, prompt) if b["c"] >= MIN_CONFIDENCE]
         except Exception:  # noqa: BLE001 - a failed prompt just finds nothing
             return pid, None
         best = max(boxes, key=lambda b: b["c"], default=None)
-        return pid, ({**best, "prompt": prompt} if best else None)
+        return pid, ({**best, "prompt": prompt, "own": own} if best else None)
 
-    found: dict[str, dict] = {}
+    ranked: dict[str, list[dict]] = {}
     with ThreadPoolExecutor(max_workers=6) as ex:
         for pid, box in ex.map(one, todo):
-            if box and box["c"] > found.get(pid, {}).get("c", -1):
-                found[pid] = box  # best name wins
-    return found
+            if box:
+                ranked.setdefault(pid, []).append(box)
+    for hs in ranked.values():
+        hs.sort(key=lambda b: (not b["own"], -b["c"]))  # stable: prompt order on ties
+    banned: list[dict] = []                               # ambiguous: nobody gets these
+    lost: dict[str, list[dict]] = {pid: [] for pid in ranked}  # given up to an owner
+    while True:
+        pick = {}
+        for pid, hs in ranked.items():
+            h = next((h for h in hs if not any(_same(h, x) for x in banned + lost[pid])), None)
+            if h:
+                pick[pid] = h
+        clash = next((p for p in pick for q in pick if p != q and _same(pick[p], pick[q])), None)
+        if clash is None:
+            break
+        group = [q for q in pick if _same(pick[q], pick[clash])]
+        owners = [q for q in group if pick[q]["own"]]
+        if len(owners) == 1:
+            for q in group:
+                if q != owners[0]:
+                    lost[q].append(pick[q])
+        else:
+            banned.append(pick[clash])
+    return {pid: {k: v for k, v in h.items() if k != "own"} for pid, h in pick.items()}

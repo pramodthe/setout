@@ -15,7 +15,7 @@ function Card({ d, part }: { d: LibraryEntry; part?: string }): JSX.Element {
     <a className="card" href={href} data-detail={d.detail_id}>
       <div className="thumb">
         {thumb ? (
-          <img src={api.drawingUrl(d.detail_id)} alt="" loading="lazy" onError={() => setThumb(false)} />
+          <img src={api.previewUrl(d.detail_id)} alt="" loading="lazy" onError={() => setThumb(false)} />
         ) : (
           <span>{d.kind}</span>
         )}

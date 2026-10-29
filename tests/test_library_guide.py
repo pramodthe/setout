@@ -23,6 +23,16 @@ def test_library_lists_seeds_by_situation_and_component():
     assert any(x["detail_id"] == "conpro-door-sill-D3" for x in types["membrane"]["details"])
 
 
+def test_card_counts_printed_values_confirmed_against_the_drawing():
+    from app import library
+    spec = door_sill_d3()
+    assert library.entry(spec, "human")["drawing_values"] >= 3  # seeds: tagged on the parts
+    # AI details: part dims mix printed values with assumptions, so they're
+    # tagged "assumption"; the confirmed printed values are listed in context
+    spec.context["drawing_params"] = [{"name": "a", "value": 150.0}, {"name": "b", "value": 1800.0}]
+    assert library.entry(spec, "ai")["drawing_values"] == 2
+
+
 def test_scene_endpoint_builds_and_verifies():
     s = client.get("/api/specs/conpro-door-sill-D3/scene").json()
     assert s["solids"] and s["verification"]

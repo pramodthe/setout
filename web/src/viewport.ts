@@ -17,6 +17,21 @@ import { boxProjectUVs } from "./uv";
 const K = 0.01; // mm -> scene units (== app/units.py MM_PER_VIEW_UNIT)
 const INTRO_MS = 520; // drop-in time per component
 const GHOST = 0.12; // opacity of components outside an isolate() set
+
+/* Up to n points spread over a mesh's vertices (world space), each pulled 2%
+   toward their centroid so a ray stops just short of the surface. */
+function surfacePoints(m: THREE.Mesh, n: number): THREE.Vector3[] {
+  const pos = m.geometry.getAttribute("position") as THREE.BufferAttribute | undefined;
+  if (!pos || pos.count === 0) return [];
+  m.updateMatrixWorld();
+  const step = Math.max(1, Math.floor(pos.count / n));
+  const pts: THREE.Vector3[] = [];
+  for (let i = 0; i < pos.count && pts.length < n; i += step) {
+    pts.push(new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld));
+  }
+  const c = pts.reduce((a, p) => a.add(p), new THREE.Vector3()).divideScalar(pts.length);
+  return pts.map((p) => p.lerp(c, 0.02));
+}
 const CUTBACK = 0.6; // staircase: last-installed part starts this far along z
 
 /* Label text: the drawing's own short label when there is one, else the id. */
@@ -81,6 +96,11 @@ export class Viewport3D {
   private seqIdx = -1;
   private explode = 0;
   private focusSet: Set<string> | null = null;
+  private focusTarget: string[] | null = null; // parts the camera was sent to
+  private occluders = new Set<string>(); // parts between the camera and focusTarget
+  private occludedAt = 0;
+  private occludedKey = ""; // focus + camera when occluders were last computed
+  private clipOn = false;
   private selected: string | null = null;
   private tween: Tween | null = null;
   private intro: { t0: number; stepMs: number } | null = null;
@@ -146,6 +166,7 @@ export class Viewport3D {
       if (this.disposed) return;
       this.step(now);
       this.controls.update();
+      this.updateOccluders(now);
       this.renderer.render(this.scene, this.camera);
       this.labels.render(this.scene, this.camera);
       this.declutter();
@@ -209,6 +230,8 @@ export class Viewport3D {
       (m.material as THREE.Material).dispose();
     });
     this.meshes.clear();
+    this.focusTarget = null;
+    this.occluders.clear();
     this.baseY.clear();
     this.tags.forEach((t) => t.element.remove());
     this.tags.clear();
@@ -308,6 +331,7 @@ export class Viewport3D {
     this.seqOn = v.seqOn;
     this.seqIdx = v.seqIdx;
     this.explode = v.explode;
+    this.clipOn = v.clipOn;
     this.applyVisibility();
     this.layout();
     this.clipPlane.constant = v.clipOn ? v.clipZ * K + this.root.position.z : 1e9;
@@ -340,7 +364,7 @@ export class Viewport3D {
         alpha = p;
       }
       m.position.y = (this.baseY.get(id) || 0) + (i * f) / 8 + lift;
-      const ghosted = this.focusSet !== null && !this.focusSet.has(id);
+      const ghosted = (this.focusSet !== null && !this.focusSet.has(id)) || this.occluders.has(id);
       const base = (m.userData as { baseOpacity: number }).baseOpacity;
       const opacity = Math.min(alpha, ghosted ? GHOST : base);
       const mat = m.material as THREE.MeshStandardMaterial;
@@ -400,16 +424,76 @@ export class Viewport3D {
     };
   }
 
+  /* Parts between the camera and the parts it was sent to fade, so a wall
+     never hides what the camera is looking at (also while orbiting). Rays go
+     to points on the part's own surface, not its bounding-box centre, which
+     for an L-shaped part can be empty space. Recomputed only when the focus
+     or the camera moves. */
+  private updateOccluders(now: number): void {
+    if (now - this.occludedAt < 100) return;
+    this.occludedAt = now;
+    const focus = this.focusTarget;
+    const cam = this.camera.position;
+    const key = focus
+      ? [focus.join(","), cam.x, cam.y, cam.z, this.explode, this.seqOn, this.seqIdx]
+          .map((v) => (typeof v === "number" ? v.toFixed(3) : String(v)))
+          .join("|")
+      : "";
+    if (key === this.occludedKey) return;
+    this.occludedKey = key;
+    const next = new Set<string>();
+    if (focus) {
+      const others = [...this.meshes.entries()]
+        .filter(([id, m]) => m.visible && !focus.includes(id))
+        .map(([, m]) => m);
+      for (const id of focus) {
+        const m = this.meshes.get(id);
+        if (!m || !m.visible) continue;
+        for (const p of surfacePoints(m, 16)) {
+          const to = p.sub(cam);
+          const dist = to.length();
+          this.ray.set(cam, to.divideScalar(dist));
+          this.ray.far = dist * 0.995; // not the face the part sits against
+          for (const hit of this.ray.intersectObjects(others, false)) {
+            next.add((hit.object.userData as { id: string }).id);
+          }
+        }
+      }
+      this.ray.far = Infinity;
+    }
+    if (next.size !== this.occluders.size || [...next].some((id) => !this.occluders.has(id))) {
+      this.occluders = next;
+      this.layout(now);
+    }
+  }
+
   /** Fly the camera to frame these components (all when null/empty),
       keeping the current viewing direction unless a preset is given. */
   flyTo(ids: string[] | null, opts: { view?: ViewPreset; ms?: number; pad?: number } = {}): void {
+    this.focusTarget = ids && ids.length ? [...ids] : null;
     const dir = opts.view
       ? opts.view === "iso" ? this.isoDir() : VIEW_DIRS[opts.view]
       : this.camera.position.clone().sub(this.controls.target).normalize();
     this.frame(ids, dir, opts.pad ?? (ids && ids.length ? 1.4 : 0.95), opts.ms ?? 900);
   }
 
+  /** True when the view shows the whole detail as built: nothing selected,
+      isolated, focused, exploded, cut, stepped or moving. */
+  pristine(): boolean {
+    return (
+      !this.intro &&
+      !this.tween &&
+      this.selected === null &&
+      this.focusSet === null &&
+      this.focusTarget === null &&
+      this.explode === 0 &&
+      !this.seqOn &&
+      !this.clipOn
+    );
+  }
+
   setView(view: ViewPreset, ms = 900): void {
+    this.focusTarget = null;
     this.frame(null, view === "iso" ? this.isoDir() : VIEW_DIRS[view], 0.95, ms);
   }
 
@@ -582,10 +666,14 @@ export class Viewport3D {
   }
 
   /** Render one view to a JPEG data URL with every visible part tagged by its
-      id, so a model can say which part is wrong. The live camera is restored. */
-  snapshot(view: ViewPreset, maxW = 1024): string {
+      id, so a model can say which part is wrong (tags=false for a clean
+      library card). The live camera is restored. */
+  snapshot(view: ViewPreset, maxW = 1024, tags = true): string {
     const pos = this.camera.position.clone();
     const tgt = this.controls.target.clone();
+    const tween = this.tween; // a camera flight in progress continues afterwards
+    const faded = this.occluders;
+    this.occluders = new Set();
     this.skipIntro();
     this.frame(null, view === "iso" ? this.isoDir() : VIEW_DIRS[view], 0.95, 0);
     this.controls.update();
@@ -603,7 +691,7 @@ export class Viewport3D {
     const v = new THREE.Vector3();
     const placed: number[][] = [];
     const h = 16 * px;
-    for (const [id, tag] of this.tags) {
+    for (const [id, tag] of tags ? this.tags : []) {
       const m = this.meshes.get(id);
       if (!m || !m.visible || (m.material as THREE.Material).opacity <= GHOST + 0.01) continue;
       tag.getWorldPosition(v).project(this.camera);
@@ -628,9 +716,12 @@ export class Viewport3D {
       ctx.fillText(id, x - w / 2 + 4 * px, y - lift - h / 2);
     }
     const url = out.toDataURL("image/jpeg", 0.85);
+    this.occluders = faded;
+    this.layout();
     this.camera.position.copy(pos);
     this.controls.target.copy(tgt);
     this.controls.update();
+    this.tween = tween;
     return url;
   }
 

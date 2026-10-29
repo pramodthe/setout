@@ -212,7 +212,9 @@ sequenceDiagram
    asked for each part by up to three short names: its drawing label, its type,
    and an everyday synonym ("bathtub", "floor drain", "sink"). The best box with
    confidence ≥ 0.5 is stored. Thin layers (membranes, screeds, slabs) are not
-   prompted: SAM can't see them in a line drawing.
+   prompted: SAM can't see them in a line drawing. If two parts claim the same
+   box (a basin tap and a shower mixer both asking for "tap"), neither gets it,
+   unless exactly one of them found it with its own drawing label.
 8. **Verification.** `verify.py` checks structure, that each part was built exactly
    as specified (mesh bounds vs program, ±0.01 mm), that every drawing value drives
    some geometry, labels, products and install order.
@@ -377,6 +379,7 @@ A wrong dimension in a construction tool is worse than a missing one. So:
 | `PATCH` | `/api/specs/{id}` | User correction of a parameter or label (recorded as `user_input`). |
 | `GET` | `/api/specs/{id}/scene` | Build + verify now; returns the viewer payload. |
 | `GET` | `/api/specs/{id}/drawing` | The source drawing, upright (alias `/thumb`); 404 if not uploaded here. |
+| `GET` / `POST` | `/api/specs/{id}/preview` | Library card image: a JPEG render of the 3D, saved by the viewer once the build-up finishes. Cards never show the source drawing. Readable in public mode. |
 | `GET` | `/api/specs/{id}/review` | Review state: values (printed first) with quotes and the parts they drive, labels, what the checks changed. |
 | `POST` | `/api/specs/{id}/review` | `{edits, accept, labels, publish, reviewer}`; edits recompile the program. |
 | `POST` | `/api/specs/{id}/locate` | SAM 3.1: locate parts on the upright drawing (job). |
