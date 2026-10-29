@@ -257,7 +257,7 @@ def test_document_figures_name_their_ai_detail(client, tmp_path, monkeypatch):
         assert figure["detail_id"] == main.ai_detail_id(doc["sha256"], figure["crop_id"])
 
 
-def _cut_short(repo, failing=True, tokens=300_000, continuation=0):
+def _cut_short(repo, failing=True, tokens=300_000, continuation=0, reserved=0):
     """A generation that ended needs_review after spending its budget."""
     base = _generated(repo)
     job = repo.enqueue("revise_detail", {"detail_id": base["detail_id"], "base_version_id": base["id"],
@@ -271,7 +271,8 @@ def _cut_short(repo, failing=True, tokens=300_000, continuation=0):
                     manifest_artifact_id=manifest["manifest_artifact_id"], verifier_version="x", checks=[{"id": "cad-rail", "status": "FAIL" if failing else "PASS", "required": True}],
                     quality={}, created_at=0))
         con.execute(d.runs.update().where(d.runs.c.job_id == job["id"]).values(
-                    working_version_id=made["version_id"], consumed={"tokens": tokens, "cad_calls": 2}))
+                    working_version_id=made["version_id"], consumed={"tokens": tokens, "cad_calls": 2},
+                    reserved={"tokens": reserved}))
     repo.end(fence, "needs_review", {"version_id": made["version_id"]})
     return job, made["version_id"]
 
@@ -307,3 +308,11 @@ def test_card_image_falls_back_to_an_earlier_versions_render(client, source_repo
     review_v3.apply(source_repo, version, [{"name": "width", "value": 120}], [], [], reviewer="R")
     after = client.get(f"/api/specs/{version['detail_id']}/preview")
     assert after.status_code == 200 and after.content == first.content
+
+
+def test_tokens_held_by_an_interrupted_request_count_as_spent(source_repo):
+    """Seen live: a run resumed after a crash went to final review at 175k spent
+    because ~50k stayed reserved; it must still continue."""
+    from app.worker import continue_if_cut_short
+    job, _ = _cut_short(source_repo, tokens=175_000, reserved=60_000)
+    assert continue_if_cut_short(source_repo, job["id"], limit=2)

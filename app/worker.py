@@ -37,9 +37,11 @@ def continue_if_cut_short(repo, job_id, limit=None):
         return None
     if repo.get(d.details, run["detail_id"])["current_version_id"] != version_id:
         return None
-    used, budget = run["consumed"], run["budget"]
+    used, held, budget = run["consumed"], run["reserved"], run["budget"]
+    # As app/agent.py counts it: tokens still reserved (e.g. by a request cut
+    # off by a crash) are spent as far as the budget is concerned.
     cut_short = ((job["error"] or {}).get("code") == "budget_exhausted"
-                 or used.get("tokens", 0) + REVIEW_TAIL >= budget["tokens"]
+                 or used.get("tokens", 0) + held.get("tokens", 0) + REVIEW_TAIL >= budget["tokens"]
                  or used.get("cad_calls", 0) >= budget["cad_calls"])
     reports = repo.list(d.verifications, d.verifications.c.version_id == version_id, order=d.verifications.c.created_at)
     if not cut_short or not reports or not any(c["status"] == "FAIL" for c in reports[-1]["checks"]):
