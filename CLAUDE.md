@@ -18,6 +18,12 @@ Built for the **Meta Global AI Developer Hackathon 2026**, Indie Developer track
 **Submission deadline: Wed 4 Nov 9:00 PM ET = Thu 5 Nov 1:00 PM Sydney.**
 Code freeze Wed 4 Nov 1:00 PM Sydney. Submit Tuesday night.
 
+## Working rules
+
+- **Don't bring up the demo** (the hosted demo, the demo video or recording
+  prep) until the user raises it: no questions, suggestions or status lines
+  about it. User instruction, 29 Oct 2026.
+
 ## Two tracks in one repo
 
 | | **Playground** (primary) | **NCC track** (original) |
@@ -25,7 +31,7 @@ Code freeze Wed 4 Nov 1:00 PM Sydney. Submit Tuesday night.
 | What | Any drawing in a PDF → AI-written detail program → meshes → verify → library, 3D viewer, AI guide | NCC Part 10.2 rules → shower details → static Three.js viewer |
 | Code | `app/` (FastAPI), `web/` (React+TS), `tests/`, `e2e/` | `ncc/` (everything) |
 | Source of numbers | `app/seed.py` (two hand-transcribed seeds) and AI-generated programs gated against the drawing (`var/library/`) | `ncc/rules/rules.json` (31 rules, 9 drive geometry) |
-| Plan docs | `docs/PLAYGROUND_PLAN.md`, `docs/STATUS.md` | `ncc/SPEC.md` |
+| Plan docs | `docs/PLAN_V3.md` (proposed: agent, database, jobs, memory), `docs/PLAYGROUND_PLAN.md`, `docs/STATUS.md` | `ncc/SPEC.md` |
 | Deps | `requirements.txt` (pinned) | **Python stdlib only.** Keep it that way. |
 
 Read the plan doc for a track before you propose architecture changes to it.

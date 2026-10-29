@@ -2,6 +2,10 @@
 
 Written 29 Oct 2026. Freeze Wed 4 Nov 1:00 PM Sydney; last day reserved for the video.
 
+> **Superseded for the AI side by `docs/PLAN_V3.md`** (proposed 29 Oct): an agent
+> harness with tools, a database, persistent jobs, memory, AI-written CAD objects
+> and a renderer the agent can see.
+
 ## The product
 
 Manufacturers sell to us; their customers use the playground.
