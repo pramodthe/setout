@@ -1,5 +1,9 @@
 # Architecture (v0 vertical slice)
 
+> **Historical.** This describes the first vertical slice. For the current
+> system see `CLAUDE.md` (Playground architecture) and `README.md`; for the
+> target architecture see `docs/PLAN_V3.md`.
+
 ```
                                     +------------------+
                                     | Conpro PDF (user |

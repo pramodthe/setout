@@ -1,5 +1,9 @@
 # Gap analysis — Setout vs construction-detail playground brief
 
+> **Historical.** This describes the first vertical slice. For the current
+> system see `CLAUDE.md` (Playground architecture) and `README.md`; for the
+> target architecture see `docs/PLAN_V3.md`.
+
 Date: 2026-10-28. Method: read every source file, ran the generator path by
 inspection, extracted the reference PDF, checked for backend calls.
 

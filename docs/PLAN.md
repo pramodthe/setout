@@ -1,5 +1,9 @@
 # Plan — door-sill vertical slice, then layered completion
 
+> **Historical.** This describes the first vertical slice. For the current
+> system see `CLAUDE.md` (Playground architecture) and `README.md`; for the
+> target architecture see `docs/PLAN_V3.md`.
+
 Primary detail: Conpro p.1 drawing 3, "STANDARD SILL SECTION DOOR OPENING"
 (D3). Why: a true 2D section (extrudable) with explicit source numbers —
 6 mm gap, 100 mm minimum step, 1:80 min fall — plus 12+ labelled components.

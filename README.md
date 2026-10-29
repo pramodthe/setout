@@ -450,7 +450,7 @@ web/                     React + TypeScript frontend (Vite)
   src/App.tsx            workbench (add from PDF, AI generate / check / CAD)
   src/viewport.ts        Three.js viewer and camera API
   src/materials.ts       procedural material library
-tests/                   pytest (96 tests, no network)
+tests/                   pytest (no network)
 eval/batch_eval.py       run the AI pipeline over every drawing in a PDF
 deploy/modal_app.py      hosted public demo on Modal
 e2e/drive.py             headless browser acceptance pass
@@ -465,7 +465,7 @@ data/                    local manuals and footage (gitignored)
 ## 10. Development and testing
 
 ```sh
-python -m pytest tests/ -q                       # 96 tests, Muse, SAM and Modal stubbed
+python -m pytest tests/ -q                       # Muse, SAM and Modal stubbed
 python -m pytest tests/test_cad.py -q            # one file
 cd web && npm test                               # Vitest (materials, UVs, provenance)
 cd web && npx tsc -b && npm run lint             # type-check + lint
