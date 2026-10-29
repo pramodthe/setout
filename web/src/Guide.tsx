@@ -18,7 +18,7 @@ interface Msg {
 const QUICK = [
   "Walk me through the install, step by step",
   "What came from the drawing, and what is assumed?",
-  "Where does the waterproofing go and why?",
+  "Which layer is covered by which, and why that order?",
 ];
 
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));

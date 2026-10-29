@@ -72,8 +72,10 @@ Before switching an existing library, inspect and back it up:
 ```
 
 The backup directory must be new. Import is idempotent and never deletes the
-original library. The local two-detail library was backed up under
-`var/backups/pre-v3-20261029` and imported.
+original library. The local library was backed up under
+`var/backups/pre-v3-20261029` and imported. The server now also imports any
+records not yet in the database at startup. Seeds are not imported; they are
+served from code, and an earlier import of a seed is ignored.
 
 Run the API and worker in separate terminals with the same environment:
 
@@ -155,6 +157,52 @@ floor waste and cabinet legs. All original attempts remain in the private trace.
 | M3 AI-made objects | WC/cabinet/basin live measured builds and inspected renders; six legacy fixtures absent from active registry; old scenes load from archived bytes |
 | M4 Memory | Live held-out on/off convention-transfer probe with a synthetic reviewer, plus provenance and activation tests |
 | M5 Evaluation | All 24 crops accounted for and compared with recorded v2; four complete, twenty require review; warm starts, prior attempts and snapshot limitations disclosed |
+
+## Review fixes (29 Oct 2026, after the implementation review)
+
+A review against `PLAN_V3.md` found gaps; these were fixed on branch
+`feat/v3-agent`. The numbers above predate them.
+
+- **Trade-agnostic.** No vocabulary of ours decides a part's role or form. The
+  READ classifies each label as layer, object or other, and a part carrying it
+  takes the matching role. Objects declare `form` (shaped/block), which the form
+  check reads. Prompts use cross-trade wording.
+- **One store for AI details.** Seeds stay in code; every AI detail is a database
+  version. The v2 pipeline (generate/critique/re-model/locate threads,
+  `app/review.py`, v2 CAD fitting and authoring grammar) is removed. An old
+  file library imports at startup. Seeds are no longer imported: an earlier
+  import of a seed is ignored.
+- **Labels.** The authoring schema offers only the READ's labels (or null). The
+  prompts ask for every layer/object label to be covered, with no part cap, and
+  for rejected proposals to be patched. A non-blocking `label-coverage` check
+  lists what is missing. Cause analysis of the 24-crop batch: 31 labels reworded
+  by the model, 27 never modelled, 9 lost to rejected programs, 50 that were
+  never parts (zone names, notes, tables).
+- **Memory.** A correction proposes lessons written from the version diff. The
+  detail page lists lessons and lets a named reviewer switch them on.
+- **Jobs.** The first migration is frozen, with a schema-drift test. A worker is
+  killed mid-run (SIGKILL) and another resumes it (`tests/test_resume_e2e_v3.py`).
+  The embedded worker starts with the server. The agent loop stops if it makes
+  no progress.
+- **Trace and renderer.** Compact, paged trace with the renders the agent saw;
+  browsers are reused across renders.
+- **Found in Chrome:** a structured call that narrated before its JSON (now the
+  last valid message is read); `min_coverage: 90` read as a fraction (now
+  rejected when authoring); the parts column collapsing on narrow windows.
+
+Evidence: 160 backend tests pass (10 Postgres/browser variants skipped
+locally); 13 frontend tests; `e2e/drive.py` DRIVE OK.
+
+Live, on our own section drawing:
+- **Generation** kept all 8 layer/object labels verbatim. It survived a server
+  kill and resumed from its saved steps.
+- **"Recheck with AI"** took 210 s and 228k tokens. Checks went from 41 PASS /
+  10 FAIL / 9 UNVERIFIED to 66 / 1 / 6; the agent fixed the coverage unit after
+  the new error message and modelled both objects in the CAD sandbox. The
+  critic passed.
+- **Result:** the detail correctly remains `needs_review`. The two printed
+  dimensions stay UNVERIFIED (the agent's face selectors are not supported) and
+  one `terminates_against` relation fails.
 
 ## Boundaries
 

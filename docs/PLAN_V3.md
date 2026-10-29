@@ -1,8 +1,9 @@
 # Setout v3: agent architecture
 
-Proposed 29 Oct 2026. It replaces the fixed AI pipeline in `app/generate.py`.
-The decisions marked **[decide]** need the project owner's sign-off before work
-starts on them.
+Proposed 29 Oct 2026; implemented the same day (`docs/V3_IMPLEMENTATION.md`,
+`docs/V3_EVAL.md`). It replaced the fixed AI pipeline in `app/generate.py`. Both
+**[decide]** items were adopted: the rule below is now the invariant in
+`CLAUDE.md`, and the database is Postgres in deployment with SQLite locally.
 
 ## Why: the gaps in v2
 
