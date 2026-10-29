@@ -380,12 +380,17 @@ async def get_library() -> dict:
     indexed = {entry["detail_id"]: entry for entry in entries}
     from . import database as tables
     from .runtime import repository
+    from .v3_api import drawing_regions
     for detail in repository().list(tables.details):
         version = _database_version(detail["id"])
         if version:
             spec = DetailSpec.model_validate(version["spec"])
             entry = library.entry(spec, "ai" if spec.origin.startswith(("ai-", "user-")) else "human")
             entry["version_id"] = version["id"]
+            entry["located"] = len(drawing_regions(repository(), version))
+            if entry["made_by"] == "ai":
+                # Versions are immutable: publishing moves the detail's pointer.
+                entry["review"] = "reviewed" if detail["published_version_id"] == version["id"] else "draft"
             indexed[detail["id"]] = entry
     entries = list(indexed.values())
     return {"details": entries, "components": library.component_index(entries)}
@@ -417,8 +422,11 @@ async def get_drawing(detail_id: str):
         from .runtime import repository
         repo = repository()
         figure = repo.get(tables.figures, native["figure_id"])
-        read = repo.get(tables.reads, native["drawing_read_id"])["response"]
-        png = sam.upright(repo.artifacts.read(figure["artifact_id"]), read.get("rotation_deg", 0))
+        # Archived v2 details may have a figure but no saved read: use the
+        # rotation their spec recorded.
+        rotation = (repo.get(tables.reads, native["drawing_read_id"])["response"].get("rotation_deg", 0)
+                    if native["drawing_read_id"] else native["spec"].get("context", {}).get("drawing_rotation_deg") or 0)
+        png = sam.upright(repo.artifacts.read(figure["artifact_id"]), int(rotation))
         return Response(png, media_type="image/png")
     spec = _load_spec(detail_id)
     png = ai.drawing_png(spec) if spec else None
@@ -581,16 +589,34 @@ async def ai_status() -> dict:
             "cad_sandbox": cad_sandbox.available(), "public": PUBLIC}
 
 
+def ai_detail_id(sha256: str, crop_id: str) -> str:
+    """One AI detail per drawing (the v2 rule, so imported v2 details match)."""
+    return f"ai-{sha256[:8]}-{crop_id.lower()}"
+
+
 @app.post("/api/generate")
 async def start_generate(req: GenerateRequest) -> dict:
-    if not get_document(req.doc_id):
+    """Generate a drawing's detail. A drawing that already has one gets a new
+    version of it, built from its current version, not a second detail."""
+    doc = get_document(req.doc_id)
+    if not doc:
         raise HTTPException(404, "unknown document")
     if not figure_path(req.doc_id, req.crop_id):
         raise HTTPException(404, "unknown figure")
+    from . import database as tables
     from .runtime import repository
     from .v3_api import submit
     from .versioning import register_figure
-    job = submit("generate_detail", {"figure_id": register_figure(repository(), req.doc_id, req.crop_id)})
+    repo = repository()
+    detail_id = ai_detail_id(doc["sha256"], req.crop_id)
+    payload = {"figure_id": register_figure(repo, req.doc_id, req.crop_id), "detail_id": detail_id}
+    try:
+        current = repo.get(tables.details, detail_id)["current_version_id"]
+    except KeyError:
+        current = None
+    if current:
+        payload["expected_current_version_id"] = current
+    job = submit("generate_detail", payload)
     return _persistent_generation(job["id"])
 
 
@@ -657,14 +683,23 @@ async def get_generate(job_id: str) -> dict:
 
 
 def _persistent_generation(job_id: str) -> dict:
+    """A job in the shape the workbench polls. needs_review counts as done only
+    when the run made a new version and its tool didn't fail: a draft to open.
+    A recheck, CAD or locate job that changed nothing is reported as failed."""
     from . import database as tables
     from .runtime import repository
     from .v3_api import job_result
-    repository().get(tables.jobs, job_id)
+    repo = repository()
+    repo.get(tables.jobs, job_id)
     job = job_result(job_id)
-    state = {"succeeded": "done", "needs_review": "done" if job["version_id"] else "failed",
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    problem = result.get("error") or (f"CAD failed: {result['placeholder']}" if result.get("placeholder") else None)
+    made = bool(job["version_id"]) and job["version_id"] != repo.run(job_id)["base_version_id"]
+    state = {"succeeded": "done", "needs_review": "done" if made and not problem else "failed",
              "cancelled": "failed"}.get(job["state"], job["state"])
-    error = job.get("error")
+    error = job.get("error") or problem
+    if state == "failed" and not error:
+        error = "; ".join(result.get("open_issues") or []) or job["state"].replace("_", " ")
     return {**job, "state": state, "native_state": job["state"], "gate_notes": [],
             "error": error.get("message", error.get("code")) if isinstance(error, dict) else error}
 

@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from . import database as d, meta_client
 from .lessons import correction_lessons
-from .native_program import prepare
+from .native_program import kept_bindings, prepare
 from .repository import Conflict, TERMINAL, canonical, row, sha, uid
 from .runtime import ensure_worker, repository
 from .verification_v3 import prepare_verification
@@ -264,11 +264,28 @@ def scene(ident: str):
         if reports and reports[-1]["quality"].get("scene_artifact_id"):
             result = json.loads(repo.artifacts.read(reports[-1]["quality"]["scene_artifact_id"]))
             result["version_id"], result["manifest_sha"] = ident, reports[-1]["manifest_sha"]
-            return result
-        result = prepare_verification(repo, ident)
-        return {**result["scene"], "version_id": ident}
+        else:
+            result = {**prepare_verification(repo, ident)["scene"], "version_id": ident}
+        located = drawing_regions(repo, repo.get(d.versions, ident))
+        if located:
+            result.setdefault("context", {})["drawing_regions"] = located
+        return result
     except KeyError:
         raise HTTPException(404, "unknown version")
+
+
+def drawing_regions(repo, version):
+    """SAM's boxes on the source drawing for this version's parts. A locate
+    run belongs to one version; later versions of the same drawing inherit its
+    boxes for the parts they still have, as the v2 library did."""
+    parts = {p["id"] for p in (version["program"] or {}).get("parts", [])}
+    while version:
+        rows = repo.list(d.sam_regions, d.sam_regions.c.version_id == version["id"])
+        if rows:
+            return {r["part_key"]: r["data"] for r in rows if r["part_key"] in parts}
+        parent = version["parent_version_id"]
+        version = repo.get(d.versions, parent) if parent else None
+    return {}
 
 
 @router.get("/artifacts/{ident}")
@@ -310,7 +327,8 @@ def write_review(ident: str, body: ReviewRequest):
             read = repo.get(d.reads, original["drawing_read_id"])
             program, spec, _ = prepare(body.data["program"], original["program"]["source"], original["detail_id"],
                                       read["response"], original["program"], human=True)
-            revised = program.model_dump(mode="json"), spec.model_dump(mode="json")
+            revised = (program.model_dump(mode="json"), spec.model_dump(mode="json"),
+                       kept_bindings(original["program"], original["bindings"], program))
         with d.transaction(repo.engine) as con:
             detail = row(con, d.details, original["detail_id"], True)
             if revised and detail["current_version_id"] != ident:
@@ -318,7 +336,7 @@ def write_review(ident: str, body: ReviewRequest):
             target = ident
             if revised:
                 result = repo.insert_version(con, detail_id=original["detail_id"], expected_parent=ident,
-                            program=revised[0], spec=revised[1], bindings={}, figure_id=original["figure_id"],
+                            program=revised[0], spec=revised[1], bindings=revised[2], figure_id=original["figure_id"],
                             read_id=original["drawing_read_id"], created_by=body.reviewer, origin="user-revised:v3")
                 target = result["version_id"]
             review_id = repo.review_event(con, target, body.reviewer.strip(), body.action, body.data)

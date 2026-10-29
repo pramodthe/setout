@@ -9,7 +9,7 @@ import sqlalchemy as sa
 
 from . import cad_components, database as d, generate, meta_client, sam
 from .model_gateway import ModelGateway
-from .native_program import NativeProgram, prepare, expression_unit
+from .native_program import kept_bindings, NativeProgram, prepare, expression_unit
 from .program import evaluate, expr_names
 from .program_edits import apply_edits
 from .program_schema import program_schema, from_wire
@@ -274,24 +274,16 @@ class Tools:
                 proposed = apply_edits(base,json_object(args["edits"],list))
             else:
                 proposed = json_object(args["program"])
-            program, spec, notes = prepare(proposed, source, detail_id, read["response"],
-                                           parent["program"] if parent else None)
-            bindings = copy.deepcopy(parent["bindings"]) if parent else {}
-            if parent:
-                old_parts = {p["id"]: p for p in parent["program"].get("parts",[])}
-                old_env = {p["name"]:p["value"] for p in parent["program"].get("params",[])}
-                new_env = {p.name:p.value for p in program.params}
-                kept = {}
-                for part in program.parts:
-                    old = old_parts.get(part.id, {})
-                    current = part.model_dump(mode="json")
-                    contract = ("shape", "type", "role", "cad_brief", "param_bindings", "features")
-                    expressions = list(part.param_bindings.values()) + [f.expected_expr for f in part.features]
-                    referenced = set().union(*(expr_names(e) for e in expressions)) if expressions else set()
-                    if (part.id in bindings and all(current.get(k) == old.get(k) for k in contract)
-                            and all(old_env.get(k) == new_env.get(k) for k in referenced)):
-                        kept[part.id] = bindings[part.id]
-                bindings = kept
+            try:
+                program, spec, notes = prepare(proposed, source, detail_id, read["response"],
+                                               parent["program"] if parent else None)
+            except ValueError as error:
+                # Return the rejected proposal: with no working version yet,
+                # the next patch applies to it, so fixes accumulate instead of
+                # restarting from the first rejected program.
+                return {"tool_error": {"code": "invalid_tool_input", "message": str(error)[:1000],
+                        "working_version_id": run["working_version_id"], "proposal": proposed}}
+            bindings = kept_bindings(parent["program"], copy.deepcopy(parent["bindings"]), program) if parent else {}
             return self._stage_successor({"program": program.model_dump(mode="json"), "spec": spec.model_dump(mode="json"),
                     "bindings": bindings, "figure_id": figure_id, "read_id": read["id"], "notes": notes,
                     "expected_parent": expected, "detail_id": detail_id})

@@ -8,7 +8,7 @@ import sqlalchemy as sa
 
 from . import database as d
 from .lessons import correction_lessons
-from .native_program import prepare
+from .native_program import kept_bindings, prepare
 from .program import expr_names
 from .repository import Conflict, row, uid
 
@@ -60,7 +60,8 @@ def apply(repo, version, edits, accept, labels, publish=False, reviewer=""):
     revised = None
     if edits or labels:
         native, spec, _ = prepare(program, program["source"], version["detail_id"], read["response"], version["program"], human=True)
-        revised = native.model_dump(mode="json"), spec.model_dump(mode="json")
+        revised = (native.model_dump(mode="json"), spec.model_dump(mode="json"),
+                   kept_bindings(version["program"], version["bindings"], native))
     with d.transaction(repo.engine) as con:
         detail = row(con, d.details, version["detail_id"], True)
         if detail["current_version_id"] != version["id"]:
@@ -68,7 +69,7 @@ def apply(repo, version, edits, accept, labels, publish=False, reviewer=""):
         target = version["id"]
         if revised:
             result = repo.insert_version(con, detail_id=version["detail_id"], expected_parent=target,
-                        program=revised[0], spec=revised[1], bindings={} if edits else version["bindings"],
+                        program=revised[0], spec=revised[1], bindings=revised[2],
                         figure_id=version["figure_id"], read_id=version["drawing_read_id"],
                         created_by=reviewer.strip() or "local user", origin="user-revised:v3")
             target = result["version_id"]

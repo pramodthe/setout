@@ -40,30 +40,44 @@ def register_figure(repo, doc_id, crop_id):
     return ident
 
 
-def archive(repo, dry_run=False, skip_existing=False):
+def archive(repo, dry_run=False, skip_existing=False, skip_bad=False):
     """Import the v2 AI library (var/library/*.json) as archived versions.
 
     The hand-transcribed seeds are not imported: they are reference specs in
     app/seed.py, served and corrected from code. Everything AI-made lives in
     the database. With skip_existing, details already imported are left alone
-    (used at startup, so an old library is never served from files)."""
+    (used at startup, so an old library is never served from files). With
+    skip_bad, a record that can't be loaded or built is reported and left out
+    instead of stopping the import of every other record."""
     from .generate import library_dir
     from .seed import SEED_IDS
     records = {}
+    skipped = {}
+    def bad(name, error):
+        if not skip_bad:
+            raise error
+        skipped[name] = f"{type(error).__name__}: {str(error)[:200]}"
     for path in library_dir().glob("*.json"):
-        record = json.loads(path.read_text())
-        if "spec" in record and record["spec"]["detail_id"] not in SEED_IDS:
-            records[record["spec"]["detail_id"]] = record
+        try:
+            record = json.loads(path.read_text())
+            if "spec" in record and record["spec"]["detail_id"] not in SEED_IDS:
+                records[record["spec"]["detail_id"]] = record
+        except (ValueError, KeyError, TypeError) as error:
+            bad(path.name, error)
     if skip_existing:
         with repo.engine.connect() as con:
             present = set(con.execute(sa.select(d.details.c.id)).scalars())
         records = {k: v for k, v in records.items() if k not in present}
     prepared = []
     for detail_id, record in records.items():
-        override = store.var_root() / f"spec-{detail_id}.json"
-        spec = DetailSpec.model_validate_json(override.read_text()) if override.is_file() else DetailSpec.model_validate(record["spec"])
-        physical = build_assembly(spec)
-        display = build_assembly(spec, use_display=True)
+        try:
+            override = store.var_root() / f"spec-{detail_id}.json"
+            spec = DetailSpec.model_validate_json(override.read_text()) if override.is_file() else DetailSpec.model_validate(record["spec"])
+            physical = build_assembly(spec)
+            display = build_assembly(spec, use_display=True)
+        except Exception as error:  # noqa: BLE001 - reported per record
+            bad(detail_id, error)
+            continue
         prepared.append((detail_id, record, spec, physical, display))
     if dry_run:
         return {"dry_run": True, "details": [p[0] for p in prepared]}
@@ -116,16 +130,19 @@ def archive(repo, dry_run=False, skip_existing=False):
                 con.execute(d.details.update().where(d.details.c.id == detail_id).values(
                             published_version_id=result["version_id"]))
             imported.append(result["version_id"])
-    return {"dry_run": False, "versions": imported, "details": [p[0] for p in prepared]}
+    return {"dry_run": False, "versions": imported, "details": [p[0] for p in prepared], "skipped": skipped}
 
 
 def import_library(repo):
     """Startup: bring any v2 library records not yet in the database across."""
     try:
-        return archive(repo, skip_existing=True)
-    except Exception as error:  # noqa: BLE001 - one bad record must not stop the server
-        print(f"[setout] v2 library import skipped: {error}")
+        result = archive(repo, skip_existing=True, skip_bad=True)
+    except Exception as error:  # noqa: BLE001 - the server starts regardless
+        print(f"[setout] v2 library import failed: {error}")
         return None
+    for name, reason in result["skipped"].items():
+        print(f"[setout] v2 library record not imported: {name}: {reason}")
+    return result
 
 
 def backup(destination):

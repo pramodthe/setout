@@ -9,6 +9,7 @@ import uuid
 from . import database as d
 from .agent import Agent
 from .agent_tools import Tools
+from .model_gateway import ProviderRejected
 from .repository import BudgetExceeded, LostLease, Repository
 
 
@@ -60,11 +61,17 @@ class Worker:
                 self.repo.end(fence, "needs_review" if result.get("error") or result.get("placeholder") else "succeeded", result)
         except LostLease:
             pass
-        except BudgetExceeded as error:
-            run = self.repo.run(fence.job_id)
-            self.repo.end(fence, "needs_review", {"version_id": run["working_version_id"],
-                          "detail_id": run["detail_id"], "open_issues": [str(error)]},
-                          {"code": "budget_exhausted", "message": str(error)})
+        except (BudgetExceeded, ProviderRejected) as error:
+            # Keep the draft for review: the budget ran out, or the provider
+            # refused a request that would only fail again.
+            code = "budget_exhausted" if isinstance(error, BudgetExceeded) else "provider_rejected"
+            try:
+                run = self.repo.run(fence.job_id)
+                self.repo.end(fence, "needs_review", {"version_id": run["working_version_id"],
+                              "detail_id": run["detail_id"], "open_issues": [str(error)]},
+                              {"code": code, "message": str(error)[:500]})
+            except LostLease:
+                pass
         except (urllib.error.URLError, TimeoutError, ConnectionError) as error:
             try:
                 self.repo.retry(fence, {"code": "provider_unavailable", "message": str(error)[:300]})
@@ -82,7 +89,14 @@ class Worker:
 
     def serve(self):
         while not self.stop.is_set():
-            if not self.run_once():
+            try:
+                busy = self.run_once()
+            except Exception as error:  # noqa: BLE001 - e.g. "database is locked" while claiming
+                # Never let the worker thread die: a job it held is retried
+                # once its lease expires.
+                print(f"[setout] worker error, continuing: {type(error).__name__}: {error}")
+                busy = False
+            if not busy:
                 self.stop.wait(0.25)
 
 

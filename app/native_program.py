@@ -190,6 +190,27 @@ def normalize_identifiers(raw):
     return raw
 
 
+def kept_bindings(parent_program, parent_bindings, program):
+    """The parent's CAD bindings that still describe `program`: the part keeps
+    its CAD contract and every value its component reads is unchanged. Any
+    other object is rebuilt by the next CAD call."""
+    old_parts = {p["id"]: p for p in parent_program.get("parts", [])}
+    old_env = {p["name"]: p["value"] for p in parent_program.get("params", [])}
+    new_env = {p.name: p.value for p in program.params}
+    contract = ("shape", "type", "role", "cad_brief", "param_bindings", "features")
+    kept = {}
+    for part in program.parts:
+        if part.id not in parent_bindings:
+            continue
+        old, current = old_parts.get(part.id, {}), part.model_dump(mode="json")
+        expressions = list(part.param_bindings.values()) + [f.expected_expr for f in part.features]
+        referenced = set().union(*(expr_names(e) for e in expressions)) if expressions else set()
+        if (all(current.get(k) == old.get(k) for k in contract)
+                and all(old_env.get(k) == new_env.get(k) for k in referenced)):
+            kept[part.id] = parent_bindings[part.id]
+    return kept
+
+
 def check_roles(program, read, human=False):
     """Roles follow the drawing reading, never a vocabulary of our own.
 
@@ -254,6 +275,16 @@ def prepare(raw, source, detail_id, read, base=None, human=False):
                 param["kind"] = "min"
             elif re.search(r"\bmax(?:imum)?\b|at most|not more than", evidence["quote_verbatim"].lower()):
                 param["kind"] = "max"
+    if not human:
+        # Nor can it overwrite, relabel or drop one: those values come from a
+        # reviewer or a manufacturer, and only a reviewer changes them.
+        current = {p["name"]: p for p in raw.get("params", [])}
+        for name, old in previous.items():
+            new = current.get(name)
+            if old["provenance"] in ("user_input", "manufacturer_doc") and (
+                    not new or (new["value"], new["provenance"]) != (old["value"], old["provenance"])):
+                raise ValueError(f"{name} is a reviewer's value ({old['value']:g}, {old['provenance']}); "
+                                 "keep it and its provenance unchanged. Only a reviewer can change it.")
     for part in raw["parts"]:
         for feature in part["features"]:
             evidence = source_dimensions.get(feature.get("source_dimension_id"))

@@ -113,6 +113,12 @@ class Agent:
         if not reports:
             self.tools.run("final-verify","build_and_verify",{"version_id":version_id})
             reports = self.repo.list(d.verifications,d.verifications.c.version_id == version_id,order=d.verifications.c.created_at)
+        if not reports:
+            # Verification itself failed: keep the draft for review.
+            self.tools.run("final-unverified","finish",{"version_id":version_id,"verification_id":None,
+                "critic_verdict_id":None,"status":"needs_review","summary":"The draft could not be verified.",
+                "open_issues":["verification failed; see the trace"]})
+            return
         report = reports[-1]
         rendered = self.tools.run("final-render","render",{"version_id":version_id})
         verdict = None

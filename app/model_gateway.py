@@ -4,9 +4,15 @@ from __future__ import annotations
 import base64
 import copy
 import json
+import urllib.error
 
 from . import database as d, meta_client
 from .repository import canonical
+
+
+class ProviderRejected(RuntimeError):
+    """The provider refused the request itself (a 4xx other than 408/429).
+    Sending the same request again would fail the same way."""
 
 
 def output_text(response):
@@ -76,8 +82,21 @@ class ModelGateway:
                     ref = self.repo.get(d.artifacts, ident)
                     part["image_url"] = (f"data:{ref['media_type']};base64," +
                                          base64.b64encode(self.repo.artifacts.read(ident)).decode())
-        with self.repo.resource(self.fence, "meta"):
-            response = (responder or self.responder)(wire)
+        try:
+            with self.repo.resource(self.fence, "meta"):
+                response = (responder or self.responder)(wire)
+        except urllib.error.HTTPError as error:
+            # The provider answered with an error, so nothing was generated:
+            # release the tokens reserved for this call. (A timeout or dropped
+            # connection stays charged: its usage is unknown.)
+            self.repo.settle(self.fence, reservation, {"model_calls": 1})
+            if error.code in (408, 429) or error.code >= 500:
+                raise  # transient: the worker retries the job with backoff
+            try:
+                detail = error.read().decode(errors="replace")[:300]
+            except Exception:  # noqa: BLE001 - the status code is enough
+                detail = ""
+            raise ProviderRejected(f"provider rejected the {purpose} request ({error.code}): {detail}") from error
         self.repo.model_response(self.fence, step_id, response, reservation)
         return response
 
