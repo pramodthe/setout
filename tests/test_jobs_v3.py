@@ -42,7 +42,7 @@ def test_job_and_tool_replay_survive_new_repository(repo):
         repo._event(con, job["id"], "domain-effect")
         return {"id": "the-saved-effect"}
     result = repo.operation(fence, "call-1", "tool", {"x": 1}, lambda: None, commit)
-    reopened = Repository(str(repo.engine.url), repo.artifacts.root)
+    reopened = Repository(repo.engine.url.render_as_string(hide_password=False), repo.artifacts.root)
     assert reopened.operation(fence, "call-1", "tool", {"x": 1},
                               lambda: pytest.fail("completed tool re-executed"), commit) == result
     with pytest.raises(Conflict):
@@ -83,7 +83,7 @@ def test_cancellation_and_budget_survive_restart(repo):
     job = repo.enqueue("render", {}, budget={"cad_calls": 1})
     fence = repo.claim("worker")
     repo.reserve(fence, {"cad_calls": 1})
-    reopened = Repository(str(repo.engine.url), repo.artifacts.root)
+    reopened = Repository(repo.engine.url.render_as_string(hide_password=False), repo.artifacts.root)
     with pytest.raises(BudgetExceeded):
         reopened.reserve(fence, {"cad_calls": 1})
     assert reopened.run(job["id"])["deadline_at"] == repo.run(job["id"])["deadline_at"]
@@ -132,7 +132,7 @@ def _crash_effect(url, root, after_commit):
 def test_real_process_crash_replays_one_effect(repo, after_commit):
     job = repo.enqueue("test", {})
     process = multiprocessing.get_context("spawn").Process(target=_crash_effect,
-              args=(str(repo.engine.url), str(repo.artifacts.root), after_commit))
+              args=(repo.engine.url.render_as_string(hide_password=False), str(repo.artifacts.root), after_commit))
     process.start()
     process.join(15)
     assert not process.is_alive()
@@ -165,7 +165,7 @@ def test_independent_processes_claim_distinct_jobs(repo):
     context = multiprocessing.get_context("spawn")
     start, results = context.Event(), context.Queue()
     processes = [context.Process(target=_claim_concurrently,
-                 args=(str(repo.engine.url), str(repo.artifacts.root), start, results)) for _ in range(2)]
+                 args=(repo.engine.url.render_as_string(hide_password=False), str(repo.artifacts.root), start, results)) for _ in range(2)]
     for process in processes:
         process.start()
     start.set()
@@ -192,7 +192,7 @@ def test_independent_processes_cannot_double_spend_the_last_budget_slot(repo):
     context = multiprocessing.get_context("spawn")
     start,results = context.Event(),context.Queue()
     processes = [context.Process(target=_reserve_concurrently,
-        args=(str(repo.engine.url),str(repo.artifacts.root),fence,start,results)) for _ in range(2)]
+        args=(repo.engine.url.render_as_string(hide_password=False),str(repo.artifacts.root),fence,start,results)) for _ in range(2)]
     for process in processes:process.start()
     start.set()
     assert sorted(results.get(timeout=15) for _ in range(2)) == ["refused","reserved"]

@@ -75,7 +75,7 @@ def _worker(url, root, log, block, reached, job_id):
 def test_sigkilled_worker_resumes_from_its_last_checkpoint(source_repo, tmp_path, block, step_key, committed):
     repo = source_repo
     job = repo.enqueue("generate_detail", {"figure_id": "figure"})
-    url, root, log = str(repo.engine.url), str(repo.artifacts.root), tmp_path / "requests.jsonl"
+    url, root, log = repo.engine.url.render_as_string(hide_password=False), str(repo.artifacts.root), tmp_path / "requests.jsonl"
     context = multiprocessing.get_context("spawn")
     reached = context.Event()
     first = context.Process(target=_worker, args=(url, root, str(log), block, reached, job["id"]))

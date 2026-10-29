@@ -29,7 +29,7 @@ def test_real_viewer_renders_exact_version(source_repo, tmp_path):
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     base = f"http://127.0.0.1:{port}"
-    environment = {**os.environ, "SETOUT_DATABASE_URL": str(repo.engine.url),
+    environment = {**os.environ, "SETOUT_DATABASE_URL": repo.engine.url.render_as_string(hide_password=False),
                    "SETOUT_VAR": str(tmp_path), "SETOUT_ARTIFACT_ROOT": str(repo.artifacts.root),
                    "SETOUT_WORKER": "external", "SETOUT_PUBLIC": "0"}
     with (tmp_path / "server.log").open("w+") as log:
@@ -65,8 +65,9 @@ def test_real_viewer_renders_exact_version(source_repo, tmp_path):
                             page.reload()
                         page.get_by_text("succeeded",exact=True).wait_for()
                         page.get_by_text("Run trace (",exact=False).click()
-                        page.get_by_text("read_drawing · completed",exact=False).wait_for()
-                        page.get_by_text("critic · completed",exact=False).wait_for()
+                        # Tool rows only: a model turn that asked for the tool names it too.
+                        page.locator(".trace-step[data-kind=tool] summary",has_text="read_drawing · completed").first.wait_for()
+                        page.locator(".trace-step[data-kind=tool] summary",has_text="critic · completed").first.wait_for()
                         assert page.get_by_role("link",name="Open detail").get_attribute("href") == f"#/d/{repo.run(job['id'])['detail_id']}"
                 finally:
                     browser.close()

@@ -196,7 +196,7 @@ def test_fixture_history_survives_archive_and_registry_removal(tmp_path, monkeyp
         monkeypatch.delitem(geometry.REGISTRY, "fixture_" + fixture, raising=False)
     monkeypatch.setattr(geometry,"LEGACY_FIXTURE_REGISTRY",{})
     # A new repository process handle reads bytes; it never invokes a fixture.
-    reopened = Repository(str(repo.engine.url), repo.artifacts.root)
+    reopened = Repository(repo.engine.url.render_as_string(hide_password=False), repo.artifacts.root)
     for fixture in FIXTURES:
         detail = reopened.get(d.details, "old-" + fixture)
         version = reopened.get(d.versions, detail["current_version_id"])

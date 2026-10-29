@@ -130,7 +130,7 @@ def render_existing(root):
     with socket.socket() as probe:
         probe.bind(("127.0.0.1",0))
         port = probe.getsockname()[1]
-    environment = {**os.environ,"SETOUT_VAR":str(root),"SETOUT_DATABASE_URL":str(repo.engine.url),
+    environment = {**os.environ,"SETOUT_VAR":str(root),"SETOUT_DATABASE_URL":repo.engine.url.render_as_string(hide_password=False),
         "SETOUT_ARTIFACT_ROOT":str(root/"artifacts"),"SETOUT_WORKER":"external","SETOUT_PUBLIC":"0"}
     with (root/"render-server.log").open("w") as log:
         server = subprocess.Popen([sys.executable,"-m","uvicorn","app.main:app","--port",str(port)],env=environment,stdout=log,stderr=log)
