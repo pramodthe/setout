@@ -23,7 +23,7 @@
   dimensionally verified against them. Reason: CadQuery+bpy install + Modal
   wiring inside MUST window risks the slice; mesh v0 keeps every MUST
   acceptance check (toggle, evidence, section match, verification) real.
-- Meta API: access previously verified — `benchmark/results.json`
+- Meta API: access previously verified — `ncc/benchmark/results.json`
   (muse-spark-1.3, n=31, cold 35.5% / grounded 100% / retry 100%, 28 Oct).
   No new model calls spent during the slice build; seed spec is labelled
   human transcription, never presented as model output.
@@ -96,6 +96,194 @@
   0 console errors); screenshots match. Vitest covers badge logic
   (4 tests). Legacy `app/static/` deleted; drive moved to `e2e/drive.py`.
 - Suite: 29 pytest + tsc + 4 vitest green. See `docs/FRONTEND_MIGRATION.md`.
+
+## Restructure — legacy track grouped under `ncc/`
+
+- `rules/`, `generator/`, `extractor/`, `viewer/`, `perception/`,
+  `benchmark/`, `spec/SPEC.md`, `spec/VIDEO.md` moved to `ncc/` (pure
+  `git mv` + path-constant updates; generator output byte-identical).
+- `scripts/regen.sh` + `run_viewer.sh` added alongside the `.bat` files.
+- Nothing replaced was left behind: `app/static/` (vanilla viewer) was
+  already deleted at the React cutover; `ncc/viewer/` is the live NCC
+  track, kept. README/CLAUDE.md/AGENTS.md updated to the new layout.
+
+## 2026-10-29 (later) — Playground v2 direction + viewer foundation
+
+- New direction: a generative installation playground — browse details by
+  situation or product, with real junction geometry and AI throughout. Plan is
+  in `docs/PLAYGROUND_PLAN.md`.
+- Viewer (`web/src/viewport.ts`) rebuilt:
+  - OrbitControls, studio image-based lighting (RoomEnvironment), ACES tone
+    mapping, soft shadows on a shadow-catcher ground.
+  - Procedural PBR materials drawn by our own code (`web/src/materials.ts`,
+    20 classes) on true-scale box-projected UVs (`web/src/uv.ts`).
+  - Stepped layer cutaway applied to the real section.
+  - Labels use the drawing's own names, with stacked leader lines and click to
+    select.
+- Camera API for the coming AI guide: `flyTo`, `setView`, `isolate` (ghosts
+  the rest), `playIntro` (bottom-up build in install order).
+  - Workbench toolbar: fit / iso / section / top / solo / cutaway / labels / build.
+  - Selecting from the list or the drawing now flies to the part.
+- Suite: 29 pytest, tsc, 12 vitest, e2e drive green (0 console errors).
+
+## 2026-10-29 (evening) — AI generation: any drawing → 3D
+
+- User test found the app could not generate 3D from any uploaded document.
+  The server log showed no build request was ever sent; only the two
+  hand-typed seeds worked.
+- Spec v2 detail grammar (`app/program.py`):
+  - named params with provenance, plus parts from a closed shape set (box,
+    sheet, post, rod, wedge, fillet) whose dims are expressions of params;
+  - kinds: room / section / assembly;
+  - a whitelisted evaluator;
+  - provenance flows through expressions (datums are neutral);
+  - compiles to DetailSpec v1, so generators, verification and exports are
+    reused. Generators accept per-part z0/z1.
+- AI pipeline (`app/generate.py`, `app/meta_client.py`):
+  - Muse READ pass (labels, dims, type, rotation), then a COMPOSE pass (program
+    JSON, strict schema), then code gates;
+  - gates: a drawing value needs its quote in the READ and the number in the
+    quote, otherwise it becomes an assumption; labels must be verbatim;
+  - compile + build, with one verifier-feedback retry;
+  - stored under `var/library/`.
+- API and UI:
+  - `POST /api/generate` and `GET /api/generate/{id}`; specs are listed and
+    matched by document sha + crop.
+  - A "Generate 3D with AI" button on any drawing without a detail, with live
+    progress, then auto-build and the intro animation.
+- Viewer: room kind uses a front-right camera and a stepped floor
+  staircase (finishes step back to reveal the membrane).
+- Live results on the wet-area guide (muse-spark-1.3):
+  - p6_Image53 room: 21 parts, 7/7 labels placed, 6 drawing values, 112 s,
+    ~35k tokens, 53 PASS 0 FAIL.
+  - p15_Image110 section: 11 parts, 69 s, 28 PASS 0 FAIL.
+  - Weak spots: dimension-to-part assignment is sometimes loose, and section
+    proportions read flat. Next: a review screen and prompt work.
+- Suite: 44 pytest (program/gates included), 12 vitest, e2e drive green.
+- Tested in the user's own Chrome (Claude in Chrome):
+  - p10_Image83 "Bath lip waterstop over tiled shelf" generated live (10 parts,
+    27 PASS 0 FAIL).
+  - Fixed: JPEG 2000 figures (5 of 24 in the wet-area guide) were stored raw
+    with a .png name, so browsers and the model API could not read them. They
+    are now re-encoded as PNG at upload (`app/store.py`).
+  - Fixed: selecting a drawing with no detail left the previous detail's 3D on
+    screen; it now clears.
+
+## 2026-10-29 (night) — richer grammar: profile, revolve, sweep, fixtures
+
+- New shapes the model can describe, all still verified:
+  - `profile`: any closed outline extruded, with ear-clipping caps, so concave
+    angles and channels work;
+  - `revolve`: a lathe around a vertical axis;
+  - `sweep`: a tube along a 3D path with parallel-transport frames;
+  - `fixture`: bath, shower tray, WC, basin, vanity and door, generated
+    parametrically inside an envelope the program sizes.
+- Verification:
+  - profile and revolve: built extents equal the program;
+  - fixtures: must stay inside their envelope.
+- Viewer: ceramic and glass material classes (glass is see-through, respected
+  by ghosting and labels); all generated meshes render double-sided.
+- Live in the user's Chrome, p7_Image67 "Shower base installation":
+  - 22 parts, chosen by the model: fixture:bath, fixture:shower_tray,
+    revolve:floor waste, posts and boxes;
+  - 11 printed values confirmed by the gates (1800 / 1500 / 25 / 40 / 150 mm),
+    0 gate notes, 61 PASS 0 FAIL, 152 s.
+- Suite: 55 pytest, 13 vitest, e2e drive green.
+- Next: CadQuery code path in a Modal sandbox (for shapes the grammar can't
+  express), then the render → compare → correct loop.
+
+## 2026-10-29 (late) — CadQuery path (Modal sandbox) built; awaiting Modal login
+
+- New `cad` shape: an envelope plus a brief, max 3 per program, illustrative
+  only. Each cad part gets its own Muse pass that writes CadQuery
+  `build(W, H, D)`.
+- `app/cad_sandbox.py`:
+  - static AST gate (imports only cadquery/math; no exec/eval/open/dunders;
+    `build` required);
+  - runs in a Modal Sandbox (`block_network=True`, 1 CPU, 1 GiB, 120 s);
+  - STL back on stdout, mapped to Setout axes by a rotation (no mirror) and
+    fitted into the envelope (uniform shrink only, recorded).
+  - Model code never runs in this process.
+- Pipeline:
+  - CAD parts run in parallel, with one retry using the sandbox error;
+  - a failed or unconfigured sandbox gives a box plus a gate note, so a detail
+    never fails because of CAD;
+  - the mesh is stored at `var/library/cad/<detail>/<part>.json`, and the code
+    and sha go in the record.
+- Verification: the AI-modelled part must stay inside its envelope (PASS/FAIL),
+  plus a C-cad N/A marker ("illustrative, never a verified dimension").
+- `modal==1.6.3` added to requirements. The local Modal token fails
+  authentication; the user needs to run `modal token new`. The live sandbox
+  smoke test is pending.
+- Suite: 71 pytest (16 new CAD tests, using a stand-in runner), 13 vitest, e2e
+  drive green.
+- Modal re-authenticated by the user. Live: CadQuery 2.8.0 (pinned) runs in a
+  no-network sandbox; cold start ~45 s, then 20–40 s per part.
+- When composing, Muse did not choose `cad` for p14_Image104: the verifiable
+  grammar sufficed (4 profiles, sheets, rods, wedge, fillet).
+- Added "Model with AI (CadQuery)" on any part of an AI-generated detail
+  (`POST /api/specs/{id}/cad`, `generate.remodel_part`). It re-models that part
+  into the space it occupies and keeps its id, label and install order.
+- Live in the user's Chrome: grate_top (a plain box) became a perforated
+  stainless grate — staggered holes cut through, 8148 triangles, scale 1.0,
+  45 PASS 0 FAIL. Code stored with its sha.
+- Suite: 72 pytest, 13 vitest, e2e drive green.
+
+## 2026-10-29 (late) — render → compare → correct (verifier-guarded)
+
+- The viewer `snapshot(view)` renders iso and section views and stamps each
+  visible part with its id.
+- `POST /api/specs/{id}/critique` (`generate.critique`): Muse gets the original
+  drawing, the renders, the current program and the READ. It returns issues
+  (part, problem, fix) and a corrected full program.
+- The correction goes through the same gates, compile and build. The guard
+  (`quality`) rejects it if:
+  - failures increase, or
+  - drawing values driving geometry drop, or
+  - verbatim labels drop.
+  CAD parts are frozen. Each round is stored in `revisions`.
+- UI: a "Check against drawing (AI)" button, and one automatic round right
+  after each AI generation.
+- Live in the user's Chrome on p15_Image110: 4 issues found:
+  - an invented 30 mm door-track block (removed);
+  - the "Floor substrate" label on the wrong slab (moved);
+  - floor tile overlapping the riser tile (shortened);
+  - membrane upstand stopping short (extended).
+  Accepted, 26 PASS 0 FAIL, ~2 min.
+- Suite: 77 pytest (5 new guard tests with a stubbed model), 13 vitest, e2e
+  drive green.
+
+## 2026-10-29 (late) — library front page + AI installation guide
+
+- Routes: `#/` library, `#/d/<id>[?part=<id>]` detail page, `#/workbench`
+  add-from-PDF (the old screen; `e2e/drive.py` now opens it there).
+- Library (`app/library.py`, `GET /api/library`, `web/src/Library.tsx`):
+  - browse by situation (sector › area › element, from each detail's
+    situation; seeds now carry one);
+  - browse by component/product (every detail containing a part type; product
+    refs are still null, honestly stated);
+  - search, cards with the source drawing as thumbnail
+    (`GET /api/specs/{id}/thumb`), and badges for human vs AI.
+- Detail page (`web/src/DetailView.tsx`):
+  - `GET /api/specs/{id}/scene` builds and verifies on demand;
+  - parts in install order with provenance badges and evidence;
+  - view, solo, explode, cut and install-step controls; build-up intro;
+  - deep link to a part (fly + isolate).
+- AI guide (`app/guide.py`, `POST /api/guide`, `web/src/Guide.tsx`):
+  - Muse answers with a tour of narrated steps plus viewer actions (focus,
+    isolate, show_all, explode, section, view, install_step, select);
+  - grounding check: every spoken number must exist in the detail (params,
+    drawing values, quoted labels, step numbers); one retry naming the
+    offenders, and anything left is flagged on the step;
+  - unknown part ids are dropped and values clamped.
+- Live in the user's Chrome: "walk me through the install" on the AI bathroom
+  gave a 6-step tour driving install step 13/21, isolating the waterproofing,
+  citing 150/50/10 mm "from the drawing".
+- Fixed a crash: an effect returned `scrollIntoView(...)`, which is a Promise
+  in current Chrome (smooth scroll), so React called it as cleanup.
+- The library now has 10 details, including 3 the user generated from their
+  own PDFs.
+- Suite: 82 pytest, 13 vitest, e2e drive green.
 
 ## Milestone ledger
 
