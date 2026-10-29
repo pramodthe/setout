@@ -64,6 +64,8 @@ export default function App(): JSX.Element {
   const pollToken = useRef(0);
   const vpApi = useRef<Viewport3D | null>(null);
   const introNext = useRef(false);
+  /* which detail the 3D on screen belongs to (the self-check renders it) */
+  const shownDetail = useRef<string | null>(null);
   const [gen, setGen] = useState<GenJob | null>(null);
   const [cadJob, setCadJob] = useState<GenJob | null>(null);
   const [check, setCheck] = useState<GenJob | null>(null);
@@ -114,6 +116,7 @@ export default function App(): JSX.Element {
       setSpec(null);
       setCrop(null);
       setScene(null);
+      shownDetail.current = null;
       setJob(null);
       setSelected(null);
       setGen(null);
@@ -137,10 +140,16 @@ export default function App(): JSX.Element {
     if (!matched) {
       setSpec(null);
       setScene(null); // don't keep showing the previous detail's 3D
+      shownDetail.current = null;
       setJob(null);
       return null;
     }
     const m: DetailSpec = matched;
+    if (shownDetail.current !== m.detail_id) {
+      setScene(null); // another detail's 3D must not stay on screen
+      setJob(null);
+      shownDetail.current = null;
+    }
     setSpec(m);
     setVisible((prev) => {
       const next = { ...prev };
@@ -169,6 +178,7 @@ export default function App(): JSX.Element {
     }
     const s = await api.getScene(jobId);
     setScene(s);
+    shownDetail.current = s.detail_id;
     if (introNext.current) {
       introNext.current = false;
       window.setTimeout(() => vpApi.current?.playIntro(), 60);
@@ -238,6 +248,10 @@ export default function App(): JSX.Element {
     await new Promise((r) => setTimeout(r, 400)); // let the new scene mount
     const vp = vpApi.current;
     if (!vp || !crop) return;
+    if (shownDetail.current !== detailId) {
+      showErr("Build this detail's 3D first: the self-check compares what's on screen.");
+      return;
+    }
     try {
       const renders = [vp.snapshot("iso"), vp.snapshot("front")];
       let g = await api.critique(detailId, renders);
@@ -510,7 +524,11 @@ export default function App(): JSX.Element {
               <div style={{ marginTop: 6 }}>
                 <button
                   id="checkAI"
-                  disabled={!scene || (!!check && (check.state === "queued" || check.state === "running"))}
+                  disabled={
+                    !scene ||
+                    scene.detail_id !== spec.detail_id ||
+                    (!!check && (check.state === "queued" || check.state === "running"))
+                  }
                   onClick={() => spec && void checkAI(spec.detail_id)}
                   title="Render the 3D, compare it with the drawing, correct it (verifier-guarded)"
                 >

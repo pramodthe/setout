@@ -26,8 +26,12 @@ def _situation(spec: DetailSpec) -> list[str]:
 
 def entry(spec: DetailSpec, kind: str) -> dict:
     comps = [c for c in spec.components if c.type not in SKIP_TYPES]
-    drawing = sum(1 for c in spec.components for p in c.params
-                  if p.provenance == Provenance.DRAWING)
+    # printed values confirmed against the drawing: AI details list them in
+    # context (their part dims also depend on assumptions, so they're never
+    # tagged "drawing" themselves); seeds carry them on the parts
+    printed = spec.context.get("drawing_params")
+    drawing = len(printed) if printed is not None else sum(
+        1 for c in spec.components for p in c.params if p.provenance == Provenance.DRAWING)
     return {
         "detail_id": spec.detail_id, "title": spec.title, "origin": spec.origin,
         "made_by": kind, "situation": _situation(spec),
