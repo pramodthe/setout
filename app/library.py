@@ -25,7 +25,7 @@ def _situation(spec: DetailSpec) -> list[str]:
 
 
 def entry(spec: DetailSpec, kind: str) -> dict:
-    comps = [c for c in spec.components if c.type not in SKIP_TYPES]
+    comps = [c for c in spec.components if c.type not in SKIP_TYPES and c.representation != "zone"]
     # printed values confirmed against the drawing: AI details list them in
     # context (their part dims also depend on assumptions, so they're never
     # tagged "drawing" themselves); seeds carry them on the parts

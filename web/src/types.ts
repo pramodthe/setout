@@ -28,7 +28,7 @@ export interface Component {
   id: string;
   type: string;
   source_label: string | null;
-  representation: "solid" | "sheet" | "coating" | "annotation";
+  representation: "solid" | "sheet" | "coating" | "annotation" | "zone";
   generator: { id: string; version: string };
   params: Param[];
   product: { ref: string | null; system: string | null; note: string | null } | null;
@@ -88,6 +88,7 @@ export interface DetailSpec {
 
 export interface Figure {
   crop_id: string;
+  detail_id?: string; // this drawing's AI detail (set by GET /api/documents/{id})
   page: number;
   width: number;
   height: number;
@@ -109,13 +110,6 @@ export interface SpecSummary {
   origin: string;
 }
 
-export interface CritiqueResult {
-  issues: { part_id: string; problem: string; fix: string }[];
-  accepted: boolean;
-  reason: string;
-  diff: Record<string, string[]>;
-}
-
 export interface GenJob {
   id: string;
   state: "queued" | "running" | "done" | "failed";
@@ -123,7 +117,11 @@ export interface GenJob {
   detail_id: string | null;
   error: string | null;
   gate_notes: string[];
-  result?: CritiqueResult | GuideResult | null;
+  version_id?: string | null;
+  run_id?: string;
+  native_state?: string;
+  continued_by?: string | null; // the run that continues this one automatically
+  result?: GuideResult | null;
 }
 
 export interface Build {
@@ -140,6 +138,7 @@ export interface Solid {
   id: string;
   name: string;
   source_label: string | null;
+  placeholder?: "pending" | "failed";
   representation: string;
   layer: string;
   color: string;
@@ -180,6 +179,7 @@ export interface LibraryEntry {
   labels: number;
   review: "draft" | "reviewed" | null;
   located: number;
+  generating?: string | null; // a queued or running AI job on this detail
   components: { id: string; type: string; label: string | null }[];
 }
 

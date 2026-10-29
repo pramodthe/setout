@@ -1,0 +1,41 @@
+name: V3 checks
+on: [push, pull_request]
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: setout
+          POSTGRES_PASSWORD: setout-test-only
+          POSTGRES_DB: setout_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U setout -d setout_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      SETOUT_TEST_DATABASE_URL: postgresql+psycopg://setout:setout-test-only@127.0.0.1:5432/setout_test
+      SETOUT_BROWSER_TESTS: "1"
+      SETOUT_WORKER: external
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -r requirements.txt
+          .venv/bin/python -m playwright install --with-deps chromium
+      - working-directory: web
+        run: npm ci
+      - working-directory: web
+        run: npm test
+      - working-directory: web
+        run: npm run build
+      - run: .venv/bin/python -m pytest tests/ -q

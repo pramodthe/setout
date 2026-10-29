@@ -1,6 +1,56 @@
 # Status — running log, newest first
 
-## 2026-10-29 (latest) — #11 merged with review fixes; v3 plan; no deadline framing
+## 2026-10-29 (latest) — PR #14 review fixes; zones; runs continue; jobs survive a reload
+
+- A code review of PR #14 found 18 likely bugs; the 7 regressions against main
+  and 4 v3 bugs are fixed, each with a test that failed first
+  (`tests/test_regressions_v3.py`).
+- Trying a third-party WC-ambulant layout showed three gaps, now fixed:
+  - the workbench forgot a running job on reload: workbench, detail page and
+    library card ("generating…") pick it back up;
+  - clearance zones were modelled as floor slabs: new `zone` role and READ
+    category, drawn see-through and never physical;
+  - runs stopped with most objects as CAD placeholders: a run cut short by
+    its budget with work left continues automatically (`SETOUT_AUTO_CONTINUE`,
+    default 2).
+- SAM chooses prompts from part roles; the waterproofing skip list is gone.
+- Card images fall back to an earlier version's render after a review edit.
+
+## 2026-10-29 — v3 implemented, reviewed against PLAN_V3 and fixed
+
+- The team's v3 work is on branch `feat/v3-agent`: database and Alembic,
+  persistent jobs, the Muse tool agent, AI-written CAD objects, headless
+  renderer and independent critic, memory, run trace. Details in
+  `docs/V3_IMPLEMENTATION.md`; results in `docs/V3_EVAL.md`.
+- Review fixes, same branch:
+  - checks no longer key off part names (trade-agnostic);
+  - one store for AI details; the v2 pipeline is removed;
+  - labels limited to the drawing's, with a coverage check;
+  - lessons from corrections, switchable in the UI;
+  - frozen first migration with a drift test, and a kill-and-resume test;
+  - readable paged trace; browsers reused across renders.
+- Tested in Chrome on our own drawings:
+  - library, detail pages, version history, lessons, run trace, seed pages and
+    the workbench all work;
+  - e2e DRIVE OK;
+  - a live generation kept all 8 layer/object labels;
+  - killing the server mid-run resumed it from its saved steps;
+  - a recheck took it from 41/10/9 to 66 PASS / 1 FAIL / 6 UNVERIFIED with
+    both CAD objects and a passing critic. It stays `needs_review`: two printed
+    dimensions can't yet be measured with the selectors the agent wrote.
+- Three bugs found that way and fixed: narrated structured output lost a valid
+  program; `min_coverage: 90` read as a fraction; the worker didn't start until
+  the next job.
+- The invariant in `CLAUDE.md` now states the v3 rule (named values; objects
+  are measured CAD).
+- Open:
+  - v3's 24-drawing results trail v2 (`docs/V3_EVAL.md`) and need a rerun on
+    this code;
+  - M2 has not been run unaided;
+  - M4 memory has been A/B tested on one drawing, not the eval set;
+  - `README.md` sections 3–11 still describe v2.
+
+## 2026-10-29 — #11 merged with review fixes; v3 plan; no deadline framing
 
 - PR #11 merged after a code review. The fixes:
   - workbench races: a build in flight landing on a new detail, wiped

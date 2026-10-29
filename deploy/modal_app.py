@@ -30,11 +30,14 @@ GUIDE = os.environ.get("SETOUT_DEMO_GUIDE") == "1"
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install("fastapi==0.162.0", "pydantic==2.14.1", "pypdf==6.21.3",
-                 "pillow==13.0.0", "python-multipart==0.0.32")
+                 "pillow==13.0.0", "python-multipart==0.0.32", "SQLAlchemy==2.0.55",
+                 "alembic==1.20.1", "psycopg[binary]==3.3.6")
     .env({"SETOUT_VAR": "/data", "SETOUT_PUBLIC": "1", "SETOUT_GUIDE_PER_HOUR": "60",
           "SETOUT_DEMO_GUIDE": "1" if GUIDE else "0"})
     .add_local_dir(str(ROOT / "web" / "dist"), "/root/web/dist")
     .add_local_dir(str(ROOT / "app"), "/root/app", ignore=["__pycache__"])
+    .add_local_dir(str(ROOT / "migrations"), "/root/migrations", ignore=["__pycache__"])
+    .add_local_file(str(ROOT / "alembic.ini"), "/root/alembic.ini")
 )
 volume = modal.Volume.from_name("setout-demo-var", create_if_missing=True)
 app = modal.App("setout-demo", image=image)

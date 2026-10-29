@@ -3,7 +3,8 @@ verify, and the deterministic AI gates (no model calls)."""
 
 import pytest
 
-from app.generate import EXAMPLE, gate
+from app.generate import gate
+from v2_example import EXAMPLE
 from app.geometry import build_assembly
 from app.program import DetailProgram, compile_program, evaluate, expr_names
 from app.spec import Provenance, SourceDoc
@@ -178,13 +179,3 @@ def test_fixtures_stay_inside_envelope(kind):
                                    "fixture": kind, "dims": dims})
     assert meshes["fx"].tri_count > 0
     assert next(r for r in res if r.id == "B-built-fx").status == "PASS"
-
-
-def test_gate_unknown_fixture_falls_back_to_box():
-    dims = [{"name": k, "expr": "0" if k.endswith("0") else "100"}
-            for k in ("x0", "x1", "y0", "y1", "z0", "z1")]
-    raw = {**EXAMPLE, "parts": [{"id": "thing", "type": "x", "label": "", "shape": "fixture",
-                                 "fixture": "hot_tub", "dims": dims, "path": [],
-                                 "install_after": [], "note": ""}]}
-    prog, notes = gate(raw, READ)
-    assert prog["parts"][0]["shape"] == "box" and any("hot_tub" in n for n in notes)

@@ -5,14 +5,15 @@ import type {
   Build,
   CheckStatus,
   Component,
-  CritiqueResult,
   DetailSpec,
   Doc,
+  Figure,
   GenJob,
   Scene,
   SpecSummary,
 } from "./types";
 import ViewportView from "./ViewportView";
+import JobPanel from "./JobPanel";
 import type { ViewPreset, Viewport3D } from "./viewport";
 
 import { badgeClass, badgeLabel, worstProv } from "./provenance";
@@ -62,6 +63,7 @@ export default function App(): JSX.Element {
   const timer = useRef<number | null>(null);
   const errTimer = useRef<number | null>(null);
   const pollToken = useRef(0);
+  const genToken = useRef(0); // the generation the workbench is following
   const vpApi = useRef<Viewport3D | null>(null);
   const introNext = useRef(false);
   /* which detail the 3D on screen belongs to (the self-check renders it) */
@@ -224,46 +226,72 @@ export default function App(): JSX.Element {
     }
   };
 
-  /* AI: read the selected drawing, compose a detail program, gate, build. */
+  /* Follow a generation to its end, including the runs that continue it
+     when one spends its budget with work left. null if the user moved on. */
+  const followGeneration = async (start: GenJob): Promise<GenJob | null> => {
+    const my = ++genToken.current;
+    let g = start;
+    setGen(g);
+    for (;;) {
+      while (g.state === "queued" || g.state === "running") {
+        await new Promise((r) => setTimeout(r, 1000));
+        if (my !== genToken.current) return null;
+        g = await api.getGenerate(g.id);
+        setGen(g);
+      }
+      if (!g.continued_by) return g;
+      g = await api.getGenerate(g.continued_by);
+      setGen(g);
+    }
+  };
+
+  /* A finished generation: list the drawing's details again, open its 3D. */
+  const showGenerated = async (g: GenJob | null, cropId: string): Promise<void> => {
+    if (!g || !doc) return;
+    if (g.state !== "done" || !g.detail_id) {
+      showErr("AI generation failed: " + (g.error || "unknown").slice(0, 200));
+      return;
+    }
+    const vs = variantsFor((await api.listSpecs()).specs, doc.sha256);
+    setVariants(vs);
+    const m = await selectCrop(cropId, vs, g.detail_id);
+    if (m) await buildDetail(m.detail_id);
+  };
+
+  /* AI: the agent reads the selected drawing and builds its detail. */
   const generateAI = async (): Promise<void> => {
     if (!doc || !crop) return;
     showErr(null);
     try {
-      let g = await api.generate(doc.id, crop);
-      setGen(g);
-      while (g.state === "queued" || g.state === "running") {
-        await new Promise((r) => setTimeout(r, 1000));
-        g = await api.getGenerate(g.id);
-        setGen(g);
-      }
-      if (g.state !== "done" || !g.detail_id) {
-        showErr("AI generation failed: " + (g.error || "unknown").slice(0, 200));
-        return;
-      }
-      const vs = variantsFor((await api.listSpecs()).specs, doc.sha256);
-      setVariants(vs);
-      const m = await selectCrop(crop, vs, g.detail_id);
-      if (m && (await buildDetail(m.detail_id))) {
-        await checkAI(m.detail_id); // one self-check round right away
-      }
+      await showGenerated(await followGeneration(await api.generate(doc.id, crop)), crop);
     } catch (e) {
       showErr("AI generation failed: " + (e as Error).message.slice(0, 200));
     }
   };
 
-  /* AI self-check: render our 3D, compare with the drawing, accept the
-     correction only if the verifier says it isn't worse. */
-  const checkAI = async (detailId: string): Promise<void> => {
-    await new Promise((r) => setTimeout(r, 400)); // let the new scene mount
-    const vp = vpApi.current;
-    if (!vp || !crop) return;
-    if (shownDetail.current !== detailId) {
-      showErr("Build this detail's 3D first: the self-check compares what's on screen.");
-      return;
-    }
+  /* Select a drawing. If its AI detail has a run going (started before a
+     reload, or from another page), pick it back up and follow it. */
+  const openCrop = async (f: Figure): Promise<void> => {
+    genToken.current++; // stop following another drawing's run
+    setGen(null);
+    await selectCrop(f.crop_id);
+    if (!f.detail_id) return;
     try {
-      const renders = [vp.snapshot("iso"), vp.snapshot("front")];
-      let g = await api.critique(detailId, renders);
+      const { jobs } = await api.activeJobs(f.detail_id);
+      const running = jobs.find((j) => j.kind === "generate_detail" || j.kind === "revise_detail");
+      if (running) await showGenerated(await followGeneration(await api.getGenerate(running.id)), f.crop_id);
+    } catch (e) {
+      showErr("Could not follow the running AI job: " + (e as Error).message.slice(0, 200));
+    }
+  };
+
+  /* AI self-check: a persistent job on the server verifies this version,
+     renders it in the headless viewer, asks the independent critic and
+     repairs concrete issues in a new version. */
+  const checkAI = async (detailId: string): Promise<void> => {
+    if (!crop) return;
+    try {
+      let g = await api.critique(detailId);
       setCheck(g);
       while (g.state === "queued" || g.state === "running") {
         await new Promise((r) => setTimeout(r, 1000));
@@ -274,7 +302,7 @@ export default function App(): JSX.Element {
         showErr("Self-check failed: " + (g.error || "unknown").slice(0, 200));
         return;
       }
-      if ((g.result as CritiqueResult | null)?.accepted && doc) {
+      if (g.version_id && doc) {
         // fresh list: a detail generated in this session isn't in `variants` yet
         const vs = variantsFor((await api.listSpecs()).specs, doc.sha256);
         setVariants(vs);
@@ -482,7 +510,7 @@ export default function App(): JSX.Element {
                 key={f.crop_id}
                 className={"crop" + (crop === f.crop_id ? " sel" : "")}
                 data-crop={f.crop_id}
-                onClick={() => void selectCrop(f.crop_id)}
+                onClick={() => void openCrop(f)}
               >
                 <img
                   loading="lazy"
@@ -528,10 +556,11 @@ export default function App(): JSX.Element {
             Boxes are indicative regions from the spec — not SAM masks.
           </div>
           <h2>3 · Components</h2>
+          {gen?.run_id && <JobPanel jobId={gen.id} />}
           {spec?.origin.startsWith("ai-generated") && (
             <div className="step ai-note">
-              AI-generated from this drawing (Muse: read, then compose, then code gates).
-              Unreviewed. A <b>drawing</b> value was confirmed against the printed
+              AI-generated from this drawing (the Muse agent read it, wrote the program
+              through code gates, then rendered and critiqued its own 3D). Unreviewed. A <b>drawing</b> value was confirmed against the printed
               words; everything else is an <b>assumption</b>.
               <div style={{ marginTop: 6 }}>
                 <button
@@ -542,28 +571,14 @@ export default function App(): JSX.Element {
                     (!!check && (check.state === "queued" || check.state === "running"))
                   }
                   onClick={() => spec && void checkAI(spec.detail_id)}
-                  title="Render the 3D, compare it with the drawing, correct it (verifier-guarded)"
+                  title="Verify, render and critique this version on the server; repairs become a new version"
                 >
                   Check against drawing (AI)
                 </button>
               </div>
               {check && (
-                <div id="checkLog" className="genlog">
-                  {check.progress.map((l, i) => (
-                    <div key={i}>{l}</div>
-                  ))}
-                  {check.result && "issues" in check.result && (
-                    <div className={check.result.accepted ? "chk pass" : "chk unv"} style={{ marginTop: 6 }}>
-                      <b>{check.result.accepted ? "Correction accepted" : "No change applied"}</b>
-                      {" — "}
-                      {check.result.reason}
-                      {check.result.issues.map((x, i) => (
-                        <div key={i} style={{ marginTop: 4 }}>
-                          <b>{x.part_id}</b>: {x.problem} → {x.fix}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                <div id="checkLog">
+                  <JobPanel jobId={check.id} />
                 </div>
               )}
             </div>
@@ -584,7 +599,7 @@ export default function App(): JSX.Element {
                         Generate 3D with AI
                       </button>
                     </div>
-                    {gen && (
+                    {gen && !gen.run_id && (
                       <div id="genProgress" className="genlog">
                         {gen.progress.map((l, i) => (
                           <div key={i}>{l}</div>
@@ -865,13 +880,7 @@ export default function App(): JSX.Element {
                     >
                       Model with AI (CadQuery)
                     </button>
-                    {cadJob && (
-                      <div className="genlog">
-                        {cadJob.progress.map((l, i) => (
-                          <div key={i}>{l}</div>
-                        ))}
-                      </div>
-                    )}
+                    {cadJob && <JobPanel jobId={cadJob.id} />}
                   </div>
                 )}
                 <h2 style={{ marginTop: 10 }}>Product</h2>

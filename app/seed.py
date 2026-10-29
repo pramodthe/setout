@@ -626,3 +626,10 @@ def door_subsill_d4() -> DetailSpec:
         },
         components=comps, relations=relations, unresolved=unresolved,
     )
+
+
+# The hand-transcribed reference details. They are served and corrected from
+# code; only AI-made details live in the database.
+SEEDS = {"conpro-door-sill-D3": door_sill_d3,
+         "conpro-subsill-D4": door_subsill_d4}
+SEED_IDS = frozenset(SEEDS)

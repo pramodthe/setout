@@ -473,16 +473,19 @@ def gen_fixture_door(c: Component, z0: float, z1: float) -> Mesh:
 
 FIXTURES = ("bath", "shower_tray", "wc", "basin", "vanity", "door")
 
-REGISTRY = {
-    "profile": gen_profile,
-    "revolve": gen_revolve,
-    "sweep": gen_sweep,
+LEGACY_FIXTURE_REGISTRY = {
     "fixture_bath": gen_fixture_bath,
     "fixture_shower_tray": gen_fixture_shower_tray,
     "fixture_wc": gen_fixture_wc,
     "fixture_basin": gen_fixture_basin,
     "fixture_vanity": gen_fixture_vanity,
     "fixture_door": gen_fixture_door,
+}
+
+REGISTRY = {
+    "profile": gen_profile,
+    "revolve": gen_revolve,
+    "sweep": gen_sweep,
     "box": gen_box,
     "l_angle": gen_l_angle,
     "sheet_follow": gen_sheet_follow,
@@ -523,7 +526,12 @@ def build_assembly(spec: DetailSpec, use_display: bool = False
         if gid == "cad_mesh":
             meshes[comp.id] = load_cad_mesh(spec, comp)
             continue
-        if gid not in REGISTRY:
+        generator = REGISTRY.get(gid)
+        if generator is None and spec.context.get("program_version") == "2.0":
+            # Transitional v2 import only; v3 authoring never accepts fixtures,
+            # and archived versions are served from immutable scene snapshots.
+            generator = LEGACY_FIXTURE_REGISTRY.get(gid)
+        if generator is None:
             raise ValueError(f"unknown generator {gid!r} on {comp.id}")
         if comp.generator.version != GEN_VERSION:
             raise ValueError(f"{comp.id}: generator version "
@@ -537,7 +545,7 @@ def build_assembly(spec: DetailSpec, use_display: bool = False
             meshes[comp.id] = gen_sheet_follow(comp, cz0, cz1,
                                                use_display=use_display)
         else:
-            meshes[comp.id] = REGISTRY[gid](comp, cz0, cz1)
+            meshes[comp.id] = generator(comp, cz0, cz1)
     return meshes
 
 

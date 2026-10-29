@@ -1,6 +1,6 @@
 """SAM 3.1: locate each part of a detail on its source drawing.
 
-One concept prompt per part (its short drawing label, else its type) against
+Short concept prompts per part (its short drawing label, its type) against
 the drawing turned upright (SAM finds nothing in a sideways drawing). The
 best box above a confidence floor becomes a SourceRegion(kind="sam_mask")
 in fractions of the upright image, which the viewer draws and links to the
@@ -22,8 +22,9 @@ from . import meta_client
 BOX = re.compile(r"(\d+)<\|box;x1=(\d+);y1=(\d+);x2=(\d+);y2=(\d+);"
                  r"w=(\d+);h=(\d+)(?:;c=([\d.]+))?\|>")
 MIN_CONFIDENCE = 0.5
-SKIP = {"wall", "floor_slab", "slab", "substrate", "screed", "membrane",
-        "primer", "adhesive", "tile", "grout", "bedding", "datum"}
+# Roles whose parts SAM can't pick out by kind (thin layers, built-up
+# substrates, non-physical zones): they're searched by their drawing label only.
+LABEL_ONLY_ROLES = {"substrate", "covered_layer", "finish", "zone"}
 
 
 def upright(img: bytes, rotation_deg: int) -> bytes:
@@ -47,26 +48,28 @@ def parse_boxes(text: str) -> list[dict]:
 
 
 # everyday names SAM knows better than trade terms (bathtub 0.91 vs bath 0.66)
+# Search aids only: extra everyday names for a few common object words. They
+# never decide which parts are searched, or anything about a part.
 SYNONYMS = {"bath": ["bathtub"], "basin": ["washbasin", "sink"], "vanity": ["vanity cabinet"],
             "wc": ["toilet"], "toilet": ["toilet"], "waste": ["floor drain"], "drain": ["floor drain"],
             "grate": ["drain grate"], "screen": ["glass shower screen"], "door": ["door"],
             "tap": ["tap"], "mixer": ["shower mixer"], "tray": ["shower tray"], "window": ["window"]}
 
 
-def prompts_for(part_type: str, label: str | None) -> list[str]:
+def prompts_for(part_type: str, label: str | None, role: str = "object") -> list[str]:
     """Up to three short noun phrases SAM can segment: the part's short
-    drawing label, its type, and an everyday synonym. Layers it can't see
-    (membranes, screeds, slabs…) get only their label, if any."""
+    drawing label, its type, and an everyday synonym. The part's declared role
+    decides, never its name: layers and zones get only their label, if any."""
     out = [label] if label and len(label.split()) <= 4 else []
     t = part_type.lower().replace("_", " ").strip()
-    if t and not any(t == s or t.startswith(s + " ") or t.endswith(" " + s) for s in SKIP):
+    if t and role not in LABEL_ONLY_ROLES:
         out.append(t)
         out += [syn for key, syns in SYNONYMS.items() if key in t.split() for syn in syns]
     return list(dict.fromkeys(out))[:3]
 
 
-def prompt_for(part_type: str, label: str | None) -> str | None:
-    found = prompts_for(part_type, label)
+def prompt_for(part_type: str, label: str | None, role: str = "object") -> str | None:
+    found = prompts_for(part_type, label, role)
     return found[0] if found else None
 
 
@@ -116,9 +119,9 @@ def _same(a: dict, b: dict) -> bool:
     return inter > 0 and inter / (area(a) + area(b) - inter) >= 0.7
 
 
-def locate(png: bytes, parts: list[tuple[str, str, str | None]],
+def locate(png: bytes, parts: list[tuple],
            call=None) -> dict[str, dict]:
-    """parts: (id, type, label). Returns {part_id: box with prompt, c}.
+    """parts: (id, type, label[, role]). Returns {part_id: box with prompt, c}.
 
     Each part ranks what SAM found: hits from its own drawing label first,
     then by confidence. When two parts want the same box, the one that found
@@ -126,7 +129,7 @@ def locate(png: bytes, parts: list[tuple[str, str, str | None]],
     them apart (a basin tap and a shower mixer both asking for "tap"), so the
     box goes to neither. A part that loses a box falls back to its next one."""
     call = call or _call
-    todo = [(pid, pr, pr == lab) for pid, t, lab in parts for pr in prompts_for(t, lab)]
+    todo = [(part[0], pr, pr == part[2]) for part in parts for pr in prompts_for(*part[1:4])]
 
     def one(item):
         pid, prompt, own = item

@@ -98,6 +98,12 @@ parts fall back to plain boxes with a note — nothing breaks.
 
 ## 3. Architecture
 
+> **v3 (29 Oct 2026).** Sections 3–11 describe the v2 pipeline. Generation is now a
+> Muse agent with tools, persistent jobs and memory, over a database of immutable
+> versions; objects are AI-written parametric CAD measured independently. See
+> `CLAUDE.md` (architecture and rules), `docs/PLAN_V3.md`, `docs/V3_IMPLEMENTATION.md`
+> and `docs/V3_EVAL.md`.
+
 ```mermaid
 flowchart LR
   subgraph Browser["Browser — React 19 + TypeScript + Three.js"]
@@ -451,7 +457,7 @@ web/                     React + TypeScript frontend (Vite)
   src/viewport.ts        Three.js viewer and camera API
   src/materials.ts       procedural material library
 tests/                   pytest (no network)
-eval/batch_eval.py       run the AI pipeline over every drawing in a PDF
+eval/agent_eval.py       run the v3 agent over every drawing in a PDF
 deploy/modal_app.py      hosted public demo on Modal
 e2e/drive.py             headless browser acceptance pass
 docs/                    plan, status log, earlier audit and architecture notes
@@ -484,7 +490,8 @@ and the original spec, geometry, verification and API suites.
 
 ## 11. Evaluation, performance and cost
 
-**Batch evaluation** (`eval/batch_eval.py`, details in `docs/EVAL.md`): the full AI
+**Batch evaluation, v2** (recorded with the v2 runner, since removed; details in
+`docs/EVAL.md`; the v3 rerun is in `docs/V3_EVAL.md`): the full AI
 pipeline on all 24 drawings of a 22-page wet-area waterproofing guide.
 
 | Measure | Result |

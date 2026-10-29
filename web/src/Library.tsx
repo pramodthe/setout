@@ -27,6 +27,7 @@ function Card({ d, part }: { d: LibraryEntry; part?: string }): JSX.Element {
           <span className={d.made_by === "ai" && d.review !== "reviewed" ? "badge b-assump" : "badge b-draw"}>
             {d.made_by === "ai" ? (d.review === "reviewed" ? "AI · reviewed" : "AI · draft") : "human transcription"}
           </span>
+          {d.generating && <span className="badge b-gen" title="An AI run is working on this detail">generating…</span>}
           {d.located > 0 && <span title="parts located on the drawing by SAM 3.1">◎ {d.located}</span>}
           <span>{d.parts} parts · {d.drawing_values} drawing values · {d.labels} labels</span>
         </div>

@@ -68,7 +68,8 @@ build-up evaluated by the same checks, not a renamed D3.
 
 ## Batch evaluation — AI generation on a 24-drawing guide (2026-10-29)
 
-`eval/batch_eval.py` runs the whole AI pipeline (read → compose → gates → compile
+The v2 runner (`eval/batch_eval.py`, removed with v3; its v3 successor is
+`eval/agent_eval.py`, results in `docs/V3_EVAL.md`) ran the whole AI pipeline (read → compose → gates → compile
 → build → optional CAD → verify) on every embedded drawing of one 22-page
 wet-area waterproofing guide, in its own storage folder. The guide is a
 third-party document: it is not committed, and only counts are reported here.

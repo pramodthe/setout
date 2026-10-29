@@ -41,6 +41,27 @@ def default_model() -> str:
     return e.get("MODEL_API_MODEL") or e.get("META_MODEL") or "muse-spark-1.3"
 
 
+def respond_tools(payload: dict, timeout: int = 300) -> dict:
+    """One non-streaming native Responses turn; caller checkpoints and retries.
+
+    Return every output item, including reasoning/function-call identifiers.
+    Never retry invisibly: the persistent worker accounts for each dispatch.
+    """
+    e = _env()
+    key = e.get("META_API_KEY") or e.get("MODEL_API_KEY")
+    if not key:
+        raise RuntimeError("AI not configured: set META_API_KEY")
+    base = (e.get("META_API_BASE") or "https://api.meta.ai/v1").rstrip("/")
+    body = {**payload, "stream": False}
+    req = urllib.request.Request(f"{base}/responses", data=json.dumps(body, allow_nan=False).encode(),
+                                 headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        result = json.load(response)
+    if not isinstance(result.get("output"), list):
+        raise RuntimeError("provider response has no output array")
+    return result
+
+
 def respond_json(content: list[dict], schema: dict, name: str,
                  model: str | None = None, timeout: int = 300,
                  instructions: str | None = None) -> tuple[dict, dict | None]:

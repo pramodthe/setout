@@ -30,10 +30,10 @@ Built for the **Meta Global AI Developer Hackathon 2026**, Indie Developer track
 
 | | **Playground** (primary) | **NCC track** (original) |
 |---|---|---|
-| What | Any drawing in a PDF → AI-written detail program → meshes → verify → library, 3D viewer, AI guide | NCC Part 10.2 rules → shower details → static Three.js viewer |
-| Code | `app/` (FastAPI), `web/` (React+TS), `tests/`, `e2e/` | `ncc/` (everything) |
-| Source of numbers | `app/seed.py` (two hand-transcribed seeds) and AI-generated programs gated against the drawing (`var/library/`) | `ncc/rules/rules.json` (31 rules, 9 drive geometry) |
-| Plan docs | `docs/PLAN_V3.md` (proposed: agent, database, jobs, memory), `docs/PLAYGROUND_PLAN.md`, `docs/STATUS.md` | `ncc/SPEC.md` |
+| What | Any drawing in a PDF → Muse agent (tools, memory, persistent jobs) → verified 3D versions in a database → library, 3D viewer, AI guide | NCC Part 10.2 rules → shower details → static Three.js viewer |
+| Code | `app/` (FastAPI, worker, agent), `migrations/`, `web/` (React+TS), `tests/`, `eval/`, `e2e/` | `ncc/` (everything) |
+| Source of numbers | `app/seed.py` (two hand-transcribed seeds) and AI-written programs gated against the drawing (database versions) | `ncc/rules/rules.json` (31 rules, 9 drive geometry) |
+| Plan docs | `docs/PLAN_V3.md` (the v3 design), `docs/V3_IMPLEMENTATION.md`, `docs/V3_EVAL.md`, `docs/MULTI_AGENT_SPEC.md` (next, not built), `docs/STATUS.md` | `ncc/SPEC.md` |
 | Deps | `requirements.txt` (pinned) | **Python stdlib only.** Keep it that way. |
 
 Read the plan doc for a track before you propose architecture changes to it.
@@ -42,17 +42,24 @@ state and add an entry when a milestone lands.
 
 ## The invariant — do not break this
 
-**3D geometry is GENERATED from source numbers. Never modelled by hand.**
+**3D geometry is generated from named values, never placed by hand.**
+(Adopted with v3, 29 Oct 2026; it replaced "the model never writes geometry".)
 
-- **Playground:** every mesh comes from a closed-set generator in
-  `app/geometry.py` `REGISTRY`, driven only by spec `Param`s. Every param carries
-  `provenance` (`drawing` / `manufacturer_doc` / `user_input` / `assumption`).
-  Assumptions and unresolved items must **never** produce a verified PASS.
-  The model writes *detail programs* (`app/program.py`: params plus parts whose
-  dims are arithmetic expressions); our compiler builds the geometry.
-- **The one exception: `cad` parts.** Model-written CadQuery runs only in a
-  no-network Modal sandbox (`app/cad_sandbox.py`). It is fitted into an envelope,
-  labelled "AI-modelled, illustrative", and never carries a verified dimension.
+- **Every value is named and sourced.** Every param carries `provenance`
+  (`drawing` / `manufacturer_doc` / `user_input` / `assumption`). Assumptions
+  and unresolved items must **never** produce a verified PASS.
+- **Layers and substrates** (anything built up in place or laid as a sheet or
+  board) are exact primitives from the program grammar (`app/program.py`,
+  `app/native_program.py`): box, sheet, wedge, profile, revolve, sweep. The model
+  writes the program; our compiler builds the geometry.
+- **Objects** (fixings, brackets, trims, grates, fixtures...) are parametric
+  CadQuery `build(p)` written by the model and run only in the no-network Modal
+  sandbox (`app/cad_components.py`, `app/cad_sandbox.py`). Every size the code
+  uses is a named value. A separate trusted process measures the solid; it is
+  never scaled or fitted. A measured mismatch is a FAIL, and failed CAD is a
+  placeholder that can never PASS.
+- **No hand-modelled object in the registry.** The six v2 fixture generators
+  (`LEGACY_FIXTURE_REGISTRY`) exist only to import archived v2 records.
 - **NCC:** every solid carries the `rule_id` that set its dimensions. A dimension
   with no governing rule is a product dimension with `rule_id: null`, and the
   code says so. Feeding a new manual must produce new details with no code changes.
@@ -99,9 +106,13 @@ Playground (run from repo root, venv activated: `source .venv/bin/activate`):
 
 ```sh
 pip install -r requirements.txt
-python -m pytest tests/ -q                                   # no network needed
+python -m pytest tests/ -q                                   # no network needed (Muse, SAM, Modal stubbed)
 python -m pytest tests/test_verify.py::test_d4_contacts_bear -q   # single test
-SETOUT_VAR=var python -m uvicorn app.main:app --port 8000    # serves API + web/dist at /
+scripts/test_postgres.sh                                     # jobs + migrations on Postgres (SETOUT_TEST_DATABASE_URL)
+SETOUT_VAR=var python -m uvicorn app.main:app --port 8000    # API + web/dist at /, with an embedded worker
+SETOUT_WORKER=external python -m app.worker                  # or run workers separately (same SETOUT_VAR / DB)
+python -m app.versioning --dry-run                           # what an old var/library would import
+python -m eval.agent_eval --own-drawings --var var/eval-x    # v3 evaluation in its own store
 
 cd web && npm install
 npm run build        # tsc -b && vite build -> web/dist (the server serves this)
@@ -122,8 +133,10 @@ committed. It drives the upload screen at `#/workbench`. Screenshots go to
 Web routes: `#/` library · `#/d/<detail_id>[?part=<id>]` detail page + AI guide ·
 `#/workbench` add a detail from a PDF.
 
-AI features need `META_API_KEY` in `.env`. CAD parts also need a Modal login
-(`.venv/bin/modal token new`); without it they fall back to boxes with a note.
+AI features need `META_API_KEY` in `.env`. CAD objects also need a Modal login
+(`.venv/bin/modal token new`); without it they stay labelled placeholders that
+FAIL. Server-side renders need Chrome (macOS) or `python -m playwright install
+--with-deps chromium` (Linux), and `SETOUT_RENDER_URL` pointing at the API.
 
 NCC track:
 
@@ -145,48 +158,92 @@ python3 ncc/benchmark/run.py --dry-run                        # no API calls
 
 ## Playground architecture
 
+Two kinds of detail. **Seeds** (`app/seed.py` `SEEDS`) are hand-transcribed
+reference specs served and corrected from code. **Everything AI-made** is an
+immutable version in the database, changed only through jobs and reviews. An
+old file library (`var/library/*.json`) is imported once at startup
+(`versioning.import_library`); a seed imported earlier never shadows its code.
+
 ```
 POST /api/documents  -> app/store.py: sha256, embedded raster figures (pypdf+pillow) -> var/docs/{id}/
-GET/PATCH /api/specs -> app/seed.py seed functions -> app/spec.py DetailSpec (Pydantic, validates refs + install cycles)
-POST /api/builds     -> background thread: build_assembly (geometry.py) -> verify_all (verify.py)
+GET/PATCH /api/specs -> seeds (PATCH only) or the detail's current database version
+POST /api/builds     -> build_assembly (geometry.py) -> verify_all (verify.py), or a version's v3 verification
                         -> var/builds/{id}/{spec.json, scene.json, model.glb, report.json | error.txt}
 ```
 
-AI pipeline (`app/generate.py`, all calls through `app/meta_client.py`):
+Database and jobs (`app/database.py` tables, `migrations/` Alembic, `app/repository.py`):
+SQLite at `SETOUT_VAR/v3.db` by default, Postgres via `SETOUT_DATABASE_URL`.
+Bytes (crops, PDFs, renders, CAD, scenes) are content-addressed under
+`SETOUT_ARTIFACT_ROOT` (default `SETOUT_VAR/artifacts`).
 
 ```
-POST /api/generate {doc_id, crop_id} -> READ pass (labels, dims, type) -> COMPOSE pass
-  (program JSON, strict schema) -> gate() -> compile_program -> build_assembly
-  -> optional CAD parts in the Modal sandbox -> var/library/<detail_id>.json
-POST /api/specs/{id}/critique {renders}  render -> compare -> correct, accepted only if
-  quality() doesn't drop (failures, drawing values traced, labels)
-POST /api/specs/{id}/cad {part_id}       re-model one part in CadQuery
-POST /api/guide {detail_id, question}    tour of narration + viewer actions (app/guide.py)
-GET  /api/library · /api/specs/{id}/scene · /api/specs/{id}/thumb (source drawing)
-GET/POST /api/specs/{id}/preview          library card image: a render of the 3D, never the drawing
+POST /api/jobs {kind, payload}   v3_api.submit validates, enqueues; kinds: generate_detail, revise_detail,
+                                 cad_component, render, locate, batch_eval
+app/worker.py                    leases a job (60 s, heartbeat 15 s, fencing, retry with backoff)
+  -> app/agent.py                Muse tool loop; every model and tool step checkpointed in agent_steps,
+                                 the conversation rebuilt from them on resume; budgets per run
+  -> app/agent_tools.py          read_drawing · recall · write_program / patch_program · model_component /
+                                 reuse_component · build_and_verify · render · critic · locate_on_drawing ·
+                                 remember · finish
+GET  /api/jobs?detail_id=…&active=1 · /api/jobs/{id} · /events (SSE) · /api/runs/{id}/steps (compact; ?full=1 raw)
+GET  /api/details/{id}/versions · /api/versions/{id}[/scene|/reviews] · /api/artifacts/{id}
+POST /api/versions/{id}/reviews  accept / correct / resolve / activate_memory · /api/details/{id}/publish
+GET/POST /api/memories           lessons (proposed until a reviewer activates them)
 ```
 
-Long AI jobs share `GEN_JOBS` in `app/main.py` and are polled with
-`GET /api/generate/{job_id}`.
+A run that spends its budget while its draft still has FAILs (e.g. CAD
+placeholders) and made progress continues automatically as a `revise_detail`
+job, at most `SETOUT_AUTO_CONTINUE` times (default 2; `0` turns it off). The
+finished job records `continued_by`, and the workbench, detail page and trace
+follow the chain. A page reload picks a running job back up through
+`/api/jobs?detail_id=…&active=1`.
+
+The older routes stay for the UI and map onto jobs: `POST /api/generate`,
+`/api/specs/{id}/critique|cad|locate` enqueue jobs and are polled with
+`GET /api/generate/{job_id}`. Only the guide is a short in-process request
+(`GEN_JOBS`). `#/render/<version_id>` is the headless render page
+(`app/render.py`), `#/jobs/<job_id>` a run trace.
 
 Cross-file contracts. These are not obvious from any single file:
 
-- **Gates are the honesty boundary** (`generate.gate`). A `drawing` param survives
-  only if its `source_quote` appears in the READ and the number appears in the
-  quote; labels must match READ labels verbatim; anything else is demoted to an
-  assumption with a note. Never loosen this to make a demo look better.
-- **Program grammar ↔ prompt ↔ schema:** a new shape needs `SHAPE_DIMS` and
-  `GENERATOR` (`app/program.py`), a generator in `REGISTRY`, the enum and text in
-  `PROGRAM_SCHEMA` and `GRAMMAR` (`app/generate.py`), and a bounds check in
-  `verify_program_dims`.
+- **Gates are the honesty boundary** (`generate.gate`, run inside
+  `native_program.prepare` on every write and patch). A `drawing` param survives
+  only if its quote matches a READ dimension and the number appears in the quote;
+  labels must be verbatim READ labels; anything else is demoted to an assumption
+  with a note. An agent can never create `user_input` or `manufacturer_doc`
+  values. Never loosen this to make a demo look better.
+- **Roles come from the drawing, not our vocabulary.** The READ classifies each
+  label as `layer`, `object`, `zone` or `other`; `check_roles` makes a part
+  carrying that label take the matching role. Objects declare `form` (`shaped` /
+  `block`), and the verifier's form check reads the declaration. SAM chooses its
+  prompts by role too. Never key a check off part names: the engine is
+  trade-agnostic.
+- **Zones are drawn, not built** (clearances, circulation spaces, set-out lines,
+  datums): role `zone`, an exact primitive compiled with representation `zone`,
+  shown see-through, with no install step and no physical relations. They may
+  carry extent features, so a printed clearance can still be measured.
+- **Labels are a choice, not free text.** The authoring schema
+  (`program_schema(labels=...)`) offers only the READ's labels or null;
+  `label-coverage` lists layer/object labels no part carries.
+- **Program grammar ↔ schema ↔ verifier:** a new shape needs `SHAPE_DIMS` and
+  `GENERATOR` (`app/program.py`), a generator in `REGISTRY`, the `NativePart`
+  shape literal (`app/native_program.py`, which feeds `program_schema`), the
+  agent instructions in `app/agent.py`, and a bounds check in `verify_program_dims`.
+- **Completion is decided in code** (`repository.completion_errors`): `finish(done)`
+  needs the exact version's verification with no FAIL or required UNVERIFIED, a
+  passing independent critic on that version and manifest, and readable evidence.
+  Publishing also needs a named reviewer's acceptance.
+- **Evidence is pinned to `VERIFIER_VERSION`** (a hash of the verifier code).
+  Changing the verifier invalidates earlier verifications; they are recomputed.
 - **Guide grounding** (`guide.ungrounded`): every number spoken must be a param
   value, a drawing value, a number in a quoted label, or a step number. One retry,
   then flagged in the UI. Action ids are filtered to real part ids.
 
-- **Adding a detail variant:** write a seed function in `app/seed.py` and register it
-  in `SPECS` in `app/main.py`.
+- **Adding a seed:** write a seed function in `app/seed.py` and add it to `SEEDS`.
 - **Adding a generator:** add it to `REGISTRY` in `app/geometry.py`. Components must
   reference `GEN_VERSION` (`setout-mesh-v0`) exactly, or the build fails.
+- **Schema changes need a migration** in `migrations/versions/`;
+  `tests/test_migration_v3.py` fails when `app/database.py` and the migrations differ.
 - **Verification keys off specific component ids and param names**
   (`app/verify.py`): `slab_upper` / `slab_lower`.`step_height`, `sealant`.`width`,
   `screed`.`fall_ratio`. A `step_height` note starting with `MINIMUM` makes the
@@ -198,11 +255,12 @@ Cross-file contracts. These are not obvious from any single file:
 - **`e2e/drive.py` drives the UI by DOM ids/classes** carried over from the old vanilla
   viewer (`#pdf`, `#upload`, `.crop[data-crop=…]`, `#docline`, …). Renaming them in
   `web/src/App.tsx` breaks the acceptance pass.
-- **`PATCH /api/specs/{id}`** records edits as `user_input` provenance (overriding a
-  drawing value is tagged in the note) and writes `var/spec-{id}.json`. Builds then
-  use that file instead of the seed. Delete it to get back to the seed.
-- Runtime state lives under `SETOUT_VAR` (default `var/`, gitignored). `tests/test_api.py`
-  sets it to `/tmp/setout-test-var`.
+- **`PATCH /api/specs/{id}`** corrects seeds only: edits become `user_input`
+  provenance (overriding a drawing value is tagged in the note) in
+  `var/spec-{id}.json`. Delete it to get back to the seed. AI details are corrected
+  in Review, and each correction is a new version with proposed lessons.
+- Runtime state lives under `SETOUT_VAR` (default `var/`, gitignored).
+  `tests/conftest.py` points it, the database and the artifact store at a temp dir.
 
 ## Conventions
 
