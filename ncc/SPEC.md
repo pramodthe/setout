@@ -2,7 +2,6 @@
 
 **Meta Global AI Developer Hackathon 2026 — Indie Developer Track**
 Theme: Build for Your World
-Submission deadline: **Wed 4 Nov, 9:00 PM ET = Thu 5 Nov, 1:00 PM Sydney**
 
 ---
 
@@ -161,32 +160,14 @@ system needs grounded rules rather than a chatbot.
 
 ---
 
-## Eight-day plan
-
-| Day | Date | Work |
-|---|---|---|
-| 1 | Tue 28 Oct | **KILL-CHECKS ONLY.** (a) Generator: one detail from numbers. (b) SAM 3.1 on a real bathroom video. |
-| 2 | Wed 29 Oct | Rule extraction from NCC. Lock rules.json schema. |
-| 3 | Thu 30 Oct | Rule extraction from one manufacturer manual. Generator covers 3 details. |
-| 4 | Fri 31 Oct | Viewer: layer-by-layer reveal + clause annotations. |
-| 5 | Sat 1 Nov | Perception wired to viewer. Overlay anchored to SAM tracks. |
-| 6 | Sun 2 Nov | Benchmark built and run. The three-bar chart. |
-| 7 | Mon 3 Nov | Polish. Real site footage. Second detail set from a different manual. |
-| 8 | Tue 4 Nov | **Video + submit.** Do not leave this to Wednesday. |
-
-Reserve the whole of day 8. The Opus 4.7 "Most Creative" winner's single piece of
-advice was that a 3-minute demo video takes far longer than anyone expects.
-
----
-
 ## Risks
 
-| Risk | Mitigation | Decide by |
-|---|---|---|
-| SAM 3.1 can't see membrane edges (flat colour change on a flat plane) | Fall back to components it CAN see: floor waste, penetration, hob, screen track | Day 1 |
-| No site access at membrane stage | Shoot your own mock-up, or use existing footage. Confirm Day 1. | Day 1 |
-| Generator can't produce convincing 3D | Start with 2D cross-section extruded along one axis. Enough for the demo. | Day 1 |
-| Scope creep back into measurement | Re-read "What it does NOT do" | Daily |
+| Risk | Mitigation |
+|---|---|
+| SAM 3.1 can't see membrane edges (flat colour change on a flat plane) | Fall back to components it CAN see: floor waste, penetration, hob, screen track |
+| No site access at membrane stage | Shoot your own mock-up, or use existing footage. |
+| Generator can't produce convincing 3D | Start with 2D cross-section extruded along one axis. |
+| Scope creep back into measurement | Re-read "What it does NOT do" |
 
 ---
 
@@ -200,15 +181,15 @@ Extended from *checking rules* to *simulating outcomes* — where water gets in,
 the thermal bridge forms, where the fastener pulls out — the verifier becomes a world
 model for building assemblies. Nobody has one.
 
-Good closing slide. Not a week-1 build.
+Good closing slide.
 
 ---
 
 ## Submission checklist
 
-- [ ] Demo video (3 min). Shot on day 8.
+- [ ] Demo video (3 min)
 - [ ] Public repo, Apache-2.0 (matches `LICENSE`), **your own work only**
 - [ ] README with the NSW defect stat up top
 - [ ] Benchmark chart
 - [ ] Live demo link or hosted build
-- [ ] Submitted by Tue 4 Nov night (deadline Thu 5 Nov 1 PM Sydney)
+- [ ] Submitted
