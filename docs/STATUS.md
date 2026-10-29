@@ -340,6 +340,16 @@
   and public mode can read but not write it.
 - Generated for all 11 local details by opening each page once.
 
+## 2026-10-29 (night) — PR #10 merged; public demo updated; AR cut
+
+- PR #10 squash-merged (`40c1d96`). PR #11 has the demo drawing and card renders.
+- Public demo now shows three details: the D3 and D4 seeds and the step-down
+  made from our own drawing, each with a card render. Details derived from
+  third-party documents are not published there.
+- Decision: camera/AR (Jarvis) is left out of the hackathon submission. It
+  needs real membrane-stage footage, which we don't have. It stays future work
+  (README §12).
+
 ## Milestone ledger
 
 | Milestone | State | Evidence |
