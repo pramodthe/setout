@@ -11,11 +11,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import uuid
 from pathlib import Path
 
 VAR = Path(os.environ.get("SETOUT_VAR", "var"))
+DOC_ID = re.compile(r"^[0-9a-f]{12}$")  # uuid4().hex[:12]
+CROP_ID = re.compile(r"^p\d+_[A-Za-z0-9_.-]+$")  # p<page>_<pdf image name>
 
 
 def var_root() -> Path:
@@ -131,7 +134,9 @@ def get_document(doc_id: str) -> dict | None:
 
 
 def figure_path(doc_id: str, crop_id: str) -> Path | None:
-    d = doc_dir(doc_id)
+    if not DOC_ID.match(doc_id) or not CROP_ID.match(crop_id) or ".." in crop_id:
+        return None
+    d = var_root() / "docs" / doc_id  # look up only; never create a directory
     for ext in ("jpg", "png"):
         p = d / f"{crop_id}.{ext}"
         if p.exists():

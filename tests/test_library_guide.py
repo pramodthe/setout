@@ -69,3 +69,22 @@ def test_ask_flags_what_is_still_ungrounded(monkeypatch):
     out = guide.ask(spec, "how far do I lap it?")
     assert out["retried"] and out["ungrounded"] == 1
     assert out["steps"][0]["ungrounded"] == [375.0]
+
+
+def test_ratios_are_one_value_not_two_numbers():
+    """#7: "1:80" restates the stored fall ratio; its 80 is not a free number."""
+    spec = door_sill_d3()  # fall_ratio 0.0125 (quoted "1:80 min. Fall to outlet")
+    ok = [{"say": "The screed falls 1:80, or 1 in 80, toward the outlet.", "actions": []}]
+    assert guide.ungrounded(ok, spec) == {}
+    invented = [{"say": "Keep an 80 mm gap.", "actions": []}]  # 80 only existed inside 1:80
+    assert guide.ungrounded(invented, spec) == {0: [80.0]}
+    wrong = [{"say": "Fall it at 1:100.", "actions": []}]
+    assert guide.ungrounded(wrong, spec) == {0: ["1:100"]}
+
+
+def test_ratio_param_without_a_quote_still_grounds():
+    spec = door_sill_d3()
+    p = spec.component("screed").param("fall_ratio")
+    p.source_quote = None  # e.g. an AI detail where the ratio is a bare param
+    spec.component("screed").source_label = None  # the label also said "1:80"
+    assert guide.ungrounded([{"say": "Fall 1:80.", "actions": []}], spec) == {}

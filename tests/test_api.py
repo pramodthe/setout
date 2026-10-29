@@ -98,3 +98,33 @@ def test_build_produces_artifacts_and_report():
     r = client.get(f"/api/eval/{job}")
     assert r.status_code == 200
     assert r.json()["stages"]["B"]["counts"]["FAIL"] == 0
+
+
+def test_corrections_accumulate_and_get_returns_them():
+    """#4: a second PATCH keeps the first; #5: GET returns what builds use."""
+    from app.store import var_root
+    override = var_root() / "spec-conpro-subsill-D4.json"
+    override.unlink(missing_ok=True)
+    try:
+        spec = client.get("/api/specs/conpro-subsill-D4").json()
+        comp = next(c for c in spec["components"]
+                    if sum(p["provenance"] == "assumption" for p in c["params"]) >= 2)
+        a, b = [p for p in comp["params"] if p["provenance"] == "assumption"][:2]
+        for p, v in ((a, a["value"] + 1), (b, b["value"] + 2)):
+            r = client.patch("/api/specs/conpro-subsill-D4",
+                             json={"component_id": comp["id"], "param": p["name"], "value": v})
+            assert r.status_code == 200, r.text
+        got = client.get("/api/specs/conpro-subsill-D4").json()
+        params = {p["name"]: p for c in got["components"] if c["id"] == comp["id"]
+                  for p in c["params"]}
+        assert params[a["name"]]["value"] == a["value"] + 1  # first edit survived
+        assert params[b["name"]]["value"] == b["value"] + 2
+        assert params[a["name"]]["provenance"] == params[b["name"]]["provenance"] == "user_input"
+    finally:
+        override.unlink(missing_ok=True)
+
+
+def test_unknown_job_says_what_happened():
+    """#8: a job lost on restart is reported, so the client stops polling."""
+    r = client.get("/api/generate/doesnotexist")
+    assert r.status_code == 404 and "restart" in r.json()["detail"]
