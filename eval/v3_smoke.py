@@ -1,4 +1,4 @@
-"""Explicit live prerequisite checks: python -m app.v3_smoke [--cad]."""
+"""Explicit live prerequisite checks: python -m eval.v3_smoke [--cad]."""
 from __future__ import annotations
 
 import argparse
@@ -11,10 +11,10 @@ import threading
 
 from PIL import Image
 
-from . import database as d, meta_client
-from .agent_tools import obj, STRING
-from .model_gateway import ModelGateway
-from .repository import Repository
+from app import database as d, meta_client
+from app.agent_tools import obj, STRING
+from app.model_gateway import ModelGateway
+from app.repository import Repository
 
 
 @contextmanager
@@ -36,7 +36,7 @@ def heartbeat(repo, fence):
 
 
 def cad_probe():
-    from .cad_components import build
+    from app.cad_components import build
     code = 'import cadquery as cq\ndef build(p):\n    return cq.Workplane("XY").box(p["w"],p["d"],p["h"]).faces(">Z").workplane().rarray(p["pitch"],p["pitch"],p["count"],p["count"]).hole(p["bore"])\n'
     built = build(code, {"w":80,"d":80,"h":10,"bore":10,"pitch":20,"count":3}, [
         {"id":"width","kind":"extent","selector":{"axis":"x"},"expected_expr":"w","tolerance":.01},

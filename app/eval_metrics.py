@@ -24,7 +24,10 @@ def result_row(repo, job_id, seconds):
                      if operation.get("result") and "read" in operation["result"]),{})
     labels = {p.get("label") for p in version["program"]["parts"] if p.get("label")} if version else set()
     printed = {e["label_verbatim"] for e in read.get("elements",[])}
-    buildable = bool(reports) and not any(c["id"].startswith(("cad-","fixture-form-","B-built-","B-mesh-")) and
+    # Labels the READ classed as a layer or object: zone names, notes and
+    # table text are not parts. None when the read has no categories.
+    part_labels = {e["label_verbatim"] for e in read.get("elements",[]) if e.get("category") in ("layer","object")}
+    buildable = bool(reports) and not any(c["id"].startswith(("cad-","object-form-","fixture-form-","B-built-","B-mesh-")) and
         c["status"] in ("FAIL","UNVERIFIED") for c in checks)
     return {"job_id":job_id,"version_id":version_id,"state":job["state"],"error":job["error"],
             "seconds":round(seconds,2),"tokens":run["consumed"].get("tokens",0),"token_usage":dict(usage),
@@ -33,6 +36,8 @@ def result_row(repo, job_id, seconds):
             "source_dimensions_read":len(read.get("dimensions",[])),
             "source_dimensions_pass":sum(c["id"].startswith("source-dimension-") and c["status"] == "PASS" for c in checks),
             "labels_read":len(printed),"labels_retained":len(printed & labels),
+            "part_labels_read":len(part_labels) if part_labels else None,
+            "part_labels_retained":len(part_labels & labels) if part_labels else None,
             "critic_verdict":critics[-1]["verdict"] if critics else "not_run",
             "cad_attempts":run["consumed"].get("cad_calls",0),"render_attempts":run["consumed"].get("render_calls",0),
             "reviewer_fidelity":None,"issues":(job["result"] or {}).get("open_issues",[])}

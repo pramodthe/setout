@@ -1,6 +1,6 @@
 """Live AI-object acceptance probe; every size is an explicit test assumption.
 
-python -m app.v3_objects --var var/v3-objects
+python -m eval.v3_objects --var var/v3-objects
 """
 import argparse
 import io
@@ -9,11 +9,11 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from . import database as d
-from .agent_tools import Tools
-from .model_gateway import ModelGateway
-from .repository import Repository,uid,sha
-from .v3_smoke import heartbeat
+from app import database as d
+from app.agent_tools import Tools
+from app.model_gateway import ModelGateway
+from app.repository import Repository,uid,sha
+from eval.v3_smoke import heartbeat
 
 
 def run(root):
@@ -45,13 +45,13 @@ def run(root):
         names = {key:name+"_"+key for key in ("w","d","h","wall","bore","center","gap")}
         dims = {"x0":names["center"]+"-"+names["w"]+"/2","x1":names["center"]+"+"+names["w"]+"/2",
                 "y0":"0","y1":names["h"],"z0":"-"+names["d"]+"/2","z1":names["d"]+"/2"}
-        parts.append({"id":name,"type":name,"role":"object","label":None,"shape":"cad","cad_brief":brief,
+        parts.append({"id":name,"type":name,"role":"object","form":"shaped","label":None,"shape":"cad","cad_brief":brief,
                       "dims":[{"name":key,"expr":value} for key,value in dims.items()],
                       "param_bindings":{key:names[key] for key in ("w","d","h","wall","bore","gap")},
                       "placement":{"x":names["center"],"y":"0","z":"0"},"install_after":[],
                       "features":[{"id":axis+"_extent","kind":"extent","selector":{"axis":axis},"expected_expr":names[key]}
                                   for axis,key in (("x","w"),("y","h"),("z","d"))]})
-    from .native_program import prepare
+    from app.native_program import prepare
     program,spec,_ = prepare({"title":"AI-made objects: live probe","kind":"assembly","params":params,"parts":parts,"relations":[],"unresolved":[]},
         {"filename":"own-object-probe.pdf","sha256":source["sha256"],"page_index":0,"crop_id":"p0_objects","page_width_pt":1000,"page_height_pt":600},
         "objects-"+uid()[:12],read)
@@ -123,7 +123,7 @@ def repair(root,refine=False):
 
 def render_existing(root):
     import os,socket,subprocess,sys,time,urllib.request
-    from .render import Renderer
+    from app.render import Renderer
     root = Path(root).resolve()
     result = json.loads((root/"result.json").read_text())
     repo = Repository("sqlite:///"+str(root/"v3.db"),root/"artifacts")

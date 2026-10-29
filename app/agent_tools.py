@@ -63,6 +63,14 @@ class StagedRepository:
         return getattr(self.base, name)
 
 
+# How labels work, for every authoring call (losing them was v3's largest gap
+# against v2 on the 24-drawing batch).
+LABEL_RULES = ("LABELS: a part's label is exactly one READ label_verbatim, copied character for character, "
+               "or null; never your own wording, a shortened callout or a label with words added. Every piece "
+               "of a split layer carries the same READ label; position words (wall, floor, left, upturn) go in "
+               "id, type or note. Give every READ label with category layer or object a part that carries it. ")
+
+
 class Tools:
     def __init__(self, repo, fence, gateway=None, renderer=None, cad_builder=None):
         self.repo, self.fence = repo, fence
@@ -164,10 +172,13 @@ class Tools:
             raw = self.gateway.json(INSTRUCTIONS + "\nReturn the program object in the supplied schema. "
                 "Wire format: param_bindings is an array of {name,expr}; unused selector/constraint fields are null. "
                 "Every nonzero physical length, including datums and offsets, must be a named mm parameter; "
-                "bare numbers can only be dimensionless coefficients. Keep enough parts to cover all source labels. "
+                "bare numbers can only be dimensionless coefficients. " + LABEL_RULES +
                 "Brief: " + args["brief"] + "\nActive context (drawing values still require this READ): " + canonical(recalled) + "\nREAD: " + canonical(read) +
                 ("\nExisting program to revise: " + canonical(parent["program"]) if parent else ""),
-                [figure["artifact_id"]], program_schema(), "program", call_id)
+                [figure["artifact_id"]], program_schema([e.get("label_verbatim") for e in read.get("elements", [])],
+                    ["drawing", "assumption"] + sorted({q["provenance"] for q in (parent or {}).get("program", {}).get("params", [])}
+                                                       & {"user_input", "manufacturer_doc"})),
+                "program", call_id)
             proposed = from_wire(raw)
             try:
                 return self._prepare(call_id, "write_program", {"program":proposed})
@@ -311,8 +322,8 @@ class Tools:
                                 dims["x1"]-offset["x"],offset["z"]-dims["z0"],dims["y1"]-offset["y"]]
                 code = self.gateway.json("Write CadQuery defining build(p) -> cq.Workplane. "
                        "Import only cadquery/math. All physical sizes use p[name], never size literals. "
-                       "Model a recognisable manufactured form, not its bounding box. WC/toilet needs an open bowl, pedestal and cistern; basin needs an open bowl/rim; vanity needs a hollow carcass/fronts. "
-                       "Axes X width, Y depth, Z up. Default FRONT is negative Y (Setout +z toward the viewer): cabinet doors and the WC pan face negative Y; cistern/back is positive Y. Respect any explicit orientation in the brief. No scaling or fitting. Brief: " + args["brief"] +
+                       "Model the recognisable manufactured form the brief and drawing describe, not its bounding box: openings, cavities, bowls, flanges, legs and profiles where shown. "
+                       "Axes X width, Y depth, Z up. Default FRONT is negative Y (Setout +z toward the viewer): the face a person uses faces negative Y; the back or fixing side is positive Y. Respect any explicit orientation in the brief. No scaling or fitting. Brief: " + args["brief"] +
                        "\nUse only the provided parameter keys. Keep the code concise. Build curved bowls directly with sized profiles/lofts/shells. "
                        "CadQuery workplane(offset) retains the projected origin; center() shifts are relative and accumulate. Do not apply the same XY center offset again to each loft profile; use explicit absolute origins or zero relative shift on subsequent profiles. "
                        "\nNamed params: " + canonical(params) + "\nUnits by key: " + canonical(bound_units) +
@@ -387,7 +398,7 @@ class Tools:
             figure = self.repo.get(d.figures, version["figure_id"])
             result = self.gateway.json("Independently compare the source installation drawing with the assembled renders. "
                      "Check dimension attribution, missing parts, layer placement/order and visible geometry. "
-                     "Reject generic blocks standing in for recognisable fixtures, even if all dimension checks pass. A WC must show its pan/open bowl and cistern; a basin must show an open bowl; a vanity needs a cabinet and the basin when the source shows one. A solid white WC box is a fidelity error. "
+                     "Reject generic blocks standing in for recognisable objects, even if all dimension checks pass: each object must show the form the source shows (openings, cavities, bowls, flanges, legs, profiles, supports). A solid box standing in for a shaped object is a fidelity error. "
                      "Return fail for errors; inconclusive if evidence is insufficient. Never approve an empty or unreadable render. "
                      "Version/evidence: " + canonical({"program": version["program"], "checks": report["checks"],
                      "views": [{"id": r["id"], "view": r["view"], "tags": r["tags"]} for r in renders]}),

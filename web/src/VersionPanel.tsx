@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { JSX } from "react";
 import JobPanel from "./JobPanel";
+import LessonsPanel from "./LessonsPanel";
 
 type Version = { id: string; n: number; origin: string; format_version: string };
 type History = { detail: { current_version_id: string; published_version_id: string | null }; versions: Version[] };
@@ -43,5 +44,6 @@ export default function VersionPanel({ detailId, revision, onSelect, onUpdated }
     <button onClick={() => void recheck()}>Recheck with AI</button>
     {error && <p role="alert">{error}</p>}
     {jobId && <JobPanel jobId={jobId} onSettled={onUpdated} />}
+    <LessonsPanel detailId={detailId} revision={revision} />
   </section>;
 }

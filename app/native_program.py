@@ -9,7 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .generate import gate, _numbers
+from .generate import gate, _norm, _numbers
 from .program import DetailProgram, ProgPart, ProgParam, compile_program, expr_names
 from .spec import Provenance
 
@@ -80,6 +80,11 @@ class Feature(BaseModel):
 class NativePart(ProgPart):
     shape: Literal["box", "sheet", "post", "rod", "wedge", "fillet", "profile", "revolve", "sweep", "cad", "annotation"]
     role: Literal["substrate", "covered_layer", "finish", "object"]
+    # Objects only. shaped: the drawing shows a form beyond its envelope
+    # (openings, cavities, bowls, flanges, legs, profiles), so the measured
+    # solid may not fill its box. block: the manufactured item really is a
+    # rectangular block. Declared by the author; checks never guess it from names.
+    form: Literal["shaped", "block"] | None = None
     param_bindings: dict[str, str] = Field(default_factory=dict)
     features: list[Feature] = Field(default_factory=list)
     placement: dict[str, str] = Field(default_factory=lambda: {"x": "0", "y": "0", "z": "0"})
@@ -117,16 +122,8 @@ class NativeProgram(DetailProgram):
                 raise ValueError(f"{part.id}: objects require parametric CAD")
             if part.role != "object" and part.shape == "cad":
                 raise ValueError(f"{part.id}: layers/substrates use exact primitives, not CAD")
-            tokens = set(part.type.lower().split("_"))
-            fixtures = {"wc", "toilet", "bath", "basin", "vanity", "door", "tap", "faucet",
-                        "waterstop", "grate", "bracket", "anchor", "mixer", "rose", "screen", "waste", "drain"}
-            layers = {"wall", "membrane", "coating", "tile", "substrate", "slab", "waterproofing"}
-            if tokens & {"membrane", "primer", "adhesive", "bedding", "bed"} and part.role != "covered_layer":
-                raise ValueError(f"{part.id}: covered materials need role=covered_layer")
-            if tokens & (layers | {"screed", "bed", "primer", "adhesive"}) and not tokens & fixtures and part.shape == "cad":
-                raise ValueError(f"{part.id}: layers/substrates use exact primitives")
-            if tokens & fixtures and not tokens & layers and (part.role != "object" or part.shape != "cad"):
-                raise ValueError(f"{part.id}: fixture objects require parametric CAD")
+            if part.form and part.role != "object":
+                raise ValueError(f"{part.id}: form is declared only on objects")
             if len({f.id for f in part.features}) != len(part.features):
                 raise ValueError(f"{part.id}: duplicate feature IDs")
             for feature in part.features:
@@ -193,12 +190,36 @@ def normalize_identifiers(raw):
     return raw
 
 
+def check_roles(program, read, human=False):
+    """Roles follow the drawing reading, never a vocabulary of our own.
+
+    The READ pass classifies each printed label as a layer, a manufactured
+    object or other. A part carrying that label must agree; unclassified
+    labels (older reads) are not checked. Every object the agent authors
+    declares its form; a reviewer's value correction does not have to."""
+    category = {_norm(e["label_verbatim"]): e.get("category") for e in read.get("elements", [])
+                if e.get("label_verbatim")}
+    for part in program.parts:
+        found = category.get(_norm(part.label or ""))
+        if found == "object" and part.role != "object":
+            raise ValueError(f"{part.id}: the drawing reading classifies {part.label!r} as a manufactured "
+                             "object; keep the label and change the part to role=object with parametric CAD")
+        if found == "layer" and part.role == "object":
+            raise ValueError(f"{part.id}: the drawing reading classifies {part.label!r} as a layer; keep the "
+                             "label and change the part to an exact primitive with role substrate, covered_layer or finish")
+        if part.role == "object" and part.form is None and not human:
+            raise ValueError(f"{part.id}: objects declare form=shaped or form=block")
+
+
 def prepare(raw, source, detail_id, read, base=None, human=False):
     raw = copy.deepcopy(raw)
     raw["version"] = "3.0"
     raw["detail_id"] = detail_id
     raw["source"] = source
     raw["origin"] = "ai-generated:v3 (unreviewed)" if not human else "user-revised:v3"
+    for part in raw.get("parts", []):
+        if part.get("role") != "object":
+            part["form"] = None  # form describes objects only; a layer's is ignored
     raw["parts"] = [NativePart.model_validate(p).model_dump(mode="json") for p in raw.get("parts", [])]
     raw["params"] = [NativeParam.model_validate(p).model_dump(mode="json") for p in raw.get("params", [])]
     raw = normalize_identifiers(raw)
@@ -246,6 +267,7 @@ def prepare(raw, source, detail_id, read, base=None, human=False):
             part["shape"] = "cad"
             part["cad_brief"] = original.get("cad_brief") or original.get("type")
     program = NativeProgram.model_validate(gated)
+    check_roles(program, read, human)
     compiled_input = program.model_dump(mode="json")
     compiled_input["version"] = "2.0"
     spec = compile_program(DetailProgram.model_validate(compiled_input))

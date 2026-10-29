@@ -97,11 +97,11 @@ export const api = {
       body: JSON.stringify({ doc_id: docId, crop_id: cropId }),
     }),
   getGenerate: (id: string): Promise<GenJob> => req(`/api/generate/${id}`),
-  critique: (detailId: string, renders: string[]): Promise<GenJob> =>
+  critique: (detailId: string): Promise<GenJob> =>
     req(`/api/specs/${detailId}/critique`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ renders }),
+      body: JSON.stringify({}),
     }),
   remodelPart: (detailId: string, partId: string): Promise<GenJob> =>
     req(`/api/specs/${detailId}/cad`, {

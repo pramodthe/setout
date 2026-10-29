@@ -5,7 +5,6 @@ import type {
   Build,
   CheckStatus,
   Component,
-  CritiqueResult,
   DetailSpec,
   Doc,
   GenJob,
@@ -252,19 +251,13 @@ export default function App(): JSX.Element {
     }
   };
 
-  /* AI self-check: render our 3D, compare with the drawing, accept the
-     correction only if the verifier says it isn't worse. */
+  /* AI self-check: a persistent job on the server verifies this version,
+     renders it in the headless viewer, asks the independent critic and
+     repairs concrete issues in a new version. */
   const checkAI = async (detailId: string): Promise<void> => {
-    await new Promise((r) => setTimeout(r, 400)); // let the new scene mount
-    const vp = vpApi.current;
-    if (!vp || !crop) return;
-    if (shownDetail.current !== detailId) {
-      showErr("Build this detail's 3D first: the self-check compares what's on screen.");
-      return;
-    }
+    if (!crop) return;
     try {
-      const renders = [vp.snapshot("iso"), vp.snapshot("front")];
-      let g = await api.critique(detailId, renders);
+      let g = await api.critique(detailId);
       setCheck(g);
       while (g.state === "queued" || g.state === "running") {
         await new Promise((r) => setTimeout(r, 1000));
@@ -275,7 +268,7 @@ export default function App(): JSX.Element {
         showErr("Self-check failed: " + (g.error || "unknown").slice(0, 200));
         return;
       }
-      if ((g.result as CritiqueResult | null)?.accepted && doc) {
+      if (g.version_id && doc) {
         // fresh list: a detail generated in this session isn't in `variants` yet
         const vs = variantsFor((await api.listSpecs()).specs, doc.sha256);
         setVariants(vs);
@@ -532,8 +525,8 @@ export default function App(): JSX.Element {
           {gen?.run_id && <JobPanel jobId={gen.id} />}
           {spec?.origin.startsWith("ai-generated") && (
             <div className="step ai-note">
-              AI-generated from this drawing (Muse: read, then compose, then code gates).
-              Unreviewed. A <b>drawing</b> value was confirmed against the printed
+              AI-generated from this drawing (the Muse agent read it, wrote the program
+              through code gates, then rendered and critiqued its own 3D). Unreviewed. A <b>drawing</b> value was confirmed against the printed
               words; everything else is an <b>assumption</b>.
               <div style={{ marginTop: 6 }}>
                 <button
@@ -544,28 +537,14 @@ export default function App(): JSX.Element {
                     (!!check && (check.state === "queued" || check.state === "running"))
                   }
                   onClick={() => spec && void checkAI(spec.detail_id)}
-                  title="Render the 3D, compare it with the drawing, correct it (verifier-guarded)"
+                  title="Verify, render and critique this version on the server; repairs become a new version"
                 >
                   Check against drawing (AI)
                 </button>
               </div>
               {check && (
-                <div id="checkLog" className="genlog">
-                  {check.progress.map((l, i) => (
-                    <div key={i}>{l}</div>
-                  ))}
-                  {check.result && "issues" in check.result && (
-                    <div className={check.result.accepted ? "chk pass" : "chk unv"} style={{ marginTop: 6 }}>
-                      <b>{check.result.accepted ? "Correction accepted" : "No change applied"}</b>
-                      {" — "}
-                      {check.result.reason}
-                      {check.result.issues.map((x, i) => (
-                        <div key={i} style={{ marginTop: 4 }}>
-                          <b>{x.part_id}</b>: {x.problem} → {x.fix}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                <div id="checkLog">
+                  <JobPanel jobId={check.id} />
                 </div>
               )}
             </div>

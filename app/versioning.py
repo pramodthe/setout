@@ -40,17 +40,24 @@ def register_figure(repo, doc_id, crop_id):
     return ident
 
 
-def archive(repo, dry_run=False):
+def archive(repo, dry_run=False, skip_existing=False):
+    """Import the v2 AI library (var/library/*.json) as archived versions.
+
+    The hand-transcribed seeds are not imported: they are reference specs in
+    app/seed.py, served and corrected from code. Everything AI-made lives in
+    the database. With skip_existing, details already imported are left alone
+    (used at startup, so an old library is never served from files)."""
     from .generate import library_dir
-    from .seed import door_sill_d3, door_subsill_d4
+    from .seed import SEED_IDS
     records = {}
-    for factory in (door_sill_d3, door_subsill_d4):
-        spec = factory()
-        records[spec.detail_id] = {"spec": spec.model_dump(mode="json"), "program": {}}
     for path in library_dir().glob("*.json"):
         record = json.loads(path.read_text())
-        if "spec" in record:
+        if "spec" in record and record["spec"]["detail_id"] not in SEED_IDS:
             records[record["spec"]["detail_id"]] = record
+    if skip_existing:
+        with repo.engine.connect() as con:
+            present = set(con.execute(sa.select(d.details.c.id)).scalars())
+        records = {k: v for k, v in records.items() if k not in present}
     prepared = []
     for detail_id, record in records.items():
         override = store.var_root() / f"spec-{detail_id}.json"
@@ -110,6 +117,15 @@ def archive(repo, dry_run=False):
                             published_version_id=result["version_id"]))
             imported.append(result["version_id"])
     return {"dry_run": False, "versions": imported, "details": [p[0] for p in prepared]}
+
+
+def import_library(repo):
+    """Startup: bring any v2 library records not yet in the database across."""
+    try:
+        return archive(repo, skip_existing=True)
+    except Exception as error:  # noqa: BLE001 - one bad record must not stop the server
+        print(f"[setout] v2 library import skipped: {error}")
+        return None
 
 
 def backup(destination):

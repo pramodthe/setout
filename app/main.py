@@ -22,10 +22,10 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import cad_sandbox, guide, library, meta_client, review
+from . import cad_sandbox, guide, library, meta_client
 from . import generate as ai
 from .geometry import build_assembly, export_glb, export_scene_json
-from .seed import door_sill_d3, door_subsill_d4
+from .seed import SEEDS
 from .spec import DetailSpec, Provenance
 from .store import (build_dir, db, figure_path, find_document_by_sha,
                     get_document, store_pdf, var_root)
@@ -126,23 +126,24 @@ async def figure(doc_id: str, crop_id: str):
 
 # ---------------------------------------------------------------- specs
 
-SPECS = {"conpro-door-sill-D3": door_sill_d3,
-         "conpro-subsill-D4": door_subsill_d4}
+# Two kinds of detail. Seeds are hand-transcribed reference specs in code,
+# corrected through PATCH /api/specs. Everything AI-made is an immutable
+# version in the database, changed only through jobs and reviews.
+SPECS = SEEDS
 
 
 def _load_spec(detail_id: str) -> DetailSpec | None:
-    """Seed specs (human transcriptions) first, then AI-generated library."""
-    native = _database_version(detail_id)
-    if native:
-        return DetailSpec.model_validate(native["spec"])
     if detail_id in SPECS:
         return SPECS[detail_id]()
-    return ai.load_library_spec(detail_id)
+    native = _database_version(detail_id)
+    return DetailSpec.model_validate(native["spec"]) if native else None
 
 
 def _database_version(detail_id: str) -> dict | None:
     from . import database as tables
     from .runtime import repository
+    if detail_id in SPECS:
+        return None  # an older import of a seed never shadows the code
     repo = repository()
     try:
         detail = repo.get(tables.details, detail_id)
@@ -157,7 +158,7 @@ async def list_specs() -> dict:
     seeds = [{"detail_id": k, "title": (s := v()).title,
               "crop_id": s.source.crop_id, "sha256": s.source.sha256,
               "origin": s.origin} for k, v in SPECS.items()]
-    entries = {row["detail_id"]: row for row in seeds + ai.list_library()}
+    entries = {row["detail_id"]: row for row in seeds}
     from . import database as tables
     from .runtime import repository
     for detail in repository().list(tables.details):
@@ -191,8 +192,11 @@ async def correct_spec(detail_id: str, fix: Correction) -> dict:
     """User correction: param values and labels. Param edits are recorded
     with USER_INPUT provenance and re-validated; source (drawing) values can
     only be overridden explicitly, never silently."""
-    if _database_version(detail_id):
-        raise HTTPException(409, "Versioned details are edited through their program review; select the version to correct")
+    if detail_id not in SPECS:
+        if _database_version(detail_id):
+            raise HTTPException(409, "AI-made details are corrected in Review on the detail page; "
+                                     "each correction becomes a new version")
+        raise HTTPException(404, "unknown detail")
     try:
         spec = _active_spec(detail_id)  # build on earlier corrections
     except KeyError:
@@ -223,11 +227,9 @@ async def correct_spec(detail_id: str, fix: Correction) -> dict:
 
 
 def _active_spec(detail_id: str) -> DetailSpec:
-    native = _database_version(detail_id)
-    if native:
-        return DetailSpec.model_validate(native["spec"])
+    """A seed with the user's saved corrections, or an AI detail's current version."""
     override = var_root() / f"spec-{detail_id}.json"
-    if override.exists():
+    if detail_id in SPECS and override.exists():
         return DetailSpec.model_validate_json(override.read_text())
     spec = _load_spec(detail_id)
     if spec is None:
@@ -364,10 +366,6 @@ async def artifact(job_id: str, name: str):
 @app.get("/api/library")
 async def get_library() -> dict:
     entries = [library.entry(f(), "human") for f in SPECS.values()]
-    for row in ai.list_library():
-        spec = ai.load_library_spec(row["detail_id"])
-        if spec is not None:
-            entries.append(library.entry(spec, "ai"))
     indexed = {entry["detail_id"]: entry for entry in entries}
     from . import database as tables
     from .runtime import repository
@@ -498,28 +496,27 @@ class ReviewRequest(BaseModel):
 @app.get("/api/specs/{detail_id}/review")
 async def get_review(detail_id: str) -> dict:
     native = _database_version(detail_id)
-    if native:
-        from .runtime import repository
-        from . import review_v3
-        return review_v3.get(repository(), native)
-    try:
-        return review.get(detail_id)
-    except KeyError:
+    if not native:
         raise HTTPException(404, "only AI-generated details have a review")
+    from .runtime import repository
+    from . import review_v3
+    return review_v3.get(repository(), native)
 
 
 @app.post("/api/specs/{detail_id}/review")
 async def post_review(detail_id: str, req: ReviewRequest) -> dict:
-    try:
-        native = _database_version(detail_id)
-        if native:
-            from .runtime import repository
-            from . import review_v3
-            return review_v3.apply(repository(), native, req.edits, req.accept, req.labels, req.publish, req.reviewer)
-        return review.apply(detail_id, req.edits, req.accept, req.labels,
-                            req.publish, req.reviewer)
-    except KeyError:
+    native = _database_version(detail_id)
+    if not native:
         raise HTTPException(404, "only AI-generated details have a review")
+    from .repository import Conflict
+    from .runtime import repository
+    from . import review_v3
+    try:
+        return review_v3.apply(repository(), native, req.edits, req.accept, req.labels, req.publish, req.reviewer)
+    except KeyError:
+        raise HTTPException(404, "unknown version")
+    except Conflict as e:
+        raise HTTPException(409, str(e)[:300])
     except ValueError as e:
         raise HTTPException(400, str(e)[:300])
 
@@ -556,6 +553,8 @@ async def ask_guide(req: GuideRequest) -> dict:
 
 # ---------------------------------------------------------------- AI generation
 
+# Only the guide lives here: it is a short request (PLAN_V3). Every other AI
+# action is a persistent job in the database (app/v3_api.py, app/worker.py).
 GEN_JOBS: dict[str, dict] = {}
 
 
@@ -571,37 +570,27 @@ async def ai_status() -> dict:
             "cad_sandbox": cad_sandbox.available(), "public": PUBLIC}
 
 
-def _run_generate(job_id: str, req: GenerateRequest) -> None:
-    job = GEN_JOBS[job_id]
-
-    def progress(msg: str) -> None:
-        job["progress"].append(msg)
-
-    try:
-        job["state"] = "running"
-        rec = ai.generate(req.doc_id, req.crop_id, progress)
-        job.update(state="done", detail_id=rec["detail_id"],
-                   gate_notes=rec["gate_notes"], seconds=rec["seconds"])
-    except Exception as e:  # noqa: BLE001 - surfaced to the UI
-        job.update(state="failed", error=str(e)[:500])
-        job["progress"].append(f"FAILED: {str(e)[:200]}")
-
-
 @app.post("/api/generate")
 async def start_generate(req: GenerateRequest) -> dict:
     if not get_document(req.doc_id):
         raise HTTPException(404, "unknown document")
     if not figure_path(req.doc_id, req.crop_id):
         raise HTTPException(404, "unknown figure")
-    if not meta_client.configured():
-        raise HTTPException(503, "AI not configured: set META_API_KEY in .env")
-    from .runtime import ensure_worker, repository
+    from .runtime import repository
+    from .v3_api import submit
     from .versioning import register_figure
-    repo = repository()
-    figure_id = register_figure(repo, req.doc_id, req.crop_id)
-    job = repo.enqueue("generate_detail", {"figure_id": figure_id})
-    ensure_worker()
+    job = submit("generate_detail", {"figure_id": register_figure(repository(), req.doc_id, req.crop_id)})
     return _persistent_generation(job["id"])
+
+
+def _ai_version(detail_id: str) -> dict:
+    """The current version an AI action works on; seeds have none."""
+    if detail_id in SPECS:
+        raise HTTPException(409, "this is a hand-transcribed reference detail; AI actions apply to AI-made details")
+    native = _database_version(detail_id)
+    if not native:
+        raise HTTPException(404, "unknown detail")
+    return native
 
 
 class RemodelRequest(BaseModel):
@@ -609,96 +598,39 @@ class RemodelRequest(BaseModel):
     brief: str | None = None
 
 
-def _run_remodel(job_id: str, detail_id: str, req: RemodelRequest) -> None:
-    job = GEN_JOBS[job_id]
-    try:
-        job["state"] = "running"
-        ai.remodel_part(detail_id, req.part_id, req.brief, job["progress"].append)
-        job.update(state="done", detail_id=detail_id)
-    except Exception as e:  # noqa: BLE001 - surfaced to the UI
-        job.update(state="failed", error=str(e)[:500])
-        job["progress"].append(f"FAILED: {str(e)[:200]}")
-
-
 @app.post("/api/specs/{detail_id}/cad")
 async def remodel_part(detail_id: str, req: RemodelRequest) -> dict:
-    if not meta_client.configured() or not cad_sandbox.available():
-        raise HTTPException(503, "AI or CAD sandbox not configured")
-    native = _database_version(detail_id)
-    if native:
-        from .runtime import ensure_worker, repository
-        job = repository().enqueue("cad_component", {"base_version_id": native["id"],
-                                   "part_key": req.part_id, "brief": req.brief or "Rebuild this part faithfully from its named parameters"})
-        ensure_worker()
-        return _persistent_generation(job["id"])
-    job_id = uuid.uuid4().hex[:12]
-    GEN_JOBS[job_id] = {"id": job_id, "state": "queued", "progress": [],
-                        "detail_id": None, "error": None, "gate_notes": []}
-    threading.Thread(target=_run_remodel, args=(job_id, detail_id, req), daemon=True).start()
-    return GEN_JOBS[job_id]
+    if not cad_sandbox.available():
+        raise HTTPException(503, "CAD sandbox not configured")
+    from .v3_api import submit
+    native = _ai_version(detail_id)
+    job = submit("cad_component", {"base_version_id": native["id"], "part_key": req.part_id,
+                 "brief": req.brief or "Rebuild this part faithfully from its named parameters"})
+    return _persistent_generation(job["id"])
 
 
 class CritiqueRequest(BaseModel):
-    renders: list[str]  # data:image/... URLs captured by the viewer
-
-
-def _run_critique(job_id: str, detail_id: str, req: CritiqueRequest) -> None:
-    job = GEN_JOBS[job_id]
-    try:
-        job["state"] = "running"
-        job["result"] = ai.critique(detail_id, req.renders, job["progress"].append)
-        job.update(state="done", detail_id=detail_id)
-    except Exception as e:  # noqa: BLE001 - surfaced to the UI
-        job.update(state="failed", error=str(e)[:500])
-        job["progress"].append(f"FAILED: {str(e)[:200]}")
+    requested_changes: str | None = None
 
 
 @app.post("/api/specs/{detail_id}/critique")
-async def critique(detail_id: str, req: CritiqueRequest) -> dict:
-    if not meta_client.configured():
-        raise HTTPException(503, "AI not configured: set META_API_KEY in .env")
-    native = _database_version(detail_id)
-    if native:
-        from .runtime import ensure_worker, repository
-        job = repository().enqueue("revise_detail", {"detail_id": detail_id, "base_version_id": native["id"],
-                                   "requested_changes": "Verify, render and independently critique this version. Fix concrete issues."})
-        ensure_worker()
-        return _persistent_generation(job["id"])
-    if not req.renders or len(req.renders) > 3 or sum(len(r) for r in req.renders) > 8_000_000:
-        raise HTTPException(400, "send 1-3 renders under 8 MB total")
-    job_id = uuid.uuid4().hex[:12]
-    GEN_JOBS[job_id] = {"id": job_id, "state": "queued", "progress": [], "result": None,
-                        "detail_id": None, "error": None, "gate_notes": []}
-    threading.Thread(target=_run_critique, args=(job_id, detail_id, req), daemon=True).start()
-    return GEN_JOBS[job_id]
-
-
-def _run_locate(job_id: str, detail_id: str) -> None:
-    job = GEN_JOBS[job_id]
-    try:
-        job["state"] = "running"
-        job["result"] = ai.locate_on_drawing(detail_id, job["progress"].append)
-        job.update(state="done", detail_id=detail_id)
-    except Exception as e:  # noqa: BLE001 - surfaced to the UI
-        job.update(state="failed", error=str(e)[:500])
+async def critique(detail_id: str, req: CritiqueRequest | None = None) -> dict:
+    """AI self-check: the worker verifies, renders the version on the server,
+    asks the independent critic and repairs concrete issues in a new version."""
+    from .v3_api import submit
+    native = _ai_version(detail_id)
+    job = submit("revise_detail", {"detail_id": detail_id, "base_version_id": native["id"],
+                 "requested_changes": (req and req.requested_changes) or
+                 "Verify, render and independently critique this version. Fix concrete issues."})
+    return _persistent_generation(job["id"])
 
 
 @app.post("/api/specs/{detail_id}/locate")
 async def locate_parts(detail_id: str) -> dict:
     """SAM 3.1: find each part on the (upright) source drawing."""
-    if not meta_client.configured():
-        raise HTTPException(503, "AI not configured: set META_API_KEY in .env")
-    native = _database_version(detail_id)
-    if native:
-        from .runtime import ensure_worker, repository
-        job = repository().enqueue("locate", {"version_id": native["id"]})
-        ensure_worker()
-        return _persistent_generation(job["id"])
-    job_id = uuid.uuid4().hex[:12]
-    GEN_JOBS[job_id] = {"id": job_id, "state": "queued", "progress": [], "result": None,
-                        "detail_id": None, "error": None, "gate_notes": []}
-    threading.Thread(target=_run_locate, args=(job_id, detail_id), daemon=True).start()
-    return GEN_JOBS[job_id]
+    from .v3_api import submit
+    job = submit("locate", {"version_id": _ai_version(detail_id)["id"]})
+    return _persistent_generation(job["id"])
 
 
 @app.get("/api/generate/{job_id}")
@@ -708,8 +640,8 @@ async def get_generate(job_id: str) -> dict:
     except KeyError:
         pass
     if job_id not in GEN_JOBS:
-        raise HTTPException(404, "job not found: it may have been lost when the "
-                                 "server restarted if it was a legacy guide request; start it again")
+        raise HTTPException(404, "job not found: guide answers are kept in memory and "
+                                 "are lost when the server restarts; ask again")
     return GEN_JOBS[job_id]
 
 

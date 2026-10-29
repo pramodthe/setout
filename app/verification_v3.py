@@ -21,26 +21,46 @@ def check(ident, status, reason=None, required=True, **values):
                 status=status, reason=reason, required=required, **values)
 
 
-def material_key(part_type):
-    tokens = part_type.lower().replace("-","_").split("_")
-    for material in ("membrane","adhesive","screed","primer","bedding","bed","waterproofing"):
-        if material in tokens:
-            return "membrane" if material == "waterproofing" else "bed" if material == "bedding" else material
-    return part_type.lower()
+# Words that say where a piece of a layer sits, not what it is made of.
+# Splitting one layer into wall/floor or upturn pieces keeps its material.
+POSITION_WORDS = {"wall", "floor", "ceiling", "roof", "upturn", "upstand", "turn", "return", "corner",
+                  "left", "right", "top", "bottom", "front", "back", "inner", "outer", "upper",
+                  "lower", "vertical", "horizontal", "side", "end", "layer", "part", "piece", "section"}
 
 
-def fixture_form_check(part,measured):
-    tokens = set(re.findall(r"[a-z]+",part.type.lower()+" "+(part.label or "").lower()))
-    if not tokens & {"wc","toilet","basin","washbasin","bath","vanity"}:
+def material_tokens(part_type):
+    """The material words of a part type: its tokens minus position words."""
+    tokens = set(re.findall(r"[a-z]+", part_type.lower())) - POSITION_WORDS
+    return tokens or {part_type.lower()}
+
+
+def label_coverage(program, read):
+    """Drawing labels the READ classed as a layer or object that no part
+    carries. Informational: it never blocks completion, but the agent and the
+    reviewer see what is missing. Older reads without categories are skipped."""
+    wanted = {e["label_verbatim"] for e in read.get("elements", [])
+              if e.get("label_verbatim") and e.get("category") in ("layer", "object")}
+    if not wanted:
+        return None
+    missing = sorted(wanted - {part.label for part in program.parts if part.label})
+    return check("label-coverage", "UNVERIFIED" if missing else "PASS",
+                 "Every drawing label for a layer or object is carried by a part", required=False,
+                 missing=missing)
+
+
+def object_form_check(part, measured):
+    """A part declared shaped must not be its own envelope block. Nothing is
+    inferred from names: the author declares form=shaped or form=block."""
+    if part.role != "object" or getattr(part, "form", None) != "shaped":
         return None
     bounds = measured.get("bounds",[])
     volume = measured.get("volume")
     if len(bounds) != 6 or volume is None:
-        return check("fixture-form-"+part.id,"UNVERIFIED","trusted solid volume/bounds are required")
+        return check("object-form-"+part.id,"UNVERIFIED","trusted solid volume/bounds are required")
     envelope = (bounds[3]-bounds[0])*(bounds[4]-bounds[1])*(bounds[5]-bounds[2])
     ratio = volume/envelope if envelope > 0 else 1
-    return check("fixture-form-"+part.id,"PASS" if 0 < ratio < .9 else "FAIL",
-        "Manufactured hollow fixtures cannot be solid envelope blocks; visual form is also checked by the critic.",
+    return check("object-form-"+part.id,"PASS" if 0 < ratio < .9 else "FAIL",
+        "A shaped object cannot be a solid envelope block; visual form is also checked by the critic.",
         solid_fraction=ratio)
 
 
@@ -239,6 +259,9 @@ def prepare_verification(repo, version_id, candidate=None):
     except (ValueError, FileNotFoundError, KeyError):
         identity = False
     checks.append(check("source-artifacts", "PASS" if identity else "FAIL", "source PDF/crop integrity"))
+    coverage = label_coverage(program, read)
+    if coverage:
+        checks.append(coverage)
     for result in results:
         if result.id.startswith("C-cad-"):
             continue  # v2's illustrative-only policy does not describe v3 CAD.
@@ -263,7 +286,7 @@ def prepare_verification(repo, version_id, candidate=None):
                 checks.append(check("cad-code-"+part.id,"PASS","current named-value code contract"))
             except ValueError as error:
                 checks.append(check("cad-code-"+part.id,"FAIL",str(error)))
-            form = fixture_form_check(part,build["measured"])
+            form = object_form_check(part,build["measured"])
             if form:
                 checks.append(form)
             expected_params = {name: evaluate(expression, env) for name, expression in part.param_bindings.items()}
@@ -372,9 +395,12 @@ def prepare_verification(repo, version_id, candidate=None):
         old_parts = {p["id"]:p for old in protected for p in old.get("parts",[]) if p.get("role") == "covered_layer"}
         new_parts = {p.id:p for p in program.parts}
         changes = []
-        materials = {material_key(part.type) for part in program.parts if part.role == "covered_layer"}
+        covered = [part for part in program.parts if part.role == "covered_layer"]
         for ident, old in old_parts.items():
-            if material_key(old["type"]) not in materials:
+            # A protected covered layer survives if a covered layer still carries
+            # its drawing label, or shares a material word with its type.
+            if not any((old.get("label") and part.label == old["label"]) or
+                       material_tokens(old["type"]) & material_tokens(part.type) for part in covered):
                 changes.append("role:"+ident)
         new_relations = {(r.source,r.target,r.kind):r for r in program.relations}
         for relation in [r for old in protected for r in old.get("relations", [])]:

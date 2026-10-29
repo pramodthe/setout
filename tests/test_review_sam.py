@@ -1,85 +1,9 @@
-"""Review/publish, SAM drawing links and public demo mode (no network)."""
+"""SAM drawing links, card previews and public mode (no network)."""
 
-import copy
-import io
-import json
 
 import pytest
 
-from app import generate as gen
-from app import review, sam, store
-from app.generate import EXAMPLE, gate
-from app.program import DetailProgram, compile_program
-from app.spec import SourceDoc
-
-READ = {"drawing_type": "isometric_room", "rotation_deg": 90, "title": "",
-        "elements": [{"label_verbatim": "Waterproofed walls", "kind": "label", "where": ""},
-                     {"label_verbatim": "Bath", "kind": "label", "where": ""}],
-        "dimensions": [{"value_mm": 150, "quote_verbatim": "150mm", "applies_to": "upturn"}]}
-
-
-@pytest.fixture
-def lib(tmp_path, monkeypatch):
-    monkeypatch.setattr(store, "VAR", tmp_path)
-    raw, _ = gate(copy.deepcopy(EXAMPLE), READ)
-    src = SourceDoc(filename="t.pdf", sha256="d" * 64, page_index=0, crop_id="p0_x",
-                    page_width_pt=595, page_height_pt=842)
-    prog = gen._to_program(raw, DetailProgram(detail_id="ai-r", title="t", source=src,
-                                              origin="ai-generated:test (unreviewed; x)", kind="room"))
-    (tmp_path / "library").mkdir()
-    (tmp_path / "library" / "ai-r.json").write_text(json.dumps({
-        "program": prog.model_dump(mode="json"), "read": READ,
-        "spec": compile_program(prog).model_dump(mode="json")}))
-    from PIL import Image
-    fig = tmp_path / "fig.png"
-    Image.new("RGB", (40, 20), "white").save(fig)
-    monkeypatch.setattr(gen, "find_document_by_sha", lambda sha: {"id": "d"})
-    monkeypatch.setattr(gen, "figure_path", lambda d, c: fig)
-    return tmp_path
-
-
-def _dim(spec_json, part, name):
-    c = next(c for c in spec_json["components"] if c["id"] == part)
-    return next(p for p in c["params"] if p["name"] == name)
-
-
-def test_edit_moves_every_dependent_dimension(lib):
-    r = review.apply("ai-r", [{"name": "wall_t", "value": 110}], [], [])
-    wt = next(p for p in r["params"] if p["name"] == "wall_t")
-    assert wt["provenance"] == "user_input" and wt["edited"] == {"from": 90, "to": 110}
-    assert set(wt["used_by"]) >= {"floor_slab", "back_wall"}
-    spec = json.loads((lib / "library" / "ai-r.json").read_text())["spec"]
-    assert _dim(spec, "back_wall", "x0")["value"] == -110  # "0 - wall_t" followed the edit
-    assert _dim(spec, "floor_slab", "z0")["value"] == -110
-
-
-def test_drawing_values_listed_first_and_accept_is_recorded(lib):
-    r = review.apply("ai-r", [], ["upturn_h"], [])
-    assert r["params"][0]["name"] == "upturn_h" and r["params"][0]["provenance"] == "drawing"
-    assert r["params"][0]["accepted"] and r["status"] == "draft"
-
-
-def test_labels_only_from_the_drawing(lib):
-    r = review.apply("ai-r", [], [], [{"part_id": "bath", "label": "Bath"}])
-    assert next(p for p in r["parts"] if p["id"] == "bath")["label"] == "Bath"
-    with pytest.raises(ValueError):
-        review.apply("ai-r", [], [], [{"part_id": "bath", "label": "Luxury spa tub"}])
-
-
-def test_breaking_edit_is_rejected_and_nothing_saved(lib):
-    before = (lib / "library" / "ai-r.json").read_text()
-    with pytest.raises(ValueError):
-        review.apply("ai-r", [{"name": "room_d", "value": -100}], [], [])  # z1 < z0
-    assert (lib / "library" / "ai-r.json").read_text() == before
-
-
-def test_publish_needs_a_name_and_marks_the_detail(lib):
-    with pytest.raises(ValueError):
-        review.apply("ai-r", [], [], [], publish=True, reviewer=" ")
-    r = review.apply("ai-r", [], [], [], publish=True, reviewer="Pramod")
-    assert r["status"] == "reviewed" and r["by"] == "Pramod"
-    spec = json.loads((lib / "library" / "ai-r.json").read_text())["spec"]
-    assert "reviewed by Pramod" in spec["origin"] and spec["context"]["review_status"] == "reviewed"
+from app import sam, store
 
 
 def test_sam_parsing_prompts_and_confidence_floor():
@@ -100,25 +24,6 @@ def test_sam_parsing_prompts_and_confidence_floor():
     best = sam.locate(b"png", [("tub", "bath", None)], call=lambda png, pr: [
         {"x0": 0, "y0": 0, "x1": 1, "y1": 1, "c": scores.get(pr, 0)}])
     assert best["tub"]["prompt"] == "bathtub"
-
-
-def test_locate_stores_regions_on_the_upright_drawing(lib):
-    seen = {}
-
-    def call(png, prompt):
-        from PIL import Image
-        seen["size"] = Image.open(io.BytesIO(png)).size
-        return [{"x0": 0.1, "y0": 0.1, "x1": 0.5, "y1": 0.5, "c": 0.8}] if prompt == "Bath" else []
-
-    review.apply("ai-r", [], [], [{"part_id": "bath", "label": "Bath"}])
-    out = gen.locate_on_drawing("ai-r", call=call)
-    assert out["located"] == 1 and seen["size"] == (20, 40)  # rotated 90 degrees upright
-    spec = json.loads((lib / "library" / "ai-r.json").read_text())["spec"]
-    assert spec["context"]["drawing_regions"]["bath"]["prompt"] == "Bath"
-    assert spec["context"]["drawing_rotation_deg"] == 90
-    review.apply("ai-r", [{"name": "wall_t", "value": 100}], [], [])  # recompile
-    spec = json.loads((lib / "library" / "ai-r.json").read_text())["spec"]
-    assert "bath" in spec["context"]["drawing_regions"]  # links survive edits
 
 
 def test_public_mode_blocks_writes_and_drawings(monkeypatch):

@@ -109,13 +109,6 @@ export interface SpecSummary {
   origin: string;
 }
 
-export interface CritiqueResult {
-  issues: { part_id: string; problem: string; fix: string }[];
-  accepted: boolean;
-  reason: string;
-  diff: Record<string, string[]>;
-}
-
 export interface GenJob {
   id: string;
   state: "queued" | "running" | "done" | "failed";
@@ -126,7 +119,7 @@ export interface GenJob {
   version_id?: string | null;
   run_id?: string;
   native_state?: string;
-  result?: CritiqueResult | GuideResult | null;
+  result?: GuideResult | null;
 }
 
 export interface Build {

@@ -25,7 +25,7 @@ def run(root):
     from app.model_gateway import ModelGateway
     from app.native_program import prepare
     from app.repository import Repository,uid,sha
-    from app.v3_smoke import heartbeat
+    from eval.v3_smoke import heartbeat
     repo = Repository()
     def source(height):
         image = Image.new("RGB",(900,650),"white")
@@ -78,7 +78,7 @@ def run(root):
         "action":"correct","data":{"program":corrected,"lesson":lesson}})
     review.raise_for_status()
     corrected_id = review.json()["version_id"]
-    memory = repo.list(d.memories,d.memories.c.source_version_id == corrected_id)[0]
+    memory = next(m for m in repo.list(d.memories,d.memories.c.source_version_id == corrected_id) if m["text"] == lesson)
     accepted = client.post(f"/api/versions/{corrected_id}/reviews",json={"reviewer":"Synthetic reference reviewer",
         "action":"activate_memory","data":{"memory_id":memory["id"]}})
     accepted.raise_for_status()

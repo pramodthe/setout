@@ -6,7 +6,54 @@ type Job = {
   detail_id: string | null; progress: string[]; result?: { open_issues?: string[]; states?: Record<string, number> };
   error?: { message?: string };
 };
-type Step = { id: string; n: number; kind: string; tool_name: string | null; state: string; output: unknown };
+/* Compact trace rows from GET /api/runs/{id}/steps (see v3_api.step_summary). */
+type Step = {
+  id: string; n: number; kind: string; state: string; ms: number | null;
+  purpose?: string; calls?: { name: string; arguments: string }[]; text?: string;
+  tokens?: { input?: number; output?: number; cached?: number };
+  tool_name?: string; arguments?: string; error?: string | null; version_id?: string | null;
+  checks?: Record<string, number> | null; verdict?: string | null; issues?: string[]; images?: string[];
+};
+
+/* Every page of the trace: a run can take well over 100 steps. */
+async function loadTrace(runId: string): Promise<Step[]> {
+  const steps: Step[] = [];
+  let after = 0;
+  for (;;) {
+    const response = await fetch(`/api/runs/${encodeURIComponent(runId)}/steps?after=${after}&limit=100`);
+    if (!response.ok) throw new Error("Could not load trace");
+    const page = await response.json() as { steps: Step[]; next_after: number; more: boolean };
+    steps.push(...page.steps);
+    if (!page.more || !page.steps.length) return steps;
+    after = page.next_after;
+  }
+}
+
+function StepRow({ step }: { step: Step }): JSX.Element {
+  if (step.kind === "model") {
+    const calls = step.calls?.map(c => c.name).join(", ");
+    const t = step.tokens;
+    return <details className="trace-step" data-kind="model">
+      <summary>{step.n}. Muse {step.purpose || "turn"}{calls ? ` → ${calls}` : ""} · {step.state}
+        {t?.input ? ` · ${t.input.toLocaleString()} in${t.cached ? ` (${t.cached.toLocaleString()} cached)` : ""} / ${(t.output || 0).toLocaleString()} out` : ""}</summary>
+      {step.calls?.map((c, i) => <pre key={i}>{c.name}({c.arguments})</pre>)}
+      {step.text && <p>{step.text}</p>}
+    </details>;
+  }
+  const checks = step.checks ? Object.entries(step.checks).filter(([, n]) => n).map(([s, n]) => `${n} ${s}`).join(" · ") : "";
+  const bad = !!step.error || (step.checks?.FAIL || 0) > 0 || step.verdict === "fail";
+  return <details className="trace-step" data-kind="tool" open={!!step.images?.length}>
+    <summary className={bad ? "trace-bad" : ""}>
+      {step.n}. {step.tool_name} · {step.state}{checks ? ` · ${checks}` : ""}{step.verdict ? ` · critic: ${step.verdict}` : ""}
+      {step.error ? ` · ${step.error}` : ""}</summary>
+    <pre>{step.arguments}</pre>
+    {step.issues?.map((issue, i) => <p key={i}>• {issue}</p>)}
+    {!!step.images?.length && <div className="trace-images">
+      {step.images.map(id => <a key={id} href={`/api/artifacts/${id}`} target="_blank" rel="noreferrer">
+        <img src={`/api/artifacts/${id}`} alt="Render the agent looked at" loading="lazy" /></a>)}
+    </div>}
+  </details>;
+}
 
 export default function JobPanel({ jobId, onSettled }: { jobId: string; onSettled?: () => void }): JSX.Element {
   const [job, setJob] = useState<Job | null>(null);
@@ -21,10 +68,8 @@ export default function JobPanel({ jobId, onSettled }: { jobId: string; onSettle
       const response = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`);
       if (!response.ok) throw new Error("Could not load run");
       const next = await response.json() as Job;
-      const trace = await fetch(`/api/runs/${next.run_id}/steps?limit=100`);
-      if (!trace.ok) throw new Error("Could not load trace");
-      const data = await trace.json() as { steps: Step[] };
-      if (live) { setJob(next); setSteps(data.steps); }
+      const trace = await loadTrace(next.run_id);
+      if (live) { setJob(next); setSteps(trace); }
       if (live && !notified && !["queued", "running"].includes(next.state)) {
         notified = true;
         settled.current?.();
@@ -42,7 +87,7 @@ export default function JobPanel({ jobId, onSettled }: { jobId: string; onSettle
     if (response.ok) setJob(await response.json() as Job);
     else setError("Could not cancel run");
   };
-  return <section className="genlog" aria-label="Generation run">
+  return <section className="genlog" id="jobpanel" aria-label="Generation run">
     <strong>{job?.state.replaceAll("_", " ") || "Loading run…"}</strong>
     {job && ["queued", "running"].includes(job.state) && <button onClick={() => void cancel()}>Cancel</button>}
     {error && <p role="alert">{error}</p>}
@@ -50,10 +95,8 @@ export default function JobPanel({ jobId, onSettled }: { jobId: string; onSettle
     {job?.result?.open_issues?.map(issue => <p key={issue}>{issue}</p>)}
     {job?.result?.states && <p>{Object.entries(job.result.states).map(([state, count]) => `${count} ${state.replaceAll("_", " ")}`).join(" · ")}</p>}
     {job?.version_id && job.detail_id && <a href={`#/d/${encodeURIComponent(job.detail_id)}`}>Open detail</a>}
-    <details><summary>Run trace ({steps.length} steps)</summary>
-      {steps.map(step => <details key={step.id}><summary>{step.n}. {step.tool_name || step.kind} · {step.state}</summary>
-        <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{JSON.stringify(step.output, null, 2)}</pre>
-      </details>)}
+    <details className="trace"><summary>Run trace ({steps.length} steps)</summary>
+      {steps.map(step => <StepRow key={step.id} step={step} />)}
     </details>
   </section>;
 }

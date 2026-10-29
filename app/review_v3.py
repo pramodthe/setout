@@ -7,6 +7,7 @@ import math
 import sqlalchemy as sa
 
 from . import database as d
+from .lessons import correction_lessons
 from .native_program import prepare
 from .program import expr_names
 from .repository import Conflict, row, uid
@@ -80,9 +81,10 @@ def apply(repo, version, edits, accept, labels, publish=False, reviewer=""):
                     "accept" if publish else "correct" if revised else "accept_params",
                     {"accepted": accept, "edits": edits, "labels": labels})
         if revised:
-            con.execute(d.memories.insert().values(id=uid(), scope="detail", scope_key=version["detail_id"],
-                        state="proposed", kind="correction", text="Reviewer corrected parameter/label attribution. Consult this version's diff before reuse.",
-                        tags=[e["name"] for e in edits], source_event_id=review_id, source_version_id=target, created_at=d.now(con)))
+            for scope, key, text, tags in correction_lessons(version["program"], revised[0], version["detail_id"]):
+                con.execute(d.memories.insert().values(id=uid(), scope=scope, scope_key=key, state="proposed",
+                            kind="correction", text=text, tags=tags, source_event_id=review_id,
+                            source_version_id=target, created_at=d.now(con)))
         if publish:
             con.execute(d.details.update().where(d.details.c.id == version["detail_id"]).values(published_version_id=target))
     return get(repo, repo.get(d.versions, target))

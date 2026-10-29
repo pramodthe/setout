@@ -222,3 +222,21 @@
   .lbrow span{flex:0 0 40%;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
   .lbrow select{flex:1;min-width:0;background:#10151d;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:3px}
   .dvhead button.on{border-color:var(--accent);background:#173a5e}
+
+/* lessons proposed from reviews, critic repairs and repeated failures */
+.lessons{font-size:12px;color:var(--muted);margin-top:6px}
+.lessons summary{cursor:pointer}
+.lessons label{display:block;margin:6px 0}
+.lessons input{background:#0f141c;color:var(--ink);border:1px solid var(--line);padding:3px 6px}
+.lesson{border-top:1px solid var(--line);padding:6px 0}
+.lesson p{margin:3px 0;color:var(--ink);line-height:1.4}
+.lesson-meta{font-size:11px}
+
+/* agent run trace */
+.trace-step{margin:2px 0 2px 8px}
+.trace-step summary{cursor:pointer}
+.trace-step pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;margin:4px 0;color:var(--muted)}
+.trace-step p{margin:2px 0;color:var(--ink)}
+.trace-bad{color:var(--bad)}
+.trace-images{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0}
+.trace-images img{width:180px;height:auto;border:1px solid var(--line);border-radius:4px;background:#fff}

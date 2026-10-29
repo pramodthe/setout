@@ -17,11 +17,19 @@ dozens of independent absolute coordinates which disconnect source dimensions.
 Use lowercase snake_case parameter names and part IDs.
 Pass program as a JSON OBJECT, never a quoted or escaped JSON string. The harness
 supplies source, origin, detail_id and optimistic parent identity; do not invent IDs.
-Keep the first program concise (roughly 8-12 necessary parts), then add or repair
-parts in successor versions. Execute tools rather than returning a program as prose.
-LAYERS/SUBSTRATES MUST USE EXACT PRIMITIVES, NEVER CAD. In-situ wall, slab, screed,
-membrane, adhesive/bed and tile layers use box, sheet, wedge or profile. Only
-manufactured objects (e.g. waterstop, grate, WC, vanity, basin) use role=object and cad.
+Cover the drawing: every READ label with category layer or object gets a part that
+carries that exact label (usually 8-30 parts). A part's label is a READ label copied
+exactly, or null; pieces of a split layer keep the same label, and position words go
+in the id, type or note. Add or repair parts in successor versions. If write_program
+returns a rejected proposal, repair that proposal with patch_program; do not start a
+new program, and never drop or reword a label to clear an error.
+Execute tools rather than returning a program as prose.
+LAYERS/SUBSTRATES MUST USE EXACT PRIMITIVES, NEVER CAD. Anything built up in place
+or laid as a sheet or board (substrates, slabs, screeds, beds, membranes, coatings,
+insulation, boards, finishes) uses box, sheet, wedge or profile. Only discrete
+manufactured objects (fixings, brackets, anchors, trims, grates, fixtures,
+appliances) use role=object and cad. read_drawing classifies each printed label as
+layer, object or other; a part carrying that label must take the matching role.
 Shape dimensions are a dims ARRAY of {name,expr}, with expressions in mm:
 - box: x0,x1,y0,y1,z0,z1. Thin rectangular layers are boxes too.
 - sheet: thickness,z0,z1 and path [{x:expr,y:expr},...].
@@ -40,7 +48,7 @@ For a relative height, use top = other_top + printed_height in the dims expressi
 Share expressions between parts rather than duplicating independent coordinates.
 For primitive parts, extent features select an axis x/y/z and expected_expr over
 named params. Unsupported measurements remain UNVERIFIED.
-For screed falls use kind=slope_ratio, unit=ratio, selector={axis:"x"}, and
+For falls and slopes use kind=slope_ratio, unit=ratio, selector={axis:"x"}, and
 comparison min for a printed minimum fall. Source-feature expected_expr must
 equal the printed parameter value, not an unrelated offset or multiple of it.
 For heights ABOVE another part or a slab set-down, use a face_distance feature:
@@ -49,18 +57,21 @@ measures this part's top minus the other part's top. Use comparison min/max as
 printed. This avoids mistaking overall component height for a relative height.
 Objects require CAD, explicit param_bindings and placement {x,y,z} expressions; build(p) uses CadQuery
 X width, Y depth, Z up, mapped to Setout x=X,y=Z,z=-Y without scaling.
-Default fixture front is CadQuery negative Y / Setout positive z. Orient the WC
-pan and cabinet fronts toward the room, with cistern/back toward the wall.
+An object's default front is CadQuery negative Y / Setout positive z. Orient
+objects as the drawing shows them: the face a person uses toward the viewer or
+room, the back or fixing side against its support.
 CAD bindings include width, depth, height and every thickness/radius the code needs.
-Model recognisable fixtures: WC pan/open bowl and cistern, basin bowl/rim, vanity
-carcass/fronts and basin where shown. A solid envelope box cannot represent them.
-Taps, shower roses/mixers, screens, wastes/grates, waterstops, brackets and anchors
-are manufactured objects too: role=object and shape=cad, never box finishes.
-Include visible supports/legs and distinguish a leg-supported cabinet from a
-wall-hung one; the source drawing determines the visible arrangement.
-If a critic rejects a component's fixture form, re-author that revision. Do not
-reuse the rejected code or substitute a rectangular hollow shell for a curved
-pan/open bowl and cistern. Preserve the named dimensions while repairing form.
+Every object declares form. form=shaped when the drawing shows form beyond the
+envelope (openings, cavities, bowls, flanges, legs, profiles, fins); the measured
+solid must not fill its box. form=block only when the manufactured item really
+is a rectangular block. Model the recognisable form the drawing shows; a solid
+envelope box cannot stand in for a shaped object.
+Small manufactured pieces are objects too: role=object and shape=cad, never box
+finishes. Include visible supports, legs and fixings, and follow the drawing for
+how each object is supported (on legs, wall-hung, fixed through, bedded in).
+If a critic rejects a component's form, re-author that revision. Do not reuse the
+rejected code or substitute a rectangular hollow shell for a curved form.
+Preserve the named dimensions while repairing form.
 Declare extent features on x/y/z with expected_expr matching the envelope spans.
 The independently measured solid, after placement, must match the native envelope.
 Every part declares substrate/covered_layer/finish/object. Define covers/support
@@ -73,7 +84,7 @@ Use model_component or reuse_component for each CAD object. Each edit or CAD
 binding creates a successor version; follow its returned version_id. Each mutation
 already returns its verification_id and checks; inspect those without rebuilding.
 Use patch_program with small JSON-pointer edits, not a full program rewrite.
-Prefer stable named paths, e.g. /parts/@waterstop/placement/z or
+Prefer stable named paths, e.g. /parts/@bracket/placement/z or
 /params/@height/value; numeric indices shift after additions/removals.
 For revisions, repair the existing program and retain working CAD bindings.
 Correct a misplaced CAD object by its rigid placement; do not regenerate a good
@@ -147,9 +158,16 @@ class Agent:
                         for part in issue.get("parts",[]) if base["bindings"].get(part,{}).get("component_id")}
                     initial[0]["content"].append({"type":"input_text","text":"Prior independent critic: "+canonical({
                         "verdict":prior_critics[-1]["verdict"],"issues":prior_critics[-1]["issues"],"rejected_component_revisions":rejected})})
+        seen, stalled = -1, 0
         while self.repo.get(d.jobs, job["id"])["state"] not in TERMINAL:
             run = self.repo.run(job["id"])
             steps = self.repo.list(d.steps, d.steps.c.run_id == run["id"], order=d.steps.c.n)
+            # Every pass records a step; replayed results never spend budget,
+            # so a replay that keeps finding nothing new must stop, not spin.
+            stalled = stalled + 1 if len(steps) == seen else 0
+            if stalled > 3:
+                raise RuntimeError("agent run made no progress; its trace could not be replayed")
+            seen = len(steps)
             conversation = list(initial)
             completed_calls = {s["call_id"]: s for s in steps if s["kind"] == "tool"}
             pending = []

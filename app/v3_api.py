@@ -11,6 +11,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from . import database as d, meta_client
+from .lessons import correction_lessons
 from .native_program import prepare
 from .repository import Conflict, TERMINAL, canonical, row, sha, uid
 from .runtime import ensure_worker, repository
@@ -93,12 +94,17 @@ def create_dataset(body: Dataset):
 
 @router.post("/jobs", status_code=202)
 def create_job(body: JobRequest, idempotency_key: str | None = Header(default=None, max_length=200)):
+    return submit(body.kind, body.payload, idempotency_key, body.budget)
+
+
+def submit(kind, raw_payload, idempotency_key=None, budget=None):
+    """Validate and enqueue one job. Every AI action in the app goes through here."""
     repo = repository()
     schemas = {"generate_detail": Generate, "revise_detail": Revise, "cad_component": CAD,
                "render": Render, "locate": Locate, "batch_eval": Batch}
     try:
-        payload = schemas[body.kind].model_validate(body.payload).model_dump()
-        if body.kind == "generate_detail":
+        payload = schemas[kind].model_validate(raw_payload).model_dump()
+        if kind == "generate_detail":
             repo.get(d.figures, payload["figure_id"])
             if payload.get("expected_current_version_id"):
                 version = repo.get(d.versions, payload["expected_current_version_id"])
@@ -110,21 +116,21 @@ def create_job(body: JobRequest, idempotency_key: str | None = Header(default=No
                     source_matches = source["sha256"] == document["sha256"] and source["crop_id"] == figure["crop_key"]
                 if version["detail_id"] != payload["detail_id"] or not source_matches:
                     raise ValueError("source/detail does not match base version")
-        elif body.kind == "batch_eval":
+        elif kind == "batch_eval":
             dataset = json.loads(repo.artifacts.read(payload["dataset_artifact_id"]))
             for figure_id in dataset["figure_ids"]:
                 repo.get(d.figures, figure_id)
         else:
             version = repo.get(d.versions, payload.get("base_version_id") or payload.get("version_id"))
-            if body.kind == "revise_detail" and version["detail_id"] != payload["detail_id"]:
+            if kind == "revise_detail" and version["detail_id"] != payload["detail_id"]:
                 raise ValueError("version belongs to another detail")
-            if body.kind in ("revise_detail", "cad_component", "locate") and not version["figure_id"]:
+            if kind in ("revise_detail", "cad_component", "locate") and not version["figure_id"]:
                 raise ValueError("source drawing is unavailable for this archived detail; upload it before starting a native revision")
-            if body.kind == "cad_component" and bool(payload["brief"]) == bool(payload["component_id"]):
+            if kind == "cad_component" and bool(payload["brief"]) == bool(payload["component_id"]):
                 raise ValueError("choose brief or component_id")
-        if body.kind != "render" and not meta_client.configured():
+        if kind != "render" and not meta_client.configured():
             raise HTTPException(503, "AI not configured")
-        result = repo.enqueue(body.kind, payload, idempotency_key, body.budget)
+        result = repo.enqueue(kind, payload, idempotency_key, budget)
     except KeyError:
         raise HTTPException(404, "unknown source or version")
     except Conflict as error:
@@ -184,8 +190,43 @@ async def job_events(ident: str, request: Request, last_event_id: int = Header(d
     return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
 
 
+def _short(value, size=400):
+    text = value if isinstance(value, str) else json.dumps(value, sort_keys=True)
+    return text if len(text) <= size else text[:size] + "…"
+
+
+def step_summary(step):
+    """What a person needs to follow a run: model turns as the calls they made,
+    tool steps as their outcome. Full rows stay available with ?full=1."""
+    base = {k: step[k] for k in ("id", "n", "kind", "state", "ms")}
+    if step["kind"] == "model":
+        response = step["response"] or {}
+        output = response.get("output") or []
+        usage = response.get("usage") or {}
+        return {**base, "purpose": (step["request"] or {}).get("purpose"),
+                "tokens": {"input": usage.get("input_tokens"), "output": usage.get("output_tokens"),
+                           "cached": (usage.get("input_tokens_details") or {}).get("cached_tokens")},
+                "calls": [{"name": o.get("name"), "arguments": _short(o.get("arguments") or "")}
+                          for o in output if o.get("type") == "function_call"],
+                "text": _short(" ".join(c.get("text", "") for o in output if o.get("type") == "message"
+                                        for c in o.get("content") or []), 600)}
+    output = step["output"] or {}
+    problem = output.get("error") or output.get("tool_error")
+    checks = output.get("checks") or []
+    critic = output.get("critic") if isinstance(output.get("critic"), dict) else output
+    return {**base, "tool_name": step["tool_name"], "arguments": _short(step["arguments"] or {}),
+            "error": _short(problem.get("message") or problem.get("code") or problem) if isinstance(problem, dict)
+                     else _short(problem) if problem else None,
+            "version_id": output.get("version_id"), "verification_id": output.get("verification_id"),
+            "checks": {status: sum(c.get("status") == status for c in checks) for status in ("PASS", "FAIL", "UNVERIFIED")}
+                      if checks else None,
+            "verdict": critic.get("verdict"), "issues": [_short(i.get("reason") or i.get("id") or i, 240)
+                                                        for i in (critic.get("issues") or [])][:12],
+            "images": [i for i in output.get("images") or [] if isinstance(i, str)]}
+
+
 @router.get("/runs/{ident}/steps")
-def run_steps(ident: str, after: int = 0, limit: int = 50):
+def run_steps(ident: str, after: int = 0, limit: int = 50, full: bool = False):
     repo = repository()
     try:
         repo.get(d.runs, ident)
@@ -193,7 +234,8 @@ def run_steps(ident: str, after: int = 0, limit: int = 50):
         raise HTTPException(404, "unknown run")
     rows = repo.list(d.steps, d.steps.c.run_id == ident, d.steps.c.n > after, order=d.steps.c.n)
     selected = rows[:max(1, min(limit, 100))]
-    return {"steps": selected, "next_after": selected[-1]["n"] if selected else after}
+    return {"steps": selected if full else [step_summary(step) for step in selected],
+            "next_after": selected[-1]["n"] if selected else after, "more": len(rows) > len(selected)}
 
 
 @router.get("/details/{ident}/versions")
@@ -287,10 +329,15 @@ def write_review(ident: str, body: ReviewRequest):
                 con.execute(d.memories.update().where(d.memories.c.id == memory["id"]).values(
                             state="active", source_event_id=memory["source_event_id"] or review_id))
             if revised:
-                # A correction produces a proposed scoped lesson, never a new drawing value.
-                con.execute(d.memories.insert().values(id=uid(), scope="type", scope_key=original["program"].get("kind", "assembly"),
-                            state="proposed", kind="correction", text=body.data.get("lesson", "Reviewer corrected this detail; inspect the linked version diff."),
-                            tags=[], source_event_id=review_id, source_version_id=target, created_at=d.now(con)))
+                # A correction proposes lessons, never a new drawing value: the
+                # reviewer's own words if given, plus what the diff shows.
+                lessons = correction_lessons(original["program"], revised[0], original["detail_id"])
+                if body.data.get("lesson"):
+                    lessons.insert(0, ("type", original["program"].get("kind", "assembly"), body.data["lesson"], []))
+                for scope, key, text, tags in lessons:
+                    con.execute(d.memories.insert().values(id=uid(), scope=scope, scope_key=key, state="proposed",
+                                kind="correction", text=text, tags=tags, source_event_id=review_id,
+                                source_version_id=target, created_at=d.now(con)))
         return {"review_id": review_id, "version_id": target}
     except KeyError:
         raise HTTPException(404, "unknown version or memory")
@@ -366,9 +413,13 @@ def component_review(ident: str, body: ComponentReview):
 
 
 @router.get("/memories")
-def memories(version_id: str | None = None):
+def memories(version_id: str | None = None, detail_id: str | None = None):
     repo = repository()
     conditions = [d.memories.c.source_version_id == version_id] if version_id else []
+    if detail_id:
+        # Lessons learnt on any version of this detail, wherever they apply.
+        conditions.append(d.memories.c.source_version_id.in_(
+            sa.select(d.versions.c.id).where(d.versions.c.detail_id == detail_id)))
     return {"memories": repo.list(d.memories, *conditions, order=d.memories.c.created_at)}
 
 

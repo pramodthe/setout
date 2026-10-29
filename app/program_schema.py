@@ -7,7 +7,11 @@ def object_schema(properties):
     return {"type":"object", "properties":properties, "required":list(properties), "additionalProperties":False}
 
 
-def program_schema():
+def program_schema(labels=None, provenance=("drawing", "assumption")):
+    """The authoring wire schema. labels: the READ's verbatim labels; a part's
+    label is one of them or null, so the model cannot reword one. provenance:
+    what this author may claim (an agent never creates user or manufacturer
+    evidence; existing values of those kinds stay available in revisions)."""
     schema = NativeProgram.model_json_schema()
     definitions = schema.pop("$defs")
     for field in ("source", "origin", "version", "detail_id"):
@@ -31,6 +35,10 @@ def program_schema():
     part = part_schema["properties"]
     part.pop("fixture", None)
     part_schema["required"].remove("fixture")
+    if labels is not None:
+        choices = sorted({label for label in labels if label})
+        part["label"] = {"anyOf": [{"type": "string", "enum": choices}, {"type": "null"}]} if choices else {"type": "null"}
+    schema["properties"]["params"]["items"]["properties"]["provenance"] = {"type": "string", "enum": list(provenance)}
     part["param_bindings"] = {"type":"array", "items":pair}
     part["placement"] = object_schema({axis:string for axis in ("x","y","z")})
     part["features"]["items"]["properties"]["selector"] = object_schema({

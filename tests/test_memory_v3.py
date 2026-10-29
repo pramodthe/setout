@@ -22,8 +22,13 @@ def test_accepted_correction_changes_held_out_attribution_without_copying_values
     assert review.status_code == 200,review.text
     fixed = repo.get(d.versions,review.json()["version_id"])
     assert fixed["program"]["params"][1]["provenance"] == "user_input"
-    memory = repo.list(d.memories)[0]
-    assert memory["state"] == "proposed"
+    memories = repo.list(d.memories)
+    assert {m["state"] for m in memories} == {"proposed"}
+    memory = next(m for m in memories if m["text"] == lesson)
+    derived = next(m for m in memories if m["text"] != lesson)
+    # Without the reviewer's words the diff still teaches a concrete lesson.
+    assert derived["scope"] == "type" and "width" in derived["text"] and "300" in derived["text"]
+    assert "explicit assumption" in derived["text"]
     accepted = client.post(f"/api/versions/{fixed['id']}/reviews",json={"reviewer":"Test reviewer",
         "action":"activate_memory","data":{"memory_id":memory["id"]}})
     assert accepted.status_code == 200,accepted.text
@@ -109,3 +114,20 @@ def test_repeated_failures_and_human_accepted_critic_repairs_propose_once(source
     assert sorted(m["kind"] for m in memories) == ["failure","lesson"]
     assert all(m["state"] == "proposed" and m["source_version_id"] == child["version_id"] for m in memories)
     assert next(m for m in memories if m["kind"] == "lesson")["source_event_id"]
+
+
+def test_correction_lessons_keep_printed_values_with_their_detail():
+    from app.lessons import correction_lessons
+    old = program()
+    new = copy.deepcopy(old)
+    new["params"][0]["value"] = 160
+    new["params"][2]["value"] = 25
+    new["parts"][0]["label"] = None
+    lessons = {scope: (key, text, tags) for scope, key, text, tags in correction_lessons(old, new, "detail-1")}
+    key, text, tags = lessons["detail"]
+    assert key == "detail-1" and "printed value height from 150 to 160" in text and "re-read" in text
+    assert "label None" in text and "height" in tags
+    key, text, tags = lessons["type"]
+    assert key == "section" and "depth" in text and "25 mm instead of 20 mm" in text
+    assert "height" not in text
+    assert correction_lessons(old, copy.deepcopy(old), "detail-1") == []

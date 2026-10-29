@@ -16,7 +16,12 @@ def repository():
     key = (database_url(), os.environ.get("SETOUT_ARTIFACT_ROOT"))
     with _lock:
         if key not in _repositories:
-            _repositories[key] = Repository(key[0], key[1])
+            repo = Repository(key[0], key[1])
+            # An old file-based library is imported once, so the app never
+            # serves AI details from two places.
+            from .versioning import import_library
+            import_library(repo)
+            _repositories[key] = repo
         return _repositories[key]
 
 

@@ -1,0 +1,76 @@
+"""A v2 detail program (the old few-shot example), kept as a test fixture for
+the program compiler and the archived v2 format."""
+
+EXAMPLE: dict = {
+    "title": "Shower corner (example)", "kind": "room",
+    "situation": ["Residential", "Internal", "Bathroom / Shower", "Floor + walls"],
+    "params": [
+        {"name": "floor", "value": 0, "unit": "mm", "provenance": "assumption",
+         "source_quote": "", "kind": "datum", "note": "top of floor substrate"},
+        {"name": "room_w", "value": 1800, "unit": "mm", "provenance": "assumption",
+         "source_quote": "", "kind": "exact", "note": "typical; not on drawing"},
+        {"name": "room_d", "value": 1500, "unit": "mm", "provenance": "assumption",
+         "source_quote": "", "kind": "exact", "note": "typical; not on drawing"},
+        {"name": "wall_h", "value": 2400, "unit": "mm", "provenance": "assumption",
+         "source_quote": "", "kind": "exact", "note": "typical; not on drawing"},
+        {"name": "wall_t", "value": 90, "unit": "mm", "provenance": "assumption",
+         "source_quote": "", "kind": "exact", "note": "typical; not on drawing"},
+        {"name": "slab_t", "value": 120, "unit": "mm", "provenance": "assumption",
+         "source_quote": "", "kind": "exact", "note": "typical; not on drawing"},
+        {"name": "memb_t", "value": 1.5, "unit": "mm", "provenance": "assumption",
+         "source_quote": "", "kind": "exact", "note": "typical; not on drawing"},
+        {"name": "shower_w", "value": 900, "unit": "mm", "provenance": "assumption",
+         "source_quote": "", "kind": "exact", "note": "typical; not on drawing"},
+        {"name": "upturn_h", "value": 150, "unit": "mm", "provenance": "drawing",
+         "source_quote": "150mm", "kind": "min", "note": "membrane upturn outside shower"},
+        {"name": "shower_d", "value": 900, "unit": "mm", "provenance": "assumption",
+         "source_quote": "", "kind": "exact", "note": "typical; not on drawing"},
+        {"name": "hob_w", "value": 100, "unit": "mm", "provenance": "assumption",
+         "source_quote": "", "kind": "exact", "note": "typical; not on drawing"},
+        {"name": "hob_h", "value": 50, "unit": "mm", "provenance": "assumption",
+         "source_quote": "", "kind": "exact", "note": "typical; not on drawing"},
+    ],
+    "parts": [
+        {"id": "floor_slab", "type": "floor_slab", "label": "", "shape": "box",
+         "dims": [{"name": "x0", "expr": "0 - wall_t"}, {"name": "x1", "expr": "room_w"},
+                  {"name": "y0", "expr": "floor - slab_t"}, {"name": "y1", "expr": "floor"},
+                  {"name": "z0", "expr": "0 - wall_t"}, {"name": "z1", "expr": "room_d"}],
+         "path": [], "install_after": [], "note": ""},
+        {"id": "back_wall", "type": "wall", "label": "", "shape": "box",
+         "dims": [{"name": "x0", "expr": "0 - wall_t"}, {"name": "x1", "expr": "room_w"},
+                  {"name": "y0", "expr": "floor"}, {"name": "y1", "expr": "wall_h"},
+                  {"name": "z0", "expr": "0 - wall_t"}, {"name": "z1", "expr": "0"}],
+         "path": [], "install_after": ["floor_slab"], "note": ""},
+        {"id": "membrane_floor", "type": "membrane", "label": "", "shape": "box",
+         "dims": [{"name": "x0", "expr": "0"}, {"name": "x1", "expr": "room_w"},
+                  {"name": "y0", "expr": "floor"}, {"name": "y1", "expr": "floor + memb_t"},
+                  {"name": "z0", "expr": "0"}, {"name": "z1", "expr": "room_d"}],
+         "path": [], "install_after": ["floor_slab"], "note": ""},
+        {"id": "membrane_upturn_back", "type": "membrane", "label": "", "shape": "box",
+         "dims": [{"name": "x0", "expr": "shower_w"}, {"name": "x1", "expr": "room_w"},
+                  {"name": "y0", "expr": "floor"}, {"name": "y1", "expr": "floor + upturn_h"},
+                  {"name": "z0", "expr": "0"}, {"name": "z1", "expr": "memb_t"}],
+         "path": [], "install_after": ["back_wall"], "note": "upturn outside shower"},
+        {"id": "shower_hob", "type": "hob", "label": "", "shape": "profile",
+         "dims": [{"name": "z0", "expr": "0"}, {"name": "z1", "expr": "shower_d"}],
+         "path": [{"x": "shower_w", "y": "floor", "z": ""},
+                  {"x": "shower_w + hob_w", "y": "floor", "z": ""},
+                  {"x": "shower_w + hob_w", "y": "floor + hob_h - 10", "z": ""},
+                  {"x": "shower_w + hob_w - 10", "y": "floor + hob_h", "z": ""},
+                  {"x": "shower_w", "y": "floor + hob_h", "z": ""}],
+         "install_after": ["membrane_floor"], "note": "chamfered kerb at shower edge"},
+        {"id": "bath", "type": "bath", "label": "", "shape": "fixture", "fixture": "bath",
+         "dims": [{"name": "x0", "expr": "room_w - 1500"}, {"name": "x1", "expr": "room_w"},
+                  {"name": "y0", "expr": "floor"}, {"name": "y1", "expr": "floor + 550"},
+                  {"name": "z0", "expr": "0"}, {"name": "z1", "expr": "760"}],
+         "path": [], "install_after": ["membrane_floor"], "note": "size typical"},
+    ],
+    "unresolved": [],
+}
+
+
+for _part in EXAMPLE["parts"]:
+    _part.setdefault("fixture", "")
+    _part.setdefault("cad_brief", "")
+    for _pt in _part["path"]:
+        _pt.setdefault("z", "")

@@ -48,14 +48,29 @@ def test_component_sizes_must_be_named():
         check_component('import cadquery as cq\ndef build(p):\n return cq.Workplane("XY").box(p["w"],p["d"],p["h"]).scale(p["factor"])')
 
 
-def test_solid_wc_envelope_is_not_a_finished_fixture():
+def test_declared_shaped_object_cannot_be_its_envelope_block():
     from types import SimpleNamespace
-    from app.verification_v3 import fixture_form_check
-    part = SimpleNamespace(id="wc",type="wc_pan",label="WC PAN AND CISTERN")
+    from app.verification_v3 import object_form_check
     bounds = [0,0,0,360,650,800]
-    result = fixture_form_check(part,{"bounds":bounds,"volume":360*650*800})
-    assert result["status"] == "FAIL" and result["required"]
-    assert fixture_form_check(part,{"bounds":bounds})["status"] == "UNVERIFIED"
+    solid = {"bounds":bounds,"volume":360*650*800}
+    # The check reads the declaration, never the part's name or trade.
+    for name in ("wc_pan", "anchor_bracket", "cladding_clip"):
+        part = SimpleNamespace(id="p",type=name,label=None,role="object",form="shaped")
+        result = object_form_check(part,solid)
+        assert result["id"] == "object-form-p" and result["status"] == "FAIL" and result["required"]
+        assert object_form_check(part,{"bounds":bounds,"volume":360*650*800*.4})["status"] == "PASS"
+        assert object_form_check(part,{"bounds":bounds})["status"] == "UNVERIFIED"
+    block = SimpleNamespace(id="p",type="wc_pan",label=None,role="object",form="block")
+    assert object_form_check(block,solid) is None
+    layer = SimpleNamespace(id="p",type="tile",label=None,role="finish",form=None)
+    assert object_form_check(layer,solid) is None
+
+
+def test_material_words_ignore_position_words():
+    from app.verification_v3 import material_tokens
+    assert material_tokens("membrane_wall_upturn") == {"membrane"}
+    assert material_tokens("Insulation board, lower") == {"insulation","board"}
+    assert material_tokens("wall") == {"wall"}
 
 
 def _layer_program():
@@ -130,11 +145,18 @@ def test_numeric_substring_cannot_claim_a_different_drawing_value(source_repo):
     assert next(c for c in report["checks"] if c["id"] == "source-dimension-d0")["status"] == "UNVERIFIED"
 
 
+def _read(category):
+    return {"elements": [{"label_verbatim": "LABELLED ITEM", "kind": "", "where": "", "category": category}]}
+
+
 def test_layers_cannot_be_reclassified_to_skip_coverage_or_cad_policy():
-    raw = _layer_program().model_dump(mode="json")
-    raw["parts"][0]["role"] = "finish"
-    with pytest.raises(ValueError, match="covered_layer"):
-        NativeProgram.model_validate(raw)
+    from app.native_program import check_roles
+    program = _layer_program()
+    program.parts[0].label = "Labelled item"
+    with pytest.raises(ValueError, match="as a layer"):
+        check_roles(program.model_copy(update={"parts": [program.parts[0].model_copy(update={
+            "role": "object", "shape": "cad", "form": "shaped"})]}), _read("layer"))
+    check_roles(program, _read("layer"))
 
 
 def test_dimension_units_reject_hidden_physical_offsets():
@@ -144,11 +166,28 @@ def test_dimension_units_reject_hidden_physical_offsets():
         expression_unit("height + 200", {"height":"mm"})
 
 
-@pytest.mark.parametrize("kind",["tap","shower_rose","shower_mixer","glass_screen","floor_waste","waterstop_angle","anchor"])
-def test_manufactured_fittings_cannot_be_primitive_finishes(kind):
-    raw = _layer_program().model_dump(mode="json")
-    raw["parts"][2].update(type=kind,role="finish")
-    with pytest.raises(ValueError,match="parametric CAD"):
+@pytest.mark.parametrize("kind",["sanitary_fixture","cladding_clip","anchor","pipe_flashing"])
+def test_manufactured_objects_cannot_be_primitive_finishes(kind):
+    from app.native_program import check_roles
+    program = _layer_program()
+    part = program.parts[2].model_copy(update={"type": kind, "label": "Labelled item"})
+    with pytest.raises(ValueError,match="manufactured object"):
+        check_roles(program.model_copy(update={"parts": [part]}), _read("object"))
+    # Roles come from the drawing reading, never from our own vocabulary:
+    # with no classification the part's name alone decides nothing.
+    check_roles(program.model_copy(update={"parts": [part]}), _read(None))
+
+
+def test_objects_declare_their_form_unless_a_reviewer_is_correcting_values():
+    from app.native_program import check_roles
+    program = _layer_program()
+    part = program.parts[2].model_copy(update={"role": "object", "shape": "cad", "form": None})
+    with pytest.raises(ValueError, match="form=shaped or form=block"):
+        check_roles(program.model_copy(update={"parts": [part]}), {})
+    check_roles(program.model_copy(update={"parts": [part]}), {}, human=True)
+    with pytest.raises(ValueError, match="only on objects"):
+        raw = program.model_dump(mode="json")
+        raw["parts"][2]["form"] = "block"
         NativeProgram.model_validate(raw)
 
 
@@ -258,7 +297,7 @@ def test_component_reuse_refuses_changed_binding_units_before_cad(source_repo):
     tools = Tools(repo,fence,ModelGateway(repo,fence,ScriptedModel()))
     tools.run("read","read_drawing",{})
     candidate = program()
-    candidate["parts"][0].update(type="custom_object",role="object",shape="cad",cad_brief="Custom parametric object",param_bindings={"size":"height"})
+    candidate["parts"][0].update(type="custom_object",role="object",form="block",shape="cad",cad_brief="Custom parametric object",param_bindings={"size":"height"})
     written = tools.run("write","write_program",{"program":candidate})
     code = 'import cadquery as cq\ndef build(p):\n return cq.Workplane("XY").box(p["size"],p["size"],p["size"])'
     with d.transaction(repo.engine) as con:
@@ -268,3 +307,26 @@ def test_component_reuse_refuses_changed_binding_units_before_cad(source_repo):
     assert result["error"]["code"] == "invalid_tool_input"
     assert "unit mismatch" in result["error"]["message"]
     assert repo.run(job["id"])["consumed"].get("cad_calls",0) == 0
+
+
+def test_label_coverage_lists_drawing_parts_nobody_carries():
+    from app.verification_v3 import label_coverage
+    program = _layer_program()
+    program.parts[0].label = "MEMBRANE"
+    read = {"elements": [{"label_verbatim": "MEMBRANE", "category": "layer"},
+                         {"label_verbatim": "TILE", "category": "layer"},
+                         {"label_verbatim": "SHOWER AREA", "category": "other"}]}
+    result = label_coverage(program, read)
+    assert result["status"] == "UNVERIFIED" and not result["required"] and result["missing"] == ["TILE"]
+    program.parts[2].label = "TILE"
+    assert label_coverage(program, read)["status"] == "PASS"
+    assert label_coverage(program, {"elements": [{"label_verbatim": "TILE"}]}) is None
+
+
+def test_authoring_schema_offers_only_drawing_labels_and_agent_provenance():
+    from app.program_schema import program_schema
+    schema = program_schema(["WALL", "WALL", "SLAB", ""])
+    part = schema["properties"]["parts"]["items"]["properties"]
+    assert part["label"] == {"anyOf": [{"type": "string", "enum": ["SLAB", "WALL"]}, {"type": "null"}]}
+    assert schema["properties"]["params"]["items"]["properties"]["provenance"]["enum"] == ["drawing", "assumption"]
+    assert program_schema([])["properties"]["parts"]["items"]["properties"]["label"] == {"type": "null"}
