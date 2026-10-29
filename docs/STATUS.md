@@ -319,6 +319,18 @@
 - `docs/DEMO.md` rewritten for the new flow, with the rule: no third-party
   drawings on screen.
 
+## 2026-10-29 (night) — own demo drawing
+
+- `scripts/demo_drawing.py` draws a shower step-down section, our own work, so
+  the video and public demo never need a third-party drawing. Its only printed
+  numbers come from `ncc/rules/rules.json` (25 MIN. step-down, 1800 MIN.
+  membrane above finished tile).
+- Pipeline result: 94 s, ~30.6k tokens; 13 labels read, 8 placed; both printed
+  values kept as drawing minimums, everything else an assumption; 0 gate
+  notes; 33 PASS, 0 FAIL. The guide's walkthrough quotes both values.
+- SAM 3.1 finds nothing on it (empty for every prompt, while the bathtub
+  control still returns 0.92): flat sections have no objects for SAM to find.
+
 ## Milestone ledger
 
 | Milestone | State | Evidence |
