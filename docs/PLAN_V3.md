@@ -15,7 +15,7 @@ starts on them.
    versions, reviews and SAM links are JSON files, and nothing records what an AI
    run did.
 4. **The 3D is mostly hand-written.** The model picks parts and dimensions, but
-   every shape comes from 17 generators in `app/geometry.py`. Six of them are
+   every shape comes from 18 generators in `app/geometry.py`. Six of them are
    fixed models (bath, WC, basin, vanity, shower tray, door). AI-written
    CadQuery exists, but only for up to 3 parts.
 5. **The model never sees what it built.** The only visual check is optional

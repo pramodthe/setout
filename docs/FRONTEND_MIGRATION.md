@@ -42,7 +42,7 @@ typed API contracts, and testable UI logic.
 5. Cutover + cleanup (0.5 day): delete `app/static/`, move drive script
    into repo, update README/ARCH. Acceptance: 29 pytest + full drive green.
 
-Total: ~3 days. Non-goals: visual redesign, R3F rewrite, PDF.js paging
+Non-goals: visual redesign, R3F rewrite, PDF.js paging
 (separate item), mobile layout rework.
 
 ## Risks

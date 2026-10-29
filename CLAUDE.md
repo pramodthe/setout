@@ -99,7 +99,7 @@ Playground (run from repo root, venv activated: `source .venv/bin/activate`):
 
 ```sh
 pip install -r requirements.txt
-python -m pytest tests/ -q                                   # 82 tests, no network needed
+python -m pytest tests/ -q                                   # no network needed
 python -m pytest tests/test_verify.py::test_d4_contacts_bear -q   # single test
 SETOUT_VAR=var python -m uvicorn app.main:app --port 8000    # serves API + web/dist at /
 
