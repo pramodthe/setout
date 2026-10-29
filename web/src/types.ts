@@ -104,6 +104,26 @@ export interface Doc {
 export interface SpecSummary {
   detail_id: string;
   title: string;
+  crop_id: string;
+  sha256: string;
+  origin: string;
+}
+
+export interface CritiqueResult {
+  issues: { part_id: string; problem: string; fix: string }[];
+  accepted: boolean;
+  reason: string;
+  diff: Record<string, string[]>;
+}
+
+export interface GenJob {
+  id: string;
+  state: "queued" | "running" | "done" | "failed";
+  progress: string[];
+  detail_id: string | null;
+  error: string | null;
+  gate_notes: string[];
+  result?: CritiqueResult | GuideResult | null;
 }
 
 export interface Build {
@@ -146,4 +166,42 @@ export interface Scene {
   unresolved: Unresolved[];
   verification: CheckResult[];
   solids: Solid[];
+}
+
+export interface LibraryEntry {
+  detail_id: string;
+  title: string;
+  origin: string;
+  made_by: "human" | "ai";
+  situation: [string, string, string];
+  kind: string;
+  parts: number;
+  drawing_values: number;
+  labels: number;
+  components: { id: string; type: string; label: string | null }[];
+}
+
+export interface ComponentGroup {
+  type: string;
+  details: { detail_id: string; title: string; part_ids: string[] }[];
+}
+
+export interface GuideAction {
+  type: "focus" | "isolate" | "show_all" | "explode" | "section" | "view" | "install_step" | "select";
+  ids: string[];
+  value: number;
+  view: "" | "iso" | "front" | "top" | "side";
+}
+
+export interface GuideStep {
+  say: string;
+  actions: GuideAction[];
+  ungrounded: number[];
+}
+
+export interface GuideResult {
+  steps: GuideStep[];
+  follow_up: string;
+  ungrounded: number;
+  retried: boolean;
 }
