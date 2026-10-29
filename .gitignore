@@ -12,6 +12,11 @@ killcheck_results.json
 Thumbs.db
 
 # Source documents are never committed - see .claude/rules/source-documents.md
+# Everything under data/ (drawings, DWG/DXF, scans, datasets) stays local;
+# only the .gitkeep placeholders are tracked.
+data/**
+!data/**/
+!data/**/.gitkeep
 *.pdf
 data/**/*.txt
 data/**/*.json
