@@ -132,3 +132,21 @@ def test_public_mode_blocks_writes_and_drawings(monkeypatch):
     assert c.patch("/api/specs/conpro-door-sill-D3", json={"component_id": "x"}).status_code == 403
     assert c.post("/api/guide", json={"detail_id": "x", "question": "q"}).status_code == 429
     assert c.get("/api/specs/conpro-door-sill-D3/scene").status_code == 200  # browsing works
+
+
+def test_preview_is_our_render_and_public_can_only_read(monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+    import app.main as m
+    monkeypatch.setattr(store, "VAR", tmp_path)
+    c = TestClient(m.app)
+    jpeg = b"\xff\xd8\xff\xe0" + b"0" * 64
+    url = "/api/specs/conpro-door-sill-D3/preview"
+    assert c.get(url).status_code == 404
+    assert c.post(url, content=b"\x89PNG....").status_code == 400  # JPEG only
+    assert c.post("/api/specs/no-such-detail/preview", content=jpeg).status_code == 404
+    assert c.post("/api/specs/..%2Fx/preview", content=jpeg).status_code == 404
+    assert c.post(url, content=jpeg).status_code == 200
+    assert c.get(url).content == jpeg
+    monkeypatch.setattr(m, "PUBLIC", True)
+    assert c.get(url).status_code == 200  # a render, not a source drawing
+    assert c.post(url, content=jpeg).status_code == 403

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 import traceback
@@ -323,6 +324,39 @@ async def get_drawing(detail_id: str):
     if png is None:
         raise HTTPException(404, "source drawing not uploaded on this server")
     return Response(png, media_type="image/png")
+
+
+PREVIEW_ID = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
+
+
+def _preview_path(detail_id: str) -> Path | None:
+    if not PREVIEW_ID.match(detail_id):
+        return None
+    return ai.library_dir() / "previews" / f"{detail_id}.jpg"
+
+
+@app.get("/api/specs/{detail_id}/preview")
+async def get_preview(detail_id: str):
+    """Library card image: a render of our own 3D, never the source drawing,
+    so it is served in public mode too."""
+    p = _preview_path(detail_id)
+    if p is None or not p.is_file():
+        raise HTTPException(404, "no preview yet")
+    return FileResponse(p, media_type="image/jpeg")
+
+
+@app.post("/api/specs/{detail_id}/preview")
+async def save_preview(detail_id: str, request: Request) -> dict:
+    """The viewer posts one JPEG render after the build-up finishes."""
+    p = _preview_path(detail_id)
+    if p is None or _load_spec(detail_id) is None:
+        raise HTTPException(404, "unknown detail")
+    data = await request.body()
+    if not data.startswith(b"\xff\xd8\xff") or len(data) > 1_000_000:
+        raise HTTPException(400, "expected a JPEG under 1 MB")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_bytes(data)
+    return {"bytes": len(data)}
 
 
 class ReviewRequest(BaseModel):

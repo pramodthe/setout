@@ -378,6 +378,7 @@ A wrong dimension in a construction tool is worse than a missing one. So:
 | `PATCH` | `/api/specs/{id}` | User correction of a parameter or label (recorded as `user_input`). |
 | `GET` | `/api/specs/{id}/scene` | Build + verify now; returns the viewer payload. |
 | `GET` | `/api/specs/{id}/drawing` | The source drawing, upright (alias `/thumb`); 404 if not uploaded here. |
+| `GET` / `POST` | `/api/specs/{id}/preview` | Library card image: a JPEG render of the 3D, saved by the viewer once the build-up finishes. Cards never show the source drawing. Readable in public mode. |
 | `GET` | `/api/specs/{id}/review` | Review state: values (printed first) with quotes and the parts they drive, labels, what the checks changed. |
 | `POST` | `/api/specs/{id}/review` | `{edits, accept, labels, publish, reviewer}`; edits recompile the program. |
 | `POST` | `/api/specs/{id}/locate` | SAM 3.1: locate parts on the upright drawing (job). |

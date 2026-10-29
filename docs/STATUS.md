@@ -331,6 +331,15 @@
 - SAM 3.1 finds nothing on it (empty for every prompt, while the bathtub
   control still returns 0.92): flat sections have no objects for SAM to find.
 
+## 2026-10-29 (night) — library cards show the 3D, not the drawing
+
+- Cards used the source drawing as their thumbnail, so the local library
+  showed third-party pages (unrecordable) and the public one showed blank
+  text boxes. Now each detail page posts one clean render after the build-up
+  (`POST /api/specs/{id}/preview`, JPEG only, known ids only); cards show it,
+  and public mode can read but not write it.
+- Generated for all 11 local details by opening each page once.
+
 ## Milestone ledger
 
 | Milestone | State | Evidence |

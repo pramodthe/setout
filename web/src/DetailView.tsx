@@ -85,6 +85,19 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
       .catch((e: Error) => setErr(e.message));
   }, [detailId, part]);
 
+  /* once the build-up finishes, save a clean render as the library card
+     image (cards never show the source drawing) */
+  useEffect(() => {
+    if (!scene || pub || part) return;
+    const t = window.setInterval(() => {
+      const v = vp.current;
+      if (!v || v.introPlaying()) return;
+      window.clearInterval(t);
+      api.savePreview(detailId, v.snapshot("iso", 640, false)).catch(() => undefined);
+    }, 500);
+    return () => window.clearInterval(t);
+  }, [scene, pub, part, detailId]);
+
   const order = scene?.install_order || [];
   const solids = scene?.solids || [];
   const sel = solids.find((s) => s.id === selected) || null;

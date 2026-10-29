@@ -581,9 +581,15 @@ export class Viewport3D {
     this.layout();
   }
 
+  /** True while the build-up animation is running. */
+  introPlaying(): boolean {
+    return this.intro !== null;
+  }
+
   /** Render one view to a JPEG data URL with every visible part tagged by its
-      id, so a model can say which part is wrong. The live camera is restored. */
-  snapshot(view: ViewPreset, maxW = 1024): string {
+      id, so a model can say which part is wrong (tags=false for a clean
+      library card). The live camera is restored. */
+  snapshot(view: ViewPreset, maxW = 1024, tags = true): string {
     const pos = this.camera.position.clone();
     const tgt = this.controls.target.clone();
     this.skipIntro();
@@ -603,7 +609,7 @@ export class Viewport3D {
     const v = new THREE.Vector3();
     const placed: number[][] = [];
     const h = 16 * px;
-    for (const [id, tag] of this.tags) {
+    for (const [id, tag] of tags ? this.tags : []) {
       const m = this.meshes.get(id);
       if (!m || !m.visible || (m.material as THREE.Material).opacity <= GHOST + 0.01) continue;
       tag.getWorldPosition(v).project(this.camera);
