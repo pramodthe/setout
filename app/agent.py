@@ -76,7 +76,8 @@ Declare extent features on x/y/z with expected_expr matching the envelope spans.
 The independently measured solid, after placement, must match the native envelope.
 Every part declares substrate/covered_layer/finish/object. Define covers/support
 relations and install_after paths. For planar box interfaces constraints name
-axis, source_face and target_face (min/max), min_gap, max_gap and min_coverage.
+axis, source_face and target_face (min/max), min_gap, max_gap (mm) and min_coverage
+(a fraction from 0 to 1: 0.9 means 90%).
 Split a layer that turns a corner into separate wall/floor parts so each covering
 face can be measured. Renaming/splitting preserves material, source labels and
 printed feature ownership. Every covered layer needs a real covering relationship.

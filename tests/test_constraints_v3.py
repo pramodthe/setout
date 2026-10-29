@@ -330,3 +330,12 @@ def test_authoring_schema_offers_only_drawing_labels_and_agent_provenance():
     assert part["label"] == {"anyOf": [{"type": "string", "enum": ["SLAB", "WALL"]}, {"type": "null"}]}
     assert schema["properties"]["params"]["items"]["properties"]["provenance"]["enum"] == ["drawing", "assumption"]
     assert program_schema([])["properties"]["parts"]["items"]["properties"]["label"] == {"type": "null"}
+
+
+def test_coverage_given_as_a_percentage_is_rejected_when_authoring():
+    from app.native_program import check_roles
+    program = _layer_program()
+    program.relations[0].constraints["min_coverage"] = 90
+    with pytest.raises(ValueError, match="fraction from 0 to 1"):
+        check_roles(program, {})
+    NativeProgram.model_validate(program.model_dump(mode="json"))  # stored versions still load

@@ -209,6 +209,14 @@ def check_roles(program, read, human=False):
                              "label and change the part to an exact primitive with role substrate, covered_layer or finish")
         if part.role == "object" and part.form is None and not human:
             raise ValueError(f"{part.id}: objects declare form=shaped or form=block")
+    for relation in program.relations:
+        # Seen 29 Oct: min_coverage 90 meant 90%, and every relation FAILed at
+        # full coverage. Reject it rather than guess the unit. (Authoring only:
+        # stored versions keep loading.)
+        coverage = relation.constraints.get("min_coverage")
+        if coverage is not None and not 0 <= coverage <= 1:
+            raise ValueError(f"{relation.source}->{relation.target}: min_coverage is a fraction from 0 to 1 "
+                             f"(0.9 means 90%), not {coverage:g}")
 
 
 def prepare(raw, source, detail_id, read, base=None, human=False):
