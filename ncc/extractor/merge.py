@@ -2,7 +2,7 @@
 Merge HUMAN-VERIFIED candidates into rules.json. Assigns stable rule ids.
 
     python3 merge.py --candidates ../data/candidates.reviewed.json \\
-        --source-id ARDEX-WPM-2024 --title "Ardex waterproofing manual" \\
+        --source-id MFR-WPM-2024 --title "Manufacturer waterproofing manual" \\
         --url https://example.com/manual --dry-run
     python3 merge.py ... --apply     # actually writes rules/rules.json
 

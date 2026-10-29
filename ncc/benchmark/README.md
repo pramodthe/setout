@@ -7,7 +7,7 @@ Your own observation was that no LLM answers these accurately. This proves it.
 31 are seeded in `questions.jsonl` from NCC 2022 Part 10.2 (12 original + 19
 extracted and human-verified 28 Oct). Grow it by:
 - extracting more NCC clauses
-- adding manufacturer-specific numbers (Ardex, Sika, Mapei — the interesting ones,
+- adding manufacturer-specific numbers from published installation manuals (the interesting ones,
   because they differ from each other and from the code)
 - adding **sequence** questions ("which layer goes on first?") — models are worse
   at these than at numbers, and sequence errors are what actually fail on site
