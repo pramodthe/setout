@@ -22,13 +22,17 @@ from pathlib import Path
 import modal
 
 ROOT = Path(__file__).resolve().parent.parent
+# Read at deploy time and baked into the image env, so the container sees the
+# same value: Modal refuses to start a function whose secrets differ between
+# the deploy and the container.
 GUIDE = os.environ.get("SETOUT_DEMO_GUIDE") == "1"
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install("fastapi==0.162.0", "pydantic==2.14.1", "pypdf==6.21.3",
                  "pillow==13.0.0", "python-multipart==0.0.32")
-    .env({"SETOUT_VAR": "/data", "SETOUT_PUBLIC": "1", "SETOUT_GUIDE_PER_HOUR": "60"})
+    .env({"SETOUT_VAR": "/data", "SETOUT_PUBLIC": "1", "SETOUT_GUIDE_PER_HOUR": "60",
+          "SETOUT_DEMO_GUIDE": "1" if GUIDE else "0"})
     .add_local_dir(str(ROOT / "web" / "dist"), "/root/web/dist")
     .add_local_dir(str(ROOT / "app"), "/root/app", ignore=["__pycache__"])
 )

@@ -16,7 +16,7 @@ moving the 3D for you.
 Meta Global AI Developer Hackathon 2026 · Indie Developer Track · Build for Your World
 Submit by **Wed 4 Nov 9:00 PM ET** = **Thu 5 Nov 1:00 PM Sydney**
 
-**Live demo (browse-only):** https://pthebe-sfsu--setout-demo-web.us-east.modal.run
+**Live demo (read-only, with the AI guide):** https://pthebe-sfsu--setout-demo-web.us-east.modal.run
 
 ---
 
@@ -310,7 +310,8 @@ as local directories, the library on a Modal Volume, and `SETOUT_PUBLIC=1`.
 Public mode is read-only: no uploads, edits or generation; source drawings are
 never served (they are third-party documents); the guide is rate-limited (60
 questions per hour) so a public link can't drain the API budget. The guide is on
-only if a `setout-meta` Modal secret holds the API key.
+only when deployed with `SETOUT_DEMO_GUIDE=1`, which attaches the `setout-meta`
+Modal secret holding the API key.
 
 ### 5.5 Three.js viewer
 

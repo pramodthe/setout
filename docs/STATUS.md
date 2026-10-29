@@ -310,7 +310,12 @@
   https://pthebe-sfsu--setout-demo-web.us-east.modal.run:
   - public mode is read-only, never serves source drawings, and rate-limits
     the guide;
-  - currently shows only the two built-in seeds, with the AI guide off.
+  - currently shows only the two built-in seeds;
+  - AI guide switched on (`SETOUT_DEMO_GUIDE=1` + secret `setout-meta`).
+    "Walk me through the install" on D3 played all 6 steps live, with no
+    ungrounded numbers. Fix: the guide flag is baked into the image env, because
+    a secret attached only at deploy time made the containers crash-loop
+    ("Function has 2 dependencies but container got 3 object ids").
 - `docs/DEMO.md` rewritten for the new flow, with the rule: no third-party
   drawings on screen.
 
