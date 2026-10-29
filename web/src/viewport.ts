@@ -271,7 +271,8 @@ export class Viewport3D {
       this.meshes.set(solid.id, mesh);
       this.root.add(mesh);
       this.base.set(solid.id, pos.slice());
-      mesh.add(this.makeTag(solid.id, labelText(solid.id, solid.source_label), solid.source_label));
+      const label = labelText(solid.id, solid.source_label);
+      mesh.add(this.makeTag(solid.id, solid.placeholder ? `${label} · placeholder (CAD ${solid.placeholder})` : label, solid.source_label));
     }
     this.applyCutaway();
     const box = new THREE.Box3().setFromObject(this.root);

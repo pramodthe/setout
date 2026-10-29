@@ -11,6 +11,7 @@ import type { GuideAction, Region, Scene } from "./types";
 import type { ViewPreset, Viewport3D } from "./viewport";
 import { labelText } from "./viewport";
 import ViewportView from "./ViewportView";
+import VersionPanel from "./VersionPanel";
 
 export default function DetailView({ detailId, part }: { detailId: string; part: string | null }): JSX.Element {
   const [scene, setScene] = useState<Scene | null>(null);
@@ -31,6 +32,7 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
   const [hasDrawing, setHasDrawing] = useState(true);
   const [ver, setVer] = useState(0);
   const [locating, setLocating] = useState<string | null>(null);
+  const [historyVersion, setHistoryVersion] = useState<string | null>(null);
 
   useEffect(() => {
     api
@@ -44,8 +46,10 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
 
   /* geometry changed (review fix, SAM regions): rebuild, keep the camera */
   const reload = () =>
-    api
-      .scene(detailId)
+    (historyVersion ? fetch(`/api/versions/${encodeURIComponent(historyVersion)}/scene`).then(async response => {
+      if (!response.ok) throw new Error("Could not load selected version");
+      return await response.json() as Scene;
+    }) : api.scene(detailId))
       .then((s) => {
         setScene(s);
         setVer((v) => v + 1);
@@ -68,8 +72,10 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
 
   useEffect(() => {
     setScene(null);
-    api
-      .scene(detailId)
+    (historyVersion ? fetch(`/api/versions/${encodeURIComponent(historyVersion)}/scene`).then(async response => {
+      if (!response.ok) throw new Error("Could not load selected version");
+      return await response.json() as Scene;
+    }) : api.scene(detailId))
       .then((s) => {
         setScene(s);
         setClipZ(Number(s.context.illustrative_extent_z_mm || 600) / 2);
@@ -83,14 +89,14 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
         }
       })
       .catch((e: Error) => setErr(e.message));
-  }, [detailId, part]);
+  }, [detailId, part, historyVersion]);
 
   /* The library card image (cards never show the source drawing): one clean
      render, taken only when the card has none or an out-of-date one, and only
      while the view shows the whole detail as built, never a selection,
      explode, cut or isolate. */
   useEffect(() => {
-    if (!scene || pub || part) return;
+    if (!scene || pub || part || scene.context.program_version === "3.0") return;
     let t = 0;
     let live = true;
     void api.hasPreview(detailId).then((ok) => {
@@ -117,7 +123,7 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
     {},
   );
   const situation = (scene?.context.situation as string[] | undefined) || [];
-  const isAI = !!scene?.origin.startsWith("ai-generated");
+  const isAI = !!scene?.origin.startsWith("ai-generated") || scene?.context.program_version === "3.0";
   const regions = (scene?.context.drawing_regions as Record<string, Region> | undefined) || {};
   const nLocated = Object.keys(regions).length;
   const show = (ids: string[]) => {
@@ -203,7 +209,7 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
         <span className="vsum">
           {counts.PASS || 0} pass · {counts.FAIL || 0} fail · {counts.UNVERIFIED || 0} unverified
         </span>
-        {isAI && !pub && (
+        {isAI && !pub && !historyVersion && (
           <button
             id="reviewToggle"
             className={mode === "review" ? "on" : ""}
@@ -214,6 +220,11 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
         )}
       </header>
       {err && <div className="liberr">Could not load this detail: {err}</div>}
+      {!pub && <VersionPanel detailId={detailId} revision={ver} onSelect={id => { setHistoryVersion(id); setMode("guide"); }}
+        onUpdated={() => {
+          setHistoryVersion(null);
+          void api.scene(detailId).then(value => { setScene(value); setVer(v => v + 1); }).catch((e: Error) => setErr(e.message));
+        }} />}
       <div className="dvgrid">
         <aside className="parts">
           <h2>Parts · install order</h2>

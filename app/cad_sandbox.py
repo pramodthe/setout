@@ -51,7 +51,7 @@ class CadCodeError(ValueError):
     """Model code rejected before or during execution (fed back to the model)."""
 
 
-def check_code(code: str) -> None:
+def check_code(code: str, nargs: int = 3) -> None:
     """Static gate before anything leaves this process."""
     if len(code) > MAX_CODE:
         raise CadCodeError(f"code longer than {MAX_CODE} characters")
@@ -74,9 +74,10 @@ def check_code(code: str) -> None:
         elif isinstance(node, ast.Attribute) and node.attr.startswith("__"):
             raise CadCodeError(f"dunder attribute {node.attr!r} not allowed")
         elif isinstance(node, ast.FunctionDef) and node.name == "build":
-            has_build = len(node.args.args) == 3
+            has_build = len(node.args.args) == nargs
     if not has_build:
-        raise CadCodeError("define exactly: def build(W, H, D)")
+        raise CadCodeError("define exactly: def build(W, H, D)" if nargs == 3 else
+                           "define exactly: def build(p)")
 
 
 def wrap(code: str, W: float, H: float, D: float) -> str:
@@ -156,8 +157,24 @@ def modal_runner(script: str) -> str:
     sb = modal.Sandbox.create(app=app, image=image, timeout=180, block_network=True,
                               cpu=1.0, memory=1024)
     try:
-        p = sb.exec("python", "-c", script, timeout=120)
-        out, err = p.stdout.read(), p.stderr.read()
+        # STEP payloads exceed ARG_MAX for ordinary multi-feature objects.
+        # Stream the script/data through stdin instead of a command argument.
+        p = sb.exec("python", "-", timeout=120)
+        encoded = script.encode()
+        for start in range(0, len(encoded), 65536):
+            p.stdin.write(encoded[start:start + 65536])
+            p.stdin.drain()
+        p.stdin.write_eof()
+        p.stdin.drain()
+        def bounded(stream, maximum):
+            chunks, size = [], 0
+            for chunk in stream:
+                size += len(chunk)
+                if size > maximum:
+                    raise CadCodeError("sandbox output exceeds the artifact limit")
+                chunks.append(chunk)
+            return "".join(chunks)
+        out, err = bounded(p.stdout, 96_000_000), bounded(p.stderr, 1_000_000)
         p.wait()
         if p.returncode != 0 and "RESULT " not in out:
             tail = "\n".join(err.strip().splitlines()[-12:])

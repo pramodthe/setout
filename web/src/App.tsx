@@ -13,6 +13,7 @@ import type {
   SpecSummary,
 } from "./types";
 import ViewportView from "./ViewportView";
+import JobPanel from "./JobPanel";
 import type { ViewPreset, Viewport3D } from "./viewport";
 
 import { badgeClass, badgeLabel, worstProv } from "./provenance";
@@ -244,7 +245,7 @@ export default function App(): JSX.Element {
       setVariants(vs);
       const m = await selectCrop(crop, vs, g.detail_id);
       if (m && (await buildDetail(m.detail_id))) {
-        await checkAI(m.detail_id); // one self-check round right away
+        if (!g.version_id) await checkAI(m.detail_id); // native runs already render and critique on the server
       }
     } catch (e) {
       showErr("AI generation failed: " + (e as Error).message.slice(0, 200));
@@ -528,6 +529,7 @@ export default function App(): JSX.Element {
             Boxes are indicative regions from the spec — not SAM masks.
           </div>
           <h2>3 · Components</h2>
+          {gen?.run_id && <JobPanel jobId={gen.id} />}
           {spec?.origin.startsWith("ai-generated") && (
             <div className="step ai-note">
               AI-generated from this drawing (Muse: read, then compose, then code gates).

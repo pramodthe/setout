@@ -300,7 +300,7 @@ def gate(raw: dict, read: dict) -> tuple[dict, list[str]]:
         quote = _norm(q.get("source_quote", ""))
         on_drawing = bool(quote) and any(quote in p for p in printed if p)
         value_ok = any(abs(n - q["value"]) <= 1e-6 * max(1, abs(n))
-                       for n in _numbers(q.get("source_quote", "")))
+                       for n in _numbers(q.get("source_quote") or ""))
         if not (on_drawing and value_ok):
             q["provenance"] = "assumption"
             q["note"] = (q.get("note") or "") + " [gate: not confirmed on drawing]"

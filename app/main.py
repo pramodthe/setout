@@ -32,6 +32,8 @@ from .store import (build_dir, db, figure_path, find_document_by_sha,
 from .verify import summarize, verify_all
 
 app = FastAPI(title="Setout", version="0.1.0")
+from .v3_api import router as v3_router
+app.include_router(v3_router)
 
 # Public demo mode (SETOUT_PUBLIC=1): read-only, source drawings never served
 # (they are third-party documents), and the AI guide is rate-limited so a
@@ -45,6 +47,9 @@ _guide_calls: list[float] = []
 async def public_mode(request: Request, call_next):
     if PUBLIC:
         path, method = request.url.path, request.method
+        if path.startswith(("/api/jobs", "/api/runs", "/api/artifacts", "/api/versions", "/api/details",
+                            "/api/components", "/api/memories", "/api/eval/datasets")):
+            return JSONResponse({"detail": "private generation and source evidence"}, status_code=403)
         drawing = path.startswith("/api/documents") or path.endswith(("/thumb", "/drawing"))
         if drawing or (method in ("POST", "PATCH") and path != "/api/guide"):
             return JSONResponse({"detail": "read-only public demo"}, status_code=403)
@@ -127,9 +132,24 @@ SPECS = {"conpro-door-sill-D3": door_sill_d3,
 
 def _load_spec(detail_id: str) -> DetailSpec | None:
     """Seed specs (human transcriptions) first, then AI-generated library."""
+    native = _database_version(detail_id)
+    if native:
+        return DetailSpec.model_validate(native["spec"])
     if detail_id in SPECS:
         return SPECS[detail_id]()
     return ai.load_library_spec(detail_id)
+
+
+def _database_version(detail_id: str) -> dict | None:
+    from . import database as tables
+    from .runtime import repository
+    repo = repository()
+    try:
+        detail = repo.get(tables.details, detail_id)
+        ident = detail["published_version_id"] if PUBLIC else detail["current_version_id"]
+        return repo.get(tables.versions, ident) if ident else None
+    except KeyError:
+        return None
 
 
 @app.get("/api/specs")
@@ -137,7 +157,17 @@ async def list_specs() -> dict:
     seeds = [{"detail_id": k, "title": (s := v()).title,
               "crop_id": s.source.crop_id, "sha256": s.source.sha256,
               "origin": s.origin} for k, v in SPECS.items()]
-    return {"specs": seeds + ai.list_library()}
+    entries = {row["detail_id"]: row for row in seeds + ai.list_library()}
+    from . import database as tables
+    from .runtime import repository
+    for detail in repository().list(tables.details):
+        version = _database_version(detail["id"])
+        if version:
+            spec = DetailSpec.model_validate(version["spec"])
+            entries[detail["id"]] = {"detail_id": detail["id"], "title": spec.title, "origin": spec.origin,
+                                      "crop_id": spec.source.crop_id, "sha256": spec.source.sha256,
+                                      "version_id": version["id"]}
+    return {"specs": list(entries.values())}
 
 
 @app.get("/api/specs/{detail_id}")
@@ -161,6 +191,8 @@ async def correct_spec(detail_id: str, fix: Correction) -> dict:
     """User correction: param values and labels. Param edits are recorded
     with USER_INPUT provenance and re-validated; source (drawing) values can
     only be overridden explicitly, never silently."""
+    if _database_version(detail_id):
+        raise HTTPException(409, "Versioned details are edited through their program review; select the version to correct")
     try:
         spec = _active_spec(detail_id)  # build on earlier corrections
     except KeyError:
@@ -191,6 +223,9 @@ async def correct_spec(detail_id: str, fix: Correction) -> dict:
 
 
 def _active_spec(detail_id: str) -> DetailSpec:
+    native = _database_version(detail_id)
+    if native:
+        return DetailSpec.model_validate(native["spec"])
     override = var_root() / f"spec-{detail_id}.json"
     if override.exists():
         return DetailSpec.model_validate_json(override.read_text())
@@ -206,6 +241,7 @@ class BuildRequest(BaseModel):
     detail_id: str
     doc_id: str | None = None
     use_display_thickness: bool = False
+    version_id: str | None = None
 
 
 def _run_build(job_id: str, req: BuildRequest, doc_sha: str | None) -> None:
@@ -214,14 +250,30 @@ def _run_build(job_id: str, req: BuildRequest, doc_sha: str | None) -> None:
         _set_build(job_id, "running", progress)
         progress.append("validate spec")
         _set_build(job_id, "running", progress)
-        spec = _active_spec(req.detail_id)
+        native = None
+        if req.version_id:
+            from .runtime import repository
+            from . import database as tables
+            native = repository().get(tables.versions, req.version_id)
+        spec = DetailSpec.model_validate(native["spec"]) if native else _active_spec(req.detail_id)
         progress.append("generate meshes")
         _set_build(job_id, "running", progress)
-        meshes = build_assembly(spec,
-                                use_display=req.use_display_thickness)
+        if native:
+            from .runtime import repository
+            from .verification_v3 import prepare_verification
+            from .geometry import Mesh
+            from .spec import CheckResult
+            built = prepare_verification(repository(), native["id"])
+            meshes = {solid["id"]: Mesh(solid["id"], positions=solid["tris"], color=solid["color"])
+                      for solid in built["scene"]["solids"]}
+            results = [CheckResult.model_validate(c) for c in built["checks"]]
+            spec.verification = results
+        else:
+            meshes = build_assembly(spec, use_display=req.use_display_thickness)
         progress.append("verify")
         _set_build(job_id, "running", progress)
-        results = verify_all(spec, meshes, doc_sha)
+        if not native:
+            results = verify_all(spec, meshes, doc_sha)
         report = summarize(results)
         progress.append("export artifacts")
         _set_build(job_id, "running", progress)
@@ -247,12 +299,28 @@ def _run_build(job_id: str, req: BuildRequest, doc_sha: str | None) -> None:
 async def create_build(req: BuildRequest) -> dict:
     if _load_spec(req.detail_id) is None:
         raise HTTPException(404, "unknown detail")
+    native = _database_version(req.detail_id)
+    if native:
+        from .runtime import repository
+        from . import database as tables
+        if req.version_id:
+            try:
+                native = repository().get(tables.versions, req.version_id)
+            except KeyError:
+                raise HTTPException(404, "unknown version")
+            if native["detail_id"] != req.detail_id:
+                raise HTTPException(409, "version belongs to another detail")
+        req = req.model_copy(update={"version_id": native["id"]})
+    elif req.version_id:
+        raise HTTPException(409, "version does not belong to this detail")
     doc_sha = None
     if req.doc_id:
         doc = get_document(req.doc_id)
         if not doc:
             raise HTTPException(404, "unknown document")
         doc_sha = doc["sha256"]
+        if native and doc_sha != native["spec"]["source"]["sha256"]:
+            raise HTTPException(409, "uploaded document differs from this version's source")
     job_id = uuid.uuid4().hex[:12]
     con = db()
     con.execute("INSERT INTO builds(id, detail_id, doc_id, state, progress) "
@@ -300,12 +368,27 @@ async def get_library() -> dict:
         spec = ai.load_library_spec(row["detail_id"])
         if spec is not None:
             entries.append(library.entry(spec, "ai"))
+    indexed = {entry["detail_id"]: entry for entry in entries}
+    from . import database as tables
+    from .runtime import repository
+    for detail in repository().list(tables.details):
+        version = _database_version(detail["id"])
+        if version:
+            spec = DetailSpec.model_validate(version["spec"])
+            entry = library.entry(spec, "ai" if spec.origin.startswith(("ai-", "user-")) else "human")
+            entry["version_id"] = version["id"]
+            indexed[detail["id"]] = entry
+    entries = list(indexed.values())
     return {"details": entries, "components": library.component_index(entries)}
 
 
 @app.get("/api/specs/{detail_id}/scene")
 async def get_scene(detail_id: str) -> dict:
     """Build + verify on demand (fast: pure-Python meshes) for the viewer page."""
+    native = _database_version(detail_id)
+    if native:
+        from .v3_api import scene
+        return scene(native["id"])
     try:
         spec = _active_spec(detail_id)
     except KeyError:
@@ -319,6 +402,15 @@ async def get_scene(detail_id: str) -> dict:
 @app.get("/api/specs/{detail_id}/drawing")
 async def get_drawing(detail_id: str):
     """The source drawing, upright (as SAM saw it; regions are relative to it)."""
+    native = _database_version(detail_id)
+    if native and native["figure_id"]:
+        from . import database as tables, sam
+        from .runtime import repository
+        repo = repository()
+        figure = repo.get(tables.figures, native["figure_id"])
+        read = repo.get(tables.reads, native["drawing_read_id"])["response"]
+        png = sam.upright(repo.artifacts.read(figure["artifact_id"]), read.get("rotation_deg", 0))
+        return Response(png, media_type="image/png")
     spec = _load_spec(detail_id)
     png = ai.drawing_png(spec) if spec else None
     if png is None:
@@ -350,6 +442,17 @@ async def get_preview(detail_id: str):
     """Library card image: a render of our own 3D, never the source drawing,
     so it is served in public mode too. One older than the detail counts as
     missing, so the next view of the detail takes a new one."""
+    native = _database_version(detail_id)
+    if native:
+        from . import database as tables
+        from .runtime import repository
+        repo = repository()
+        renders = repo.list(tables.renders, tables.renders.c.version_id == native["id"],
+                            tables.renders.c.view == "iso", tables.renders.c.tags == False,
+                            order=tables.renders.c.created_at)
+        if renders:
+            return Response(repo.artifacts.read(renders[-1]["artifact_id"]), media_type="image/jpeg",
+                            headers={"Cache-Control": "no-cache"})
     p = _preview_path(detail_id)
     if p is None or not p.is_file():
         raise HTTPException(404, "no preview yet")
@@ -362,6 +465,9 @@ async def get_preview(detail_id: str):
 @app.post("/api/specs/{detail_id}/preview")
 async def save_preview(detail_id: str, request: Request) -> dict:
     """The viewer posts one JPEG render of the detail as built."""
+    native = _database_version(detail_id)
+    if native and native["format_version"] == "3.0":
+        raise HTTPException(409, "versioned card images are rendered by the worker")
     p = _preview_path(detail_id)
     if p is None or not (detail_id in SPECS or _spec_file(detail_id)):
         raise HTTPException(404, "unknown detail")
@@ -391,6 +497,11 @@ class ReviewRequest(BaseModel):
 
 @app.get("/api/specs/{detail_id}/review")
 async def get_review(detail_id: str) -> dict:
+    native = _database_version(detail_id)
+    if native:
+        from .runtime import repository
+        from . import review_v3
+        return review_v3.get(repository(), native)
     try:
         return review.get(detail_id)
     except KeyError:
@@ -400,6 +511,11 @@ async def get_review(detail_id: str) -> dict:
 @app.post("/api/specs/{detail_id}/review")
 async def post_review(detail_id: str, req: ReviewRequest) -> dict:
     try:
+        native = _database_version(detail_id)
+        if native:
+            from .runtime import repository
+            from . import review_v3
+            return review_v3.apply(repository(), native, req.edits, req.accept, req.labels, req.publish, req.reviewer)
         return review.apply(detail_id, req.edits, req.accept, req.labels,
                             req.publish, req.reviewer)
     except KeyError:
@@ -479,11 +595,13 @@ async def start_generate(req: GenerateRequest) -> dict:
         raise HTTPException(404, "unknown figure")
     if not meta_client.configured():
         raise HTTPException(503, "AI not configured: set META_API_KEY in .env")
-    job_id = uuid.uuid4().hex[:12]
-    GEN_JOBS[job_id] = {"id": job_id, "state": "queued", "progress": [],
-                        "detail_id": None, "error": None, "gate_notes": []}
-    threading.Thread(target=_run_generate, args=(job_id, req), daemon=True).start()
-    return GEN_JOBS[job_id]
+    from .runtime import ensure_worker, repository
+    from .versioning import register_figure
+    repo = repository()
+    figure_id = register_figure(repo, req.doc_id, req.crop_id)
+    job = repo.enqueue("generate_detail", {"figure_id": figure_id})
+    ensure_worker()
+    return _persistent_generation(job["id"])
 
 
 class RemodelRequest(BaseModel):
@@ -506,6 +624,13 @@ def _run_remodel(job_id: str, detail_id: str, req: RemodelRequest) -> None:
 async def remodel_part(detail_id: str, req: RemodelRequest) -> dict:
     if not meta_client.configured() or not cad_sandbox.available():
         raise HTTPException(503, "AI or CAD sandbox not configured")
+    native = _database_version(detail_id)
+    if native:
+        from .runtime import ensure_worker, repository
+        job = repository().enqueue("cad_component", {"base_version_id": native["id"],
+                                   "part_key": req.part_id, "brief": req.brief or "Rebuild this part faithfully from its named parameters"})
+        ensure_worker()
+        return _persistent_generation(job["id"])
     job_id = uuid.uuid4().hex[:12]
     GEN_JOBS[job_id] = {"id": job_id, "state": "queued", "progress": [],
                         "detail_id": None, "error": None, "gate_notes": []}
@@ -532,6 +657,13 @@ def _run_critique(job_id: str, detail_id: str, req: CritiqueRequest) -> None:
 async def critique(detail_id: str, req: CritiqueRequest) -> dict:
     if not meta_client.configured():
         raise HTTPException(503, "AI not configured: set META_API_KEY in .env")
+    native = _database_version(detail_id)
+    if native:
+        from .runtime import ensure_worker, repository
+        job = repository().enqueue("revise_detail", {"detail_id": detail_id, "base_version_id": native["id"],
+                                   "requested_changes": "Verify, render and independently critique this version. Fix concrete issues."})
+        ensure_worker()
+        return _persistent_generation(job["id"])
     if not req.renders or len(req.renders) > 3 or sum(len(r) for r in req.renders) > 8_000_000:
         raise HTTPException(400, "send 1-3 renders under 8 MB total")
     job_id = uuid.uuid4().hex[:12]
@@ -556,6 +688,12 @@ async def locate_parts(detail_id: str) -> dict:
     """SAM 3.1: find each part on the (upright) source drawing."""
     if not meta_client.configured():
         raise HTTPException(503, "AI not configured: set META_API_KEY in .env")
+    native = _database_version(detail_id)
+    if native:
+        from .runtime import ensure_worker, repository
+        job = repository().enqueue("locate", {"version_id": native["id"]})
+        ensure_worker()
+        return _persistent_generation(job["id"])
     job_id = uuid.uuid4().hex[:12]
     GEN_JOBS[job_id] = {"id": job_id, "state": "queued", "progress": [], "result": None,
                         "detail_id": None, "error": None, "gate_notes": []}
@@ -565,10 +703,27 @@ async def locate_parts(detail_id: str) -> dict:
 
 @app.get("/api/generate/{job_id}")
 async def get_generate(job_id: str) -> dict:
+    try:
+        return _persistent_generation(job_id)
+    except KeyError:
+        pass
     if job_id not in GEN_JOBS:
         raise HTTPException(404, "job not found: it may have been lost when the "
-                                 "server restarted (AI jobs live in memory); start it again")
+                                 "server restarted if it was a legacy guide request; start it again")
     return GEN_JOBS[job_id]
+
+
+def _persistent_generation(job_id: str) -> dict:
+    from . import database as tables
+    from .runtime import repository
+    from .v3_api import job_result
+    repository().get(tables.jobs, job_id)
+    job = job_result(job_id)
+    state = {"succeeded": "done", "needs_review": "done" if job["version_id"] else "failed",
+             "cancelled": "failed"}.get(job["state"], job["state"])
+    error = job.get("error")
+    return {**job, "state": state, "native_state": job["state"], "gate_notes": [],
+            "error": error.get("message", error.get("code")) if isinstance(error, dict) else error}
 
 
 # ---------------------------------------------------------------- eval

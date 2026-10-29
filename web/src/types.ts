@@ -123,6 +123,9 @@ export interface GenJob {
   detail_id: string | null;
   error: string | null;
   gate_notes: string[];
+  version_id?: string | null;
+  run_id?: string;
+  native_state?: string;
   result?: CritiqueResult | GuideResult | null;
 }
 
@@ -140,6 +143,7 @@ export interface Solid {
   id: string;
   name: string;
   source_label: string | null;
+  placeholder?: "pending" | "failed";
   representation: string;
   layer: string;
   color: string;
