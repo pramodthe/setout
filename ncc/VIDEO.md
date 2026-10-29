@@ -1,7 +1,6 @@
 # Demo video — script + shot list
 
-3 minutes. Shoot on site at membrane stage, plus screen capture. Edit the
-night before submission; reserve the full day.
+3 minutes. Shoot on site at membrane stage, plus screen capture.
 
 ## The arc (say this, in this order)
 
@@ -43,7 +42,7 @@ night before submission; reserve the full day.
 - Export B2 as a 10-second vertical clip. Post on X with the stain photo:
   "The 3D is generated from the building code. Flip one number and the
   detail rebuilds itself — wrong. This is Setout."
-- Submit the X link for the bonus prize before Nov 8, 11 PM ET.
+- Submit the X link for the bonus prize.
 
 ## What the video must NOT claim
 

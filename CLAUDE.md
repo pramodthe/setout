@@ -15,11 +15,13 @@ can become a library: cladding, flashing, anchors, insulation. Do not hard-code
 waterproofing assumptions into the generators, the schema or the viewer.
 
 Built for the **Meta Global AI Developer Hackathon 2026**, Indie Developer track.
-**Submission deadline: Wed 4 Nov 9:00 PM ET = Thu 5 Nov 1:00 PM Sydney.**
-Code freeze Wed 4 Nov 1:00 PM Sydney. Submit Tuesday night.
 
 ## Working rules
 
+- **Never argue from the calendar.** Don't say something can't be done, or must
+  be cut or deferred, because of a deadline or the days left. Plan and build the
+  full scope; scheduling is the user's call (they have a team of six). User
+  instruction, 29 Oct 2026.
 - **Don't bring up the demo** (the hosted demo, the demo video or recording
   prep) until the user raises it: no questions, suggestions or status lines
   about it. User instruction, 29 Oct 2026.
@@ -69,8 +71,8 @@ manufacturer system is selected. A spec's `origin` must say how it was made
 - **No compliance verdict on real installations.** The tool shows what correct looks like.
   It does not grade the user's work. This avoids liability and removes the need for
   inspector validation.
-- **No model training.** No fine-tuning, no LoRA, no GRPO, no RL. There is neither the
-  compute budget (~$150 API + ~$225 partner credits, all inference) nor the time.
+- **No model training.** No fine-tuning, no LoRA, no GRPO, no RL. The compute
+  budget (~$150 API + ~$225 partner credits) is for inference only.
   RLVR is future work; the verifier generates the trajectories for it as a by-product.
 - No IFC/BIM export, accounts, catalogues, native mobile or self-hosted LLM.
 
@@ -232,5 +234,5 @@ that assumes it.
 ## Submission
 
 Public repo, Apache-2.0 (matches `LICENSE`), **own work only**. The hackathon
-requires the entrant to own everything submitted. Reserve all of day 8 for the demo
-video (`docs/DEMO.md`, `ncc/VIDEO.md`). Never show manual pages on screen.
+requires the entrant to own everything submitted. Never show manual pages on
+screen in any video (`docs/DEMO.md`, `ncc/VIDEO.md`).

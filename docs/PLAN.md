@@ -1,6 +1,5 @@
 # Plan — door-sill vertical slice, then layered completion
 
-Deadline: Thu 5 Nov 2026 1:00 pm Sydney. Freeze: Wed 4 Nov 1:00 pm.
 Primary detail: Conpro p.1 drawing 3, "STANDARD SILL SECTION DOOR OPENING"
 (D3). Why: a true 2D section (extrudable) with explicit source numbers —
 6 mm gap, 100 mm minimum step, 1:80 min fall — plus 12+ labelled components.
@@ -25,7 +24,7 @@ PDF upload -> app/api (FastAPI) -> var/docs/{id}/original.pdf (sha256)
 ## Milestones (in delivery order)
 
 1. Audit + plan — GAP/PLAN/STATUS. Done 28 Oct.
-2. Vertical slice (MUST, by Sun 1 Nov): upload → D3 crop → validated spec →
+2. Vertical slice (MUST): upload → D3 crop → validated spec →
    generated assembly → viewer with layer toggle + click-evidence +
    verification report. Single-process FastAPI + SQLite, `var/` storage.
    Geometry v0 = dimension-driven mesh generators + hand-rolled GLB export
@@ -36,12 +35,12 @@ PDF upload -> app/api (FastAPI) -> var/docs/{id}/original.pdf (sha256)
 4. Accurate components (MUST→SHOULD): membrane/flashing follow section
    profile with upturns/terminations; sealant bead; triangular fillet;
    packers; fixings as annotated positions where the section under-specifies.
-5. Viewer + sequence (SHOULD, by Tue 3 Nov): exploded view, section view,
+5. Viewer + sequence (SHOULD): exploded view, section view,
    install playback, one documented selector variation, `docs/EVAL.md`.
-6. Evaluation + submission (by Wed 4 Nov freeze): EVAL harness stages A/B/C
+6. Evaluation + submission: EVAL harness stages A/B/C
    on D3 + 1–2 extra cases that genuinely work; README; demo script/video;
    arch diagram; MUSE attribution (paper v3 commit pinned when fetched).
-7. STRETCH only if all above PASS: param edit + partial rebuild, Spark vs
+7. After all above PASS: param edit + partial rebuild, Spark vs
    Wonder, downloads, Baseten/Fireworks.
 
 ## Out of scope (unchanged)
@@ -54,5 +53,5 @@ work. SAM 3D Objects / image-to-3D never for verified geometry.
 
 pypdf (BSD-3), pillow (HPND), fastapi + uvicorn + pydantic v2 (MIT/BSD),
 pytest (MIT). Deliberately no PyMuPDF (AGPL) server-side. three.js pinned CDN
-in viewer with console-error gate. cadquery + bpy stay out of v0 by the
-brief's own escape clause; decision recorded in STATUS with dates.
+in viewer with console-error gate. cadquery + bpy stayed out of v0 (decision
+recorded in STATUS); CadQuery now runs in the Modal sandbox.

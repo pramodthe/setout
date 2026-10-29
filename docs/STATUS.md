@@ -14,14 +14,14 @@
   decorative cover angle, drainage holes, waterproof membrane,
   slip/protection sheet, compressible perimeter joint, fillet or bond
   breaker, weep-hole, perimeter termination height (datum, no number).
-- Trade-off invoked (brief §13 escape clause): v0 geometry = closed-set
+- Trade-off: v0 geometry = closed-set
   parameter-driven mesh generators + GLB export in pure Python (stdlib +
   numpy-free), driven by the canonical spec with stable IDs. CadQuery rigid
   solids + STEP measurement and headless-Blender sheets/render/GLB dock into
   the same spec as the next milestone; NOT silently substituted by browser
   boxes — v0 meshes carry per-vertex dims from spec params and are
   dimensionally verified against them. Reason: CadQuery+bpy install + Modal
-  wiring inside MUST window risks the slice; mesh v0 keeps every MUST
+  wiring was the riskiest part of the slice; mesh v0 keeps every MUST
   acceptance check (toggle, evidence, section match, verification) real.
 - Meta API: access previously verified — `ncc/benchmark/results.json`
   (muse-spark-1.3, n=31, cold 35.5% / grounded 100% / retry 100%, 28 Oct).
@@ -328,7 +328,7 @@
 | 3 traceable interpretation | DONE (v0) | overlay, provenance badges, corrections API |
 | 4 accurate components | DONE (v0 mesh) | ribbons/fillet/bead/wedge; CadQuery next |
 | 5 viewer + sequence | DONE (v0) | explode/clip/playback/param-edit in viewer |
-| 6 eval + submission | PARTIAL | EVAL/ARCH/DEMO done; video + freeze Wed 4 Nov |
+| 6 eval + submission | PARTIAL | EVAL/ARCH/DEMO done; video and submission open |
 
 ## Known limitations (v0 slice)
 

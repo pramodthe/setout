@@ -14,7 +14,6 @@ traceable to its source and an AI guide that walks you through the install by
 moving the 3D for you.
 
 Meta Global AI Developer Hackathon 2026 · Indie Developer Track · Build for Your World
-Submit by **Wed 4 Nov 9:00 PM ET** = **Thu 5 Nov 1:00 PM Sydney**
 
 **Live demo (read-only, with the AI guide):** https://pthebe-sfsu--setout-demo-web.us-east.modal.run
 

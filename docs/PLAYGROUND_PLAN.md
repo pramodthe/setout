@@ -1,6 +1,6 @@
 # Playground v2 plan — generative installation playground
 
-Written 29 Oct 2026. Freeze Wed 4 Nov 1:00 PM Sydney; last day reserved for the video.
+Written 29 Oct 2026.
 
 > **Superseded for the AI side by `docs/PLAN_V3.md`** (proposed 29 Oct): an agent
 > harness with tools, a database, persistent jobs, memory, AI-written CAD objects
@@ -129,17 +129,16 @@ All four carry equal weight.
     idea, now live.
   - A "Walk me through the install" button generates a full tour.
 
-## Schedule
+## Milestones (in order)
 
-| Day | Deliverable | Gate |
+| # | Deliverable | Gate |
 |---|---|---|
-| Thu 29 | This plan. Viewer foundation: camera controller + flyTo/isolate API, procedural material library, lighting | Existing details render textured; `npm test`, e2e green |
-| Fri 30 | Engine: program schema, compiler, D3/D4 as programs (parity), NCC hob + wall–floor ported | pytest parity: same PASS/FAIL as v1 |
-| Sat 31 | Library API + selector UI (both entries), labels/hotspots/intro animation, room context | Browse → open → explore 5+ details |
-| Sun 1 | Meta client + extraction pipeline + review/publish UI | D1 or D2 extracted by Muse, compiles, verifies, published |
-| Mon 2 | Guide agent + grounding verifier + guided install tour | Tour on 3 details with 0 ungrounded numbers |
-| Tue 3 | Polish: phone layout, PDF/report export, README/DEMO, end-to-end run | Full demo path green; record video |
-| Wed 4 | Video, freeze 1 PM Sydney | Submitted |
+| 1 | This plan. Viewer foundation: camera controller + flyTo/isolate API, procedural material library, lighting | Existing details render textured; `npm test`, e2e green |
+| 2 | Engine: program schema, compiler, D3/D4 as programs (parity), NCC hob + wall–floor ported | pytest parity: same PASS/FAIL as v1 |
+| 3 | Library API + selector UI (both entries), labels/hotspots/intro animation, room context | Browse → open → explore 5+ details |
+| 4 | Meta client + extraction pipeline + review/publish UI | D1 or D2 extracted by Muse, compiles, verifies, published |
+| 5 | Guide agent + grounding verifier + guided install tour | Tour on 3 details with 0 ungrounded numbers |
+| 6 | Polish: phone layout, PDF/report export, README, end-to-end run | Full path green |
 
 ## Rules that still hold
 

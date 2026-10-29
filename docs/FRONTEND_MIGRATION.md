@@ -1,8 +1,6 @@
 # Frontend migration scope: vanilla JS → React + TypeScript
 
-Status: SCOPED, not started. Recommendation: migrate AFTER the Wed 4 Nov
-freeze — the current viewer is complete, tested, and demo-proven; a rewrite
-now risks the submission for no demo-visible gain.
+Status: done. The viewer is React + TypeScript in `web/` (see `docs/STATUS.md`).
 
 ## Why migrate
 
@@ -52,4 +50,3 @@ Total: ~3 days. Non-goals: visual redesign, R3F rewrite, PDF.js paging
 - Behaviour drift during port → mitigated by the existing drive script as
   an unchanged oracle (it must pass unmodified).
 - three.js version bump surprises → pin first, bump later as its own step.
-- Freeze collision → do not start before Thu 5 Nov.
