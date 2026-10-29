@@ -61,6 +61,19 @@ export const api = {
   library: (): Promise<{ details: LibraryEntry[]; components: ComponentGroup[] }> => req("/api/library"),
   scene: (detailId: string): Promise<Scene> => req(`/api/specs/${encodeURIComponent(detailId)}/scene`),
   thumbUrl: (detailId: string): string => `/api/specs/${encodeURIComponent(detailId)}/thumb`,
+  /** Library card image: a render of the 3D, never the source drawing. */
+  previewUrl: (detailId: string): string => `/api/specs/${encodeURIComponent(detailId)}/preview`,
+  /** False when there is no card image or it is older than the detail. */
+  hasPreview: async (detailId: string): Promise<boolean> =>
+    (await fetch(`/api/specs/${encodeURIComponent(detailId)}/preview`, { cache: "no-cache" })).ok,
+  savePreview: async (detailId: string, jpegDataUrl: string): Promise<void> => {
+    const body = await (await fetch(jpegDataUrl)).blob();
+    await req(`/api/specs/${encodeURIComponent(detailId)}/preview`, {
+      method: "POST",
+      headers: { "Content-Type": "image/jpeg" },
+      body,
+    });
+  },
   guide: (detailId: string, question: string, history: { role: string; text: string }[]): Promise<GenJob> =>
     req("/api/guide", {
       method: "POST",

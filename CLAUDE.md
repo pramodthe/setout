@@ -154,7 +154,8 @@ POST /api/specs/{id}/critique {renders}  render -> compare -> correct, accepted 
   quality() doesn't drop (failures, drawing values traced, labels)
 POST /api/specs/{id}/cad {part_id}       re-model one part in CadQuery
 POST /api/guide {detail_id, question}    tour of narration + viewer actions (app/guide.py)
-GET  /api/library · /api/specs/{id}/scene · /api/specs/{id}/thumb
+GET  /api/library · /api/specs/{id}/scene · /api/specs/{id}/thumb (source drawing)
+GET/POST /api/specs/{id}/preview          library card image: a render of the 3D, never the drawing
 ```
 
 Long AI jobs share `GEN_JOBS` in `app/main.py` and are polled with

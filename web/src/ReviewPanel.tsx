@@ -43,17 +43,20 @@ export default function ReviewPanel(p: {
   const other = data.params.filter((x) => x.provenance !== "drawing" && x.used_by.length);
   const row = (q: ReviewParam) => (
     <div key={q.name} className={"rv" + (q.accepted ? " ok" : "")}>
-      <div className="rvtop" onClick={() => q.used_by.length && p.onShow(q.used_by)} title="show the parts this drives">
-        <span className={badgeClass(q.provenance)}>{badgeLabel(q.provenance)}</span>
-        <b>{q.name}</b>
-        <span>
-          = {q.value} {q.unit}
-        </span>
-        {q.kind === "min" && <span className="k">min</span>}
+      {/* the whole description shows the parts this value drives */}
+      <div className="rvshow" onClick={() => q.used_by.length && p.onShow(q.used_by)} title="show the parts this drives">
+        <div className="rvtop">
+          <span className={badgeClass(q.provenance)}>{badgeLabel(q.provenance)}</span>
+          <b>{q.name}</b>
+          <span>
+            = {q.value} {q.unit}
+          </span>
+          {q.kind === "min" && <span className="k">min</span>}
+        </div>
+        {q.source_quote && <div className="q">“{q.source_quote}”</div>}
+        {q.edited && <div className="k">edited: was {q.edited.from}</div>}
+        <div className="k">drives: {q.used_by.length ? q.used_by.join(", ") : "nothing"}</div>
       </div>
-      {q.source_quote && <div className="q">“{q.source_quote}”</div>}
-      {q.edited && <div className="k">edited: was {q.edited.from}</div>}
-      <div className="k">drives: {q.used_by.length ? q.used_by.join(", ") : "nothing"}</div>
       <div className="rvact">
         <button disabled={busy || q.accepted} onClick={() => void save({ accept: [q.name] }, false)}>
           {q.accepted ? "✓ accepted" : "✓ accept"}

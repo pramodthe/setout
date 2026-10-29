@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 import traceback
@@ -323,6 +324,61 @@ async def get_drawing(detail_id: str):
     if png is None:
         raise HTTPException(404, "source drawing not uploaded on this server")
     return Response(png, media_type="image/png")
+
+
+PREVIEW_ID = re.compile(r"[A-Za-z0-9_-]{1,100}")
+PREVIEW_MAX = 1_000_000
+
+
+def _preview_path(detail_id: str) -> Path | None:
+    if not PREVIEW_ID.fullmatch(detail_id):
+        return None
+    return ai.library_dir() / "previews" / f"{detail_id}.jpg"
+
+
+def _spec_file(detail_id: str) -> Path | None:
+    """The file whose change means the detail's geometry may have changed."""
+    if detail_id in SPECS:
+        override = var_root() / f"spec-{detail_id}.json"
+        return override if override.is_file() else None
+    f = ai.library_dir() / f"{detail_id}.json"
+    return f if f.is_file() else None
+
+
+@app.get("/api/specs/{detail_id}/preview")
+async def get_preview(detail_id: str):
+    """Library card image: a render of our own 3D, never the source drawing,
+    so it is served in public mode too. One older than the detail counts as
+    missing, so the next view of the detail takes a new one."""
+    p = _preview_path(detail_id)
+    if p is None or not p.is_file():
+        raise HTTPException(404, "no preview yet")
+    src = _spec_file(detail_id)
+    if src is not None and src.stat().st_mtime > p.stat().st_mtime:
+        raise HTTPException(404, "preview out of date")
+    return FileResponse(p, media_type="image/jpeg", headers={"Cache-Control": "no-cache"})
+
+
+@app.post("/api/specs/{detail_id}/preview")
+async def save_preview(detail_id: str, request: Request) -> dict:
+    """The viewer posts one JPEG render of the detail as built."""
+    p = _preview_path(detail_id)
+    if p is None or not (detail_id in SPECS or _spec_file(detail_id)):
+        raise HTTPException(404, "unknown detail")
+    if int(request.headers.get("content-length") or 0) > PREVIEW_MAX:
+        raise HTTPException(413, "expected a JPEG under 1 MB")
+    data = bytearray()
+    async for chunk in request.stream():
+        data += chunk
+        if len(data) > PREVIEW_MAX:
+            raise HTTPException(413, "expected a JPEG under 1 MB")
+    if not data.startswith(b"\xff\xd8\xff"):
+        raise HTTPException(400, "expected a JPEG under 1 MB")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, p)  # a reader never sees half a file
+    return {"bytes": len(data)}
 
 
 class ReviewRequest(BaseModel):

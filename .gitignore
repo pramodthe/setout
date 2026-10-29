@@ -5,6 +5,7 @@ node_modules/
 data/videos/*
 data/frames/*
 data/manuals/*
+data/demo/
 !data/**/.gitkeep
 killcheck_results.json
 .DS_Store

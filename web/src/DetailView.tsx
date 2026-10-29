@@ -85,6 +85,29 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
       .catch((e: Error) => setErr(e.message));
   }, [detailId, part]);
 
+  /* The library card image (cards never show the source drawing): one clean
+     render, taken only when the card has none or an out-of-date one, and only
+     while the view shows the whole detail as built, never a selection,
+     explode, cut or isolate. */
+  useEffect(() => {
+    if (!scene || pub || part) return;
+    let t = 0;
+    let live = true;
+    void api.hasPreview(detailId).then((ok) => {
+      if (ok || !live) return;
+      t = window.setInterval(() => {
+        const v = vp.current;
+        if (!v || !v.pristine()) return;
+        window.clearInterval(t);
+        api.savePreview(detailId, v.snapshot("iso", 640, false)).catch(() => undefined);
+      }, 500);
+    });
+    return () => {
+      live = false;
+      window.clearInterval(t);
+    };
+  }, [scene, pub, part, detailId]);
+
   const order = scene?.install_order || [];
   const solids = scene?.solids || [];
   const sel = solids.find((s) => s.id === selected) || null;

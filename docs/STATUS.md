@@ -319,6 +319,80 @@
 - `docs/DEMO.md` rewritten for the new flow, with the rule: no third-party
   drawings on screen.
 
+## 2026-10-29 (night) — own demo drawing
+
+- `scripts/demo_drawing.py` draws a shower step-down section, our own work, so
+  the video and public demo never need a third-party drawing. Its only printed
+  numbers come from `ncc/rules/rules.json` (25 MIN. step-down, 1800 MIN.
+  membrane above finished tile).
+- Pipeline result: 94 s, ~30.6k tokens; 13 labels read, 8 placed; both printed
+  values kept as drawing minimums, everything else an assumption; 0 gate
+  notes; 33 PASS, 0 FAIL. The guide's walkthrough quotes both values.
+- SAM 3.1 finds nothing on it (empty for every prompt, while the bathtub
+  control still returns 0.92): flat sections have no objects for SAM to find.
+
+## 2026-10-29 (night) — library cards show the 3D, not the drawing
+
+- Cards used the source drawing as their thumbnail, so the local library
+  showed third-party pages (unrecordable) and the public one showed blank
+  text boxes. Now each detail page posts one clean render after the build-up
+  (`POST /api/specs/{id}/preview`, JPEG only, known ids only); cards show it,
+  and public mode can read but not write it.
+- Generated for all 11 local details by opening each page once.
+
+## 2026-10-29 (night) — PR #10 merged; public demo updated; AR cut
+
+- PR #10 squash-merged (`40c1d96`). PR #11 has the demo drawing and card renders.
+- Public demo now shows three details: the D3 and D4 seeds and the step-down
+  made from our own drawing, each with a card render. Details derived from
+  third-party documents are not published there.
+- Decision: camera/AR (Jarvis) is left out of the hackathon submission. It
+  needs real membrane-stage footage, which we don't have. It stays future work
+  (README §12).
+
+## 2026-10-29 (night) — own bathroom elevation; SAM never shares a box
+
+- `scripts/demo_drawing.py` now also draws a bathroom elevation: a WC, a
+  vanity with basin, a mirror and a shower with rose, mixer, screen and waste.
+  The printed numbers (1800 MIN. membrane, 150 MIN. water resistant above the
+  basin) come from `rules.json`. Both drawings go into one 2-page
+  `setout-demo.pdf`.
+- Pipeline on the elevation: 115 s, ~40.6k tokens; 16 parts (the shower rose
+  modelled in CadQuery on Modal); both values kept as drawing minimums; 0 gate
+  notes; 39 PASS, 0 FAIL.
+- Bug found and fixed in `sam.locate`: the basin tap and the shower mixer
+  both asked for "tap" and got the same box, so the shower mixer pointed at the
+  basin tap. A box claimed by two parts now goes to neither, unless exactly one
+  found it by its own drawing label. There's a regression test, and it fails on
+  the old code. Result: 3 correct links (WC 0.88, vanity 0.61, shower rose
+  0.62). Clicking the WC box on the drawing flies the camera to the WC.
+
+## 2026-10-29 (late) — video dress rehearsal on our own PDF
+
+Every shot in `docs/DEMO.md` was run in Chrome. Fixed along the way:
+- **Library cards showed "0 drawing values" on AI details.** They now count the
+  printed values confirmed against the drawing.
+- **The workbench self-check could render the wrong detail.** Switching detail
+  kept the old 3D, so the self-check compared detail A's render with detail B's
+  drawing and reported bogus issues. Switching now clears the 3D, and the check
+  runs only on the 3D of the detail being checked.
+- **Build-up order.** Compose and self-check produced "tiles before membrane",
+  and one accepted self-check moved a membrane in front of the tiles. Both
+  prompts now carry a general build-up rule: a covered layer lies behind what
+  covers it and is installed first; never bring one forward to make it
+  visible. The regenerated elevation is correct: membranes, then tiles, then
+  fixtures.
+- **Review:** the whole value description is clickable (it isolates the
+  parts it drives).
+- **Viewer:** parts between the camera and the focused part fade (raycast),
+  so a room wall no longer hides the part the camera flew to. Snapshots ignore
+  the fade.
+
+Also:
+- The AI library moved from the session scratchpad to `var/demo` (gitignored),
+  and the batch evaluation to `var/eval-run`.
+- e2e: DRIVE OK, 0 console errors.
+
 ## Milestone ledger
 
 | Milestone | State | Evidence |

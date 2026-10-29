@@ -64,6 +64,8 @@ export default function App(): JSX.Element {
   const pollToken = useRef(0);
   const vpApi = useRef<Viewport3D | null>(null);
   const introNext = useRef(false);
+  /* which detail the 3D on screen belongs to (the self-check renders it) */
+  const shownDetail = useRef<string | null>(null);
   const [gen, setGen] = useState<GenJob | null>(null);
   const [cadJob, setCadJob] = useState<GenJob | null>(null);
   const [check, setCheck] = useState<GenJob | null>(null);
@@ -114,6 +116,7 @@ export default function App(): JSX.Element {
       setSpec(null);
       setCrop(null);
       setScene(null);
+      shownDetail.current = null;
       setJob(null);
       setSelected(null);
       setGen(null);
@@ -123,24 +126,33 @@ export default function App(): JSX.Element {
     }
   };
 
-  const selectCrop = async (cropId: string, vs: Variant[] = variants): Promise<DetailSpec | null> => {
+  /* Open a drawing's detail: `detailId` when known, since one drawing can
+     have a seed and AI details; else the first detail for the drawing. */
+  const selectCrop = async (
+    cropId: string,
+    vs: Variant[] = variants,
+    detailId?: string,
+  ): Promise<DetailSpec | null> => {
     setCrop(cropId);
     setSelected(null);
     setOvr(false);
-    let matched: DetailSpec | null = null;
-    for (const s of vs) {
-      if (s.crop_id === cropId) {
-        matched = await api.getSpec(s.detail_id);
-        break;
-      }
-    }
+    const v = vs.find((x) => x.crop_id === cropId && (!detailId || x.detail_id === detailId));
+    const matched: DetailSpec | null = v ? await api.getSpec(v.detail_id) : null;
     if (!matched) {
+      pollToken.current++; // a build still in flight must not land
       setSpec(null);
       setScene(null); // don't keep showing the previous detail's 3D
+      shownDetail.current = null;
       setJob(null);
       return null;
     }
     const m: DetailSpec = matched;
+    if (shownDetail.current !== m.detail_id) {
+      pollToken.current++; // a build still in flight must not land
+      setScene(null); // another detail's 3D must not stay on screen
+      setJob(null);
+      shownDetail.current = null;
+    }
     setSpec(m);
     setVisible((prev) => {
       const next = { ...prev };
@@ -150,25 +162,28 @@ export default function App(): JSX.Element {
     return m;
   };
 
-  const poll = async (jobId: string): Promise<void> => {
+  /* Follow a build; true when its 3D is on screen. */
+  const poll = async (jobId: string): Promise<boolean> => {
     const my = ++pollToken.current;
     for (;;) {
       const b = await api.getBuild(jobId);
-      if (my !== pollToken.current) return;
+      if (my !== pollToken.current) return false;
       setJob(b);
       if (b.state === "done" || b.state === "failed") break;
       await new Promise((r) => setTimeout(r, 250));
     }
     const b = await api.getBuild(jobId);
-    if (my !== pollToken.current) return;
+    if (my !== pollToken.current) return false;
     setJob(b);
     if (b.state === "failed") {
       const t = await api.errorText(jobId);
       showErr("Build failed: " + t.split("\n")[0]);
-      return;
+      return false;
     }
     const s = await api.getScene(jobId);
+    if (my !== pollToken.current) return false;
     setScene(s);
+    shownDetail.current = s.detail_id;
     if (introNext.current) {
       introNext.current = false;
       window.setTimeout(() => vpApi.current?.playIntro(), 60);
@@ -182,15 +197,19 @@ export default function App(): JSX.Element {
     setClipMax(ext);
     setClipZ(ext);
     if (clipZRef.current) clipZRef.current.value = String(ext);
+    return true;
   };
 
   const build = async (): Promise<void> => {
     if (spec) await buildDetail(spec.detail_id);
   };
 
-  const buildDetail = async (detailId: string): Promise<void> => {
-    if (!doc) return;
+  /* Build a detail's 3D; true when it is on screen. Until then the 3D shown
+     (if any) is stale, so the self-check refuses to run on it. */
+  const buildDetail = async (detailId: string): Promise<boolean> => {
+    if (!doc) return false;
     showErr(null);
+    shownDetail.current = null;
     try {
       const b = await api.createBuild(
         detailId,
@@ -198,9 +217,10 @@ export default function App(): JSX.Element {
         disptRef.current?.checked || false,
       );
       setJob(b);
-      await poll(b.id);
+      return await poll(b.id);
     } catch (e) {
       showErr("Build request failed: " + (e as Error).message.slice(0, 200));
+      return false;
     }
   };
 
@@ -222,9 +242,8 @@ export default function App(): JSX.Element {
       }
       const vs = variantsFor((await api.listSpecs()).specs, doc.sha256);
       setVariants(vs);
-      const m = await selectCrop(crop, vs);
-      if (m) {
-        await buildDetail(m.detail_id);
+      const m = await selectCrop(crop, vs, g.detail_id);
+      if (m && (await buildDetail(m.detail_id))) {
         await checkAI(m.detail_id); // one self-check round right away
       }
     } catch (e) {
@@ -238,6 +257,10 @@ export default function App(): JSX.Element {
     await new Promise((r) => setTimeout(r, 400)); // let the new scene mount
     const vp = vpApi.current;
     if (!vp || !crop) return;
+    if (shownDetail.current !== detailId) {
+      showErr("Build this detail's 3D first: the self-check compares what's on screen.");
+      return;
+    }
     try {
       const renders = [vp.snapshot("iso"), vp.snapshot("front")];
       let g = await api.critique(detailId, renders);
@@ -251,8 +274,11 @@ export default function App(): JSX.Element {
         showErr("Self-check failed: " + (g.error || "unknown").slice(0, 200));
         return;
       }
-      if ((g.result as CritiqueResult | null)?.accepted) {
-        const m = await selectCrop(crop);
+      if ((g.result as CritiqueResult | null)?.accepted && doc) {
+        // fresh list: a detail generated in this session isn't in `variants` yet
+        const vs = variantsFor((await api.listSpecs()).specs, doc.sha256);
+        setVariants(vs);
+        const m = await selectCrop(crop, vs, detailId);
         if (m) await buildDetail(m.detail_id);
       }
     } catch (e) {
@@ -276,7 +302,7 @@ export default function App(): JSX.Element {
         showErr("CAD re-model failed: " + (g.error || "unknown").slice(0, 200));
         return;
       }
-      const m = await selectCrop(crop);
+      const m = await selectCrop(crop, variants, spec.detail_id);
       if (m) {
         setSelected(partId);
         await buildDetail(m.detail_id);
@@ -432,7 +458,7 @@ export default function App(): JSX.Element {
                 data-detail={v.detail_id}
                 title={v.location}
                 className={spec?.detail_id === v.detail_id ? "primary" : ""}
-                onClick={() => void selectCrop(v.crop_id)}
+                onClick={() => void selectCrop(v.crop_id, variants, v.detail_id)}
               >
                 {v.title}
               </button>
@@ -510,7 +536,11 @@ export default function App(): JSX.Element {
               <div style={{ marginTop: 6 }}>
                 <button
                   id="checkAI"
-                  disabled={!scene || (!!check && (check.state === "queued" || check.state === "running"))}
+                  disabled={
+                    !scene ||
+                    scene.detail_id !== spec.detail_id ||
+                    (!!check && (check.state === "queued" || check.state === "running"))
+                  }
                   onClick={() => spec && void checkAI(spec.detail_id)}
                   title="Render the 3D, compare it with the drawing, correct it (verifier-guarded)"
                 >
