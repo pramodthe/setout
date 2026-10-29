@@ -23,7 +23,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from . import cad_sandbox, meta_client
+from . import cad_sandbox, meta_client, sam
 from .geometry import build_assembly
 from .verify import verify_all
 from .program import (FIXTURES, MIN_PATH, SHAPE_DIMS, DetailProgram, ProgPart,
@@ -482,6 +482,13 @@ def generate(doc_id: str, crop_id: str,
               "cad_code": cad_code,
               "usage": usage, "seconds": round(time.time() - t0, 1)}
     (library_dir() / f"{spec.detail_id}.json").write_text(json.dumps(record, indent=1))
+    if meta_client.configured():
+        try:
+            locate_on_drawing(spec.detail_id, progress)
+            record = json.loads((library_dir() / f"{spec.detail_id}.json").read_text())
+            spec = DetailSpec.model_validate(record["spec"])
+        except Exception as err:  # noqa: BLE001 - linking is a bonus, not a gate
+            progress(f"SAM linking skipped: {str(err)[:100]}")
     progress(f"done: {len(spec.components)} parts, "
              f"{len(spec.context['drawing_params'])} drawing values, "
              f"{len(notes)} gate notes")
@@ -532,7 +539,7 @@ def remodel_part(detail_id: str, part_id: str, brief: str | None = None,
         "note": "re-modelled on request in CadQuery (was " + part.shape + ")"})
     program = program.model_copy(update={"parts": [new_part if p.id == part_id else p
                                                     for p in program.parts]})
-    new_spec = compile_program(program)
+    new_spec = carry_context(spec, compile_program(program))
     cad_parts = dict(spec.context.get("cad_parts") or {})
     cad_parts[part_id] = {"file": rel, "scale": round(fitted.scale, 4),
                           "native_size_mm": [round(v, 1) for v in fitted.native_size],
@@ -668,8 +675,7 @@ def critique(detail_id: str, renders: list[str],
                  for p in new.parts if not (p.shape == "cad" and p.id not in old_cad)]
         parts += [p for i, p in old_cad.items() if i not in {q.id for q in parts}]
         new = DetailProgram.model_validate({**new.model_dump(), "parts": [p.model_dump() for p in parts]})
-        new_spec = compile_program(new)
-        new_spec.context["cad_parts"] = old_spec.context.get("cad_parts") or {}
+        new_spec = carry_context(old_spec, compile_program(new))
         q_old = quality(old_spec, build_assembly(old_spec))
         q_new = quality(new_spec, build_assembly(new_spec))
         verdict["diff"] = _diff(old, new)
@@ -697,6 +703,55 @@ def critique(detail_id: str, renders: list[str],
             override.unlink()
     f.write_text(json.dumps(rec, indent=1))
     return verdict
+
+
+def carry_context(old: DetailSpec, new: DetailSpec) -> DetailSpec:
+    """Recompiling a program rebuilds context; keep what later stages added
+    (CAD meshes, SAM drawing regions and the drawing's rotation)."""
+    for k in ("drawing_regions", "drawing_rotation_deg"):
+        if k in old.context:
+            new.context[k] = old.context[k]
+    new.context["cad_parts"] = old.context.get("cad_parts") or {}
+    return new
+
+
+def drawing_png(spec: DetailSpec) -> bytes | None:
+    """The source drawing, turned upright (as SAM and the viewer see it)."""
+    doc = find_document_by_sha(spec.source.sha256)
+    fig = figure_path(doc["id"], spec.source.crop_id) if doc else None
+    if not fig:
+        return None
+    cache = library_dir() / "drawings" / f"{spec.detail_id}.png"
+    rot = int(spec.context.get("drawing_rotation_deg") or 0)
+    if cache.exists() and cache.stat().st_mtime >= fig.stat().st_mtime:
+        return cache.read_bytes()
+    png = sam.upright(fig.read_bytes(), rot)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_bytes(png)
+    return png
+
+
+def locate_on_drawing(detail_id: str, progress: Callable[[str], None] = lambda s: None,
+                      call=None) -> dict:
+    """SAM 3.1 pass: a region on the upright drawing for each part it can find."""
+    f = library_dir() / f"{detail_id}.json"
+    if not f.exists():
+        raise ValueError("only AI-generated library details can be located")
+    rec = json.loads(f.read_text())
+    spec = DetailSpec.model_validate(rec["spec"])
+    spec.context["drawing_rotation_deg"] = int((rec.get("read") or {}).get("rotation_deg") or 0)
+    (library_dir() / "drawings" / f"{detail_id}.png").unlink(missing_ok=True)
+    png = drawing_png(spec)
+    if png is None:
+        raise ValueError("source drawing not uploaded on this server")
+    parts = [(c.id, c.type, c.source_label) for c in spec.components]
+    progress(f"locating {len(parts)} parts on the drawing (SAM 3.1)")
+    found = sam.locate(png, parts, call)
+    spec.context["drawing_regions"] = found
+    rec["spec"] = spec.model_dump(mode="json")
+    f.write_text(json.dumps(rec, indent=1))
+    progress(f"SAM located {len(found)} of {len(parts)} parts")
+    return {"located": len(found), "parts": len(parts)}
 
 
 def load_library_spec(detail_id: str) -> DetailSpec | None:

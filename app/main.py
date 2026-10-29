@@ -8,18 +8,20 @@ the viewer shows genuine progress and failures preserve intermediates.
 from __future__ import annotations
 
 import json
+import os
 import threading
+import time
 import traceback
 import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import cad_sandbox, guide, library, meta_client
+from . import cad_sandbox, guide, library, meta_client, review
 from . import generate as ai
 from .geometry import build_assembly, export_glb, export_scene_json
 from .seed import door_sill_d3, door_subsill_d4
@@ -29,6 +31,29 @@ from .store import (build_dir, db, figure_path, find_document_by_sha,
 from .verify import summarize, verify_all
 
 app = FastAPI(title="Setout", version="0.1.0")
+
+# Public demo mode (SETOUT_PUBLIC=1): read-only, source drawings never served
+# (they are third-party documents), and the AI guide is rate-limited so a
+# public link cannot drain the API budget.
+PUBLIC = os.environ.get("SETOUT_PUBLIC") == "1"
+GUIDE_PER_HOUR = int(os.environ.get("SETOUT_GUIDE_PER_HOUR", "60"))
+_guide_calls: list[float] = []
+
+
+@app.middleware("http")
+async def public_mode(request: Request, call_next):
+    if PUBLIC:
+        path, method = request.url.path, request.method
+        drawing = path.startswith("/api/documents") or path.endswith(("/thumb", "/drawing"))
+        if drawing or (method in ("POST", "PATCH") and path != "/api/guide"):
+            return JSONResponse({"detail": "read-only public demo"}, status_code=403)
+        if path == "/api/guide" and method == "POST":
+            now = time.time()
+            _guide_calls[:] = [t for t in _guide_calls if now - t < 3600]
+            if len(_guide_calls) >= GUIDE_PER_HOUR:
+                return JSONResponse({"detail": "guide is busy, try again later"}, status_code=429)
+            _guide_calls.append(now)
+    return await call_next(request)
 
 ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "web" / "dist"
@@ -290,13 +315,41 @@ async def get_scene(detail_id: str) -> dict:
 
 
 @app.get("/api/specs/{detail_id}/thumb")
-async def get_thumb(detail_id: str):
+@app.get("/api/specs/{detail_id}/drawing")
+async def get_drawing(detail_id: str):
+    """The source drawing, upright (as SAM saw it; regions are relative to it)."""
     spec = _load_spec(detail_id)
-    doc = find_document_by_sha(spec.source.sha256) if spec else None
-    p = figure_path(doc["id"], spec.source.crop_id) if doc and spec else None
-    if not p:
+    png = ai.drawing_png(spec) if spec else None
+    if png is None:
         raise HTTPException(404, "source drawing not uploaded on this server")
-    return FileResponse(p, media_type="image/jpeg" if p.suffix == ".jpg" else "image/png")
+    return Response(png, media_type="image/png")
+
+
+class ReviewRequest(BaseModel):
+    edits: list[dict] = []  # [{name, value}]
+    accept: list[str] = []
+    labels: list[dict] = []  # [{part_id, label|null}]
+    publish: bool = False
+    reviewer: str = ""
+
+
+@app.get("/api/specs/{detail_id}/review")
+async def get_review(detail_id: str) -> dict:
+    try:
+        return review.get(detail_id)
+    except KeyError:
+        raise HTTPException(404, "only AI-generated details have a review")
+
+
+@app.post("/api/specs/{detail_id}/review")
+async def post_review(detail_id: str, req: ReviewRequest) -> dict:
+    try:
+        return review.apply(detail_id, req.edits, req.accept, req.labels,
+                            req.publish, req.reviewer)
+    except KeyError:
+        raise HTTPException(404, "only AI-generated details have a review")
+    except ValueError as e:
+        raise HTTPException(400, str(e)[:300])
 
 
 class GuideRequest(BaseModel):
@@ -343,7 +396,7 @@ class GenerateRequest(BaseModel):
 async def ai_status() -> dict:
     return {"configured": meta_client.configured(),
             "model": meta_client.default_model(),
-            "cad_sandbox": cad_sandbox.available()}
+            "cad_sandbox": cad_sandbox.available(), "public": PUBLIC}
 
 
 def _run_generate(job_id: str, req: GenerateRequest) -> None:
@@ -429,6 +482,28 @@ async def critique(detail_id: str, req: CritiqueRequest) -> dict:
     GEN_JOBS[job_id] = {"id": job_id, "state": "queued", "progress": [], "result": None,
                         "detail_id": None, "error": None, "gate_notes": []}
     threading.Thread(target=_run_critique, args=(job_id, detail_id, req), daemon=True).start()
+    return GEN_JOBS[job_id]
+
+
+def _run_locate(job_id: str, detail_id: str) -> None:
+    job = GEN_JOBS[job_id]
+    try:
+        job["state"] = "running"
+        job["result"] = ai.locate_on_drawing(detail_id, job["progress"].append)
+        job.update(state="done", detail_id=detail_id)
+    except Exception as e:  # noqa: BLE001 - surfaced to the UI
+        job.update(state="failed", error=str(e)[:500])
+
+
+@app.post("/api/specs/{detail_id}/locate")
+async def locate_parts(detail_id: str) -> dict:
+    """SAM 3.1: find each part on the (upright) source drawing."""
+    if not meta_client.configured():
+        raise HTTPException(503, "AI not configured: set META_API_KEY in .env")
+    job_id = uuid.uuid4().hex[:12]
+    GEN_JOBS[job_id] = {"id": job_id, "state": "queued", "progress": [], "result": None,
+                        "detail_id": None, "error": None, "gate_notes": []}
+    threading.Thread(target=_run_locate, args=(job_id, detail_id), daemon=True).start()
     return GEN_JOBS[job_id]
 
 

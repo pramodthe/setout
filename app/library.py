@@ -35,6 +35,8 @@ def entry(spec: DetailSpec, kind: str) -> dict:
         "parts": len(comps), "drawing_values": drawing,
         "labels": sum(1 for c in comps if c.source_label),
         "sha256": spec.source.sha256, "crop_id": spec.source.crop_id,
+        "review": spec.context.get("review_status", "draft") if kind == "ai" else None,
+        "located": len(spec.context.get("drawing_regions") or {}),
         "components": [{"id": c.id, "type": c.type, "label": c.source_label} for c in comps],
     }
 
