@@ -18,11 +18,11 @@ and is what every compliance tool does.
 - Manual pages shown on screen in the demo video
 
 `data/manuals/` is gitignored. Keep it that way. If a tool wants to write extracted
-text, write it under `data/` — never under `rules/`, `spec/` or the repo root.
+text, write it under `data/` — never under `ncc/rules/`, `ncc/` docs or the repo root.
 
 ## The pattern to use instead: paraphrase and cite
 
-Each rule in `rules/rules.json` must have:
+Each rule in `ncc/rules/rules.json` must have:
 
 - `text` — a **short paraphrase in our own words** stating the requirement.
   One sentence. Not a copied clause.
@@ -54,6 +54,6 @@ text back into the repo.
 
 ## Before adding a new source
 
-Add it to the `sources` array in `rules/rules.json` with a title and a public URL
+Add it to the `sources` array in `ncc/rules/rules.json` with a title and a public URL
 first. If there is no URL a reader can check, the citation is not verifiable and the
 rule should not ship.

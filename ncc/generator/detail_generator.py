@@ -17,8 +17,8 @@ import argparse
 import json
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-RULES_PATH = ROOT / "rules" / "rules.json"
+ROOT = Path(__file__).resolve().parent.parent.parent
+RULES_PATH = ROOT / "ncc" / "rules" / "rules.json"
 DETAILS_DIR = Path(__file__).resolve().parent / "details"
 
 # Millimetres throughout. Origin at the OUTSIDE FACE of the hob, at finished floor
@@ -375,7 +375,7 @@ VIOLATIONS = {
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--detail", default="shower_hob", choices=sorted(BUILDERS))
-    ap.add_argument("--out", default=str(ROOT / "viewer" / "scene.json"))
+    ap.add_argument("--out", default=str(ROOT / "ncc" / "viewer" / "scene.json"))
     ap.add_argument("--violate", action="append", default=[],
                     help="param=value, e.g. membrane_return_onto_floor_mm=20")
     args = ap.parse_args()
@@ -402,7 +402,7 @@ def main():
     # Overrides apply only to the detail being (mis)built.
     scenes = {k: BUILDERS[k](rules, overrides if k == args.detail else {})
               for k in sorted(BUILDERS)}
-    scenes_js = ROOT / "viewer" / "scenes.js"
+    scenes_js = ROOT / "ncc" / "viewer" / "scenes.js"
     scenes_js.write_text("window.SCENES = " + json.dumps(scenes, indent=2) + ";",
                          encoding="utf-8")
 
@@ -412,7 +412,7 @@ def main():
     for k, s in violated.items():
         if all(c["satisfied"] for c in s["checks"]):
             raise SystemExit(f"VIOLATIONS[{k}] passes all checks - fix the override")
-    viol_js = ROOT / "viewer" / "scenes_violate.js"
+    viol_js = ROOT / "ncc" / "viewer" / "scenes_violate.js"
     viol_js.write_text("window.SCENES_VIOLATE = " + json.dumps(violated, indent=2) + ";",
                        encoding="utf-8")
 

@@ -38,7 +38,7 @@ from pathlib import Path
 import urllib.request
 import urllib.error
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 API_BASE = os.environ.get("META_API_BASE", "https://api.meta.ai/v1").rstrip("/")
 MODEL = (os.environ.get("MODEL_API_MODEL")
          or os.environ.get("META_MODEL")

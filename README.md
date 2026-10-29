@@ -114,30 +114,32 @@ tests/                29 pytest: spec validation, units, geometry dims,
                       contacts, API end-to-end.
 docs/                 GAP_ANALYSIS (audit), PLAN, STATUS (running log),
                       EVAL, ARCH, DEMO (3-min script), FRONTEND_MIGRATION.
-spec/SPEC.md          Original plan, scoring, schedule, risks.
-rules/rules.json      31 NCC rules as structured data (schema v1.0,
+ncc/                  Original NCC shower-details track (plan, rules,
+                      generator, extractor, viewers, benchmark).
+                      See ncc/SPEC.md. Quickstart: scripts/regen.sh.
+ncc/rules/rules.json  31 NCC rules as structured data (schema v1.0,
                       locked and validated). Values human-verified 28 Oct.
-generator/            NCC parametric details: 3 shower/bathroom details,
+ncc/generator/        NCC parametric details: 3 shower/bathroom details,
                       every solid carrying its rule id, violation payloads.
-extractor/            NCC rule extraction + schema validator + merge tool.
-viewer/               NCC static viewers: index.html (desktop orbit),
+ncc/extractor/        NCC rule extraction + schema validator + merge tool.
+ncc/viewer/           NCC static viewers: index.html (desktop orbit),
                       jarvis.html (phone-first site view).
-perception/           SAM 3.1 kill-check (re-verify endpoint before runs).
-benchmark/            Cold vs +rules vs +retry, 31 questions,
+ncc/perception/       SAM 3.1 kill-check (re-verify endpoint before runs).
+ncc/benchmark/        Cold vs +rules vs +retry, 31 questions,
                       muse-spark-1.3: cold 35%, grounded 100%, retry 100%.
 data/                 Footage and manuals (gitignored).
 ```
 
 ## 5. Original track — NCC shower details
 
-```bat
-scripts\regen.bat
+```sh
+scripts/regen.sh            # or scripts\regen.bat on Windows
 ```
 
-Then open `viewer\index.html` (works from `file://`). Violation demo:
+Then open `ncc/viewer/index.html` (works from `file://`). Violation demo:
 
-```bat
-scripts\regen.bat --violate membrane_return_onto_floor_mm=20
+```sh
+scripts/regen.sh --violate membrane_return_onto_floor_mm=20
 ```
 
 The membrane return shortens in the 3D *and* the check panel turns red —

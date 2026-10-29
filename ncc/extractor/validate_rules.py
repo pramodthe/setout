@@ -17,9 +17,9 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_RULES = ROOT / "rules" / "rules.json"
-DEFAULT_BENCH = ROOT / "benchmark" / "questions.jsonl"
+ROOT = Path(__file__).resolve().parent.parent.parent
+DEFAULT_RULES = ROOT / "ncc" / "rules" / "rules.json"
+DEFAULT_BENCH = ROOT / "ncc" / "benchmark" / "questions.jsonl"
 
 REQUIRED_RULE_KEYS = frozenset({
     "id", "source", "applies_to", "parameter", "operator",

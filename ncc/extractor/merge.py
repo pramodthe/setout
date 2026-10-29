@@ -28,9 +28,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from validate_rules import validate  # noqa: E402
 
-ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_RULES = ROOT / "rules" / "rules.json"
-DEFAULT_BENCH = ROOT / "benchmark" / "questions.jsonl"
+ROOT = Path(__file__).resolve().parent.parent.parent
+DEFAULT_RULES = ROOT / "ncc" / "rules" / "rules.json"
+DEFAULT_BENCH = ROOT / "ncc" / "benchmark" / "questions.jsonl"
 SNAKE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 

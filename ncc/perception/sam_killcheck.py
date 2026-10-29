@@ -4,9 +4,9 @@ DAY 1 KILL-CHECK: can SAM 3.1 find waterproofing components in a real bathroom?
 This answers the single question that decides the project's scope:
 does concept segmentation work on the things a waterproofer looks at?
 
-    python sam_killcheck.py --video ../data/videos/bathroom.mp4
+    python sam_killcheck.py --video ../../data/videos/bathroom.mp4
     python sam_killcheck.py --video-file-id file-abc123     (re-run, skip the upload)
-    python sam_killcheck.py --image ../data/frames/junction.jpg
+    python sam_killcheck.py --image ../../data/frames/junction.jpg
 
 Set META_API_KEY first (see .env.example). MODEL_API_KEY, the name Meta's docs
 use, works too.

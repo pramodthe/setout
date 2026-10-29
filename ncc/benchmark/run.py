@@ -20,9 +20,9 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-QUESTIONS = ROOT / "benchmark" / "questions.jsonl"
-RULES_PATH = ROOT / "rules" / "rules.json"
+ROOT = Path(__file__).resolve().parent.parent.parent
+QUESTIONS = ROOT / "ncc" / "benchmark" / "questions.jsonl"
+RULES_PATH = ROOT / "ncc" / "rules" / "rules.json"
 API_BASE = os.environ.get("META_API_BASE", "https://api.meta.ai/v1").rstrip("/")
 MODEL = (os.environ.get("MODEL_API_MODEL")
          or os.environ.get("META_MODEL")
@@ -212,7 +212,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--out", default=str(ROOT / "benchmark" / "results.json"))
+    ap.add_argument("--out", default=str(ROOT / "ncc" / "benchmark" / "results.json"))
     args = ap.parse_args()
 
     qs = load_questions()
