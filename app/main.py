@@ -116,10 +116,11 @@ async def list_specs() -> dict:
 
 @app.get("/api/specs/{detail_id}")
 async def get_spec(detail_id: str) -> dict:
-    spec = _load_spec(detail_id)
-    if spec is None:
+    """The spec builds use: saved user corrections if any, else seed/library."""
+    try:
+        return _active_spec(detail_id).model_dump()
+    except KeyError:
         raise HTTPException(404, "unknown detail")
-    return spec.model_dump()
 
 
 class Correction(BaseModel):
@@ -134,10 +135,10 @@ async def correct_spec(detail_id: str, fix: Correction) -> dict:
     """User correction: param values and labels. Param edits are recorded
     with USER_INPUT provenance and re-validated; source (drawing) values can
     only be overridden explicitly, never silently."""
-    loaded = _load_spec(detail_id)
-    if loaded is None:
+    try:
+        spec = _active_spec(detail_id)  # build on earlier corrections
+    except KeyError:
         raise HTTPException(404, "unknown detail")
-    spec = loaded
     try:
         comp = spec.component(fix.component_id)
     except KeyError:
@@ -434,7 +435,8 @@ async def critique(detail_id: str, req: CritiqueRequest) -> dict:
 @app.get("/api/generate/{job_id}")
 async def get_generate(job_id: str) -> dict:
     if job_id not in GEN_JOBS:
-        raise HTTPException(404, "unknown generation job")
+        raise HTTPException(404, "job not found: it may have been lost when the "
+                                 "server restarted (AI jobs live in memory); start it again")
     return GEN_JOBS[job_id]
 
 
