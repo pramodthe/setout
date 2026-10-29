@@ -14,6 +14,7 @@ import threading
 import time
 import traceback
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +32,17 @@ from .store import (build_dir, db, figure_path, find_document_by_sha,
                     get_document, store_pdf, var_root)
 from .verify import summarize, verify_all
 
-app = FastAPI(title="Setout", version="0.1.0")
+@asynccontextmanager
+async def lifespan(_app):
+    # A restarted server resumes queued and interrupted jobs straight away
+    # (embedded worker only; SETOUT_WORKER=external leaves it to app.worker).
+    if os.environ.get("SETOUT_PUBLIC") != "1":
+        from .runtime import ensure_worker
+        ensure_worker()
+    yield
+
+
+app = FastAPI(title="Setout", version="0.1.0", lifespan=lifespan)
 from .v3_api import router as v3_router
 app.include_router(v3_router)
 

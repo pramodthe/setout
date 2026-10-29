@@ -29,12 +29,15 @@ async function loadTrace(runId: string): Promise<Step[]> {
   }
 }
 
-function StepRow({ step }: { step: Step }): JSX.Element {
+/* A step still pending once the run has ended was cut off by a worker crash
+   or restart; the run went on from the saved steps. */
+function StepRow({ step, ended }: { step: Step; ended: boolean }): JSX.Element {
+  const state = ended && step.state === "pending" ? "interrupted, then resumed" : step.state;
   if (step.kind === "model") {
     const calls = step.calls?.map(c => c.name).join(", ");
     const t = step.tokens;
     return <details className="trace-step" data-kind="model">
-      <summary>{step.n}. Muse {step.purpose || "turn"}{calls ? ` → ${calls}` : ""} · {step.state}
+      <summary>{step.n}. Muse {step.purpose || "turn"}{calls ? ` → ${calls}` : ""} · {state}
         {t?.input ? ` · ${t.input.toLocaleString()} in${t.cached ? ` (${t.cached.toLocaleString()} cached)` : ""} / ${(t.output || 0).toLocaleString()} out` : ""}</summary>
       {step.calls?.map((c, i) => <pre key={i}>{c.name}({c.arguments})</pre>)}
       {step.text && <p>{step.text}</p>}
@@ -44,7 +47,7 @@ function StepRow({ step }: { step: Step }): JSX.Element {
   const bad = !!step.error || (step.checks?.FAIL || 0) > 0 || step.verdict === "fail";
   return <details className="trace-step" data-kind="tool" open={!!step.images?.length}>
     <summary className={bad ? "trace-bad" : ""}>
-      {step.n}. {step.tool_name} · {step.state}{checks ? ` · ${checks}` : ""}{step.verdict ? ` · critic: ${step.verdict}` : ""}
+      {step.n}. {step.tool_name} · {state}{checks ? ` · ${checks}` : ""}{step.verdict ? ` · critic: ${step.verdict}` : ""}
       {step.error ? ` · ${step.error}` : ""}</summary>
     <pre>{step.arguments}</pre>
     {step.issues?.map((issue, i) => <p key={i}>• {issue}</p>)}
@@ -88,15 +91,17 @@ export default function JobPanel({ jobId, onSettled }: { jobId: string; onSettle
     else setError("Could not cancel run");
   };
   return <section className="genlog" id="jobpanel" aria-label="Generation run">
-    <strong>{job?.state.replaceAll("_", " ") || "Loading run…"}</strong>
+    <strong>{job?.state.replaceAll("_", " ") || "Loading run…"}</strong>{" "}
     {job && ["queued", "running"].includes(job.state) && <button onClick={() => void cancel()}>Cancel</button>}
     {error && <p role="alert">{error}</p>}
-    {job?.error?.message && <p role="alert">{job.error.message}</p>}
+    {job?.error?.message && (["queued", "running"].includes(job.state)
+      ? <p>Resumed after an interruption ({job.error.message}).</p>
+      : <p role="alert">{job.error.message}</p>)}
     {job?.result?.open_issues?.map(issue => <p key={issue}>{issue}</p>)}
     {job?.result?.states && <p>{Object.entries(job.result.states).map(([state, count]) => `${count} ${state.replaceAll("_", " ")}`).join(" · ")}</p>}
     {job?.version_id && job.detail_id && <a href={`#/d/${encodeURIComponent(job.detail_id)}`}>Open detail</a>}
     <details className="trace"><summary>Run trace ({steps.length} steps)</summary>
-      {steps.map(step => <StepRow key={step.id} step={step} />)}
+      {steps.map(step => <StepRow key={step.id} step={step} ended={!!job && !["queued", "running"].includes(job.state)} />)}
     </details>
   </section>;
 }

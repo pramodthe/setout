@@ -169,7 +169,9 @@ class Tools:
             from .agent import INSTRUCTIONS
             figure = self.repo.get(d.figures, figure_id)
             recalled = self._prepare(call_id+"-context","recall",{"query":read.get("drawing_type", "assembly")})["result"]
-            raw = self.gateway.json(INSTRUCTIONS + "\nReturn the program object in the supplied schema. "
+            raw = self.gateway.json(INSTRUCTIONS + "\nYOU ARE NOW INSIDE write_program, authoring the program itself. The READ "
+                "below is complete and no tools are available here: do not narrate, plan or announce steps. "
+                "Return only the program object in the supplied schema. "
                 "Wire format: param_bindings is an array of {name,expr}; unused selector/constraint fields are null. "
                 "Every nonzero physical length, including datums and offsets, must be a named mm parameter; "
                 "bare numbers can only be dimensionless coefficients. " + LABEL_RULES +

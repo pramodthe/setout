@@ -270,3 +270,14 @@ def test_resume_replays_the_same_initial_request_after_a_draft_exists(source_rep
     Worker(repo,responder=resumed,renderer=FakeRenderer(repo)).run_once()
     assert repo.get(d.jobs,job["id"])["state"] == "succeeded"
     assert all(request == requests[0] for request in requests)
+
+
+def test_structured_object_is_found_after_narration():
+    from app.model_gateway import structured
+    narrated = {"output": [{"type": "reasoning"}] + [
+        {"type": "message", "content": [{"type": "output_text", "text": "I'll start by reading the drawing."}]}] * 3 + [
+        {"type": "message", "content": [{"type": "output_text", "text": '{"title": "Wall"}'}]}]}
+    assert structured(narrated) == {"title": "Wall"}
+    assert structured(response_json({"a": 1})) == {"a": 1}
+    with pytest.raises(json.JSONDecodeError):
+        structured({"output": [{"type": "message", "content": [{"type": "output_text", "text": "no object"}]}]})

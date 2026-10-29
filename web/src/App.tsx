@@ -565,7 +565,7 @@ export default function App(): JSX.Element {
                         Generate 3D with AI
                       </button>
                     </div>
-                    {gen && (
+                    {gen && !gen.run_id && (
                       <div id="genProgress" className="genlog">
                         {gen.progress.map((l, i) => (
                           <div key={i}>{l}</div>
@@ -846,13 +846,7 @@ export default function App(): JSX.Element {
                     >
                       Model with AI (CadQuery)
                     </button>
-                    {cadJob && (
-                      <div className="genlog">
-                        {cadJob.progress.map((l, i) => (
-                          <div key={i}>{l}</div>
-                        ))}
-                      </div>
-                    )}
+                    {cadJob && <JobPanel jobId={cadJob.id} />}
                   </div>
                 )}
                 <h2 style={{ marginTop: 10 }}>Product</h2>

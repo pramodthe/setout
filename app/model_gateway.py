@@ -10,9 +10,29 @@ from .repository import canonical
 
 
 def output_text(response):
-    return "".join(part.get("text", "") for item in response["output"]
-                   if item.get("type") == "message" for part in item.get("content", [])
-                   if part.get("type") in ("output_text", "text"))
+    return "".join(message_texts(response))
+
+
+def message_texts(response):
+    return ["".join(part.get("text", "") for part in item.get("content", [])
+                    if part.get("type") in ("output_text", "text"))
+            for item in response["output"] if item.get("type") == "message"]
+
+
+def structured(response):
+    """The schema object of a structured response. Muse occasionally narrates
+    in extra messages before the object (seen 29 Oct: dozens of "I'll start by
+    reading the drawing" lines), so the object is the last message that parses."""
+    texts = message_texts(response)
+    try:
+        return json.loads("".join(texts))
+    except json.JSONDecodeError:
+        for text in reversed(texts):
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                continue
+        raise
 
 
 class ModelGateway:
@@ -72,4 +92,4 @@ class ModelGateway:
         response = self.call(payload, purpose, operation_key)
         if response.get("status") == "incomplete":
             raise ValueError(f"{purpose} reached the provider output limit; simplify the request or finish needs_review")
-        return json.loads(output_text(response))
+        return structured(response)

@@ -193,7 +193,7 @@
   .gnote{color:var(--muted);font-size:11.5px}
   .gctl{display:flex;gap:6px;padding:10px;border-top:1px solid var(--line)}
   .gctl input{flex:1;background:#10151d;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
-  @media (max-width:1100px){.dvgrid{grid-template-columns:1fr;grid-auto-rows:auto}
+  @media (max-width:1100px){.dv{height:auto} .dvgrid{flex:none;grid-template-columns:1fr;grid-auto-rows:auto}
     .dvgrid main{min-height:55vh} .guide{border-left:none;border-top:1px solid var(--line);min-height:50vh}}
 
   /* ---------- drawing link (SAM) + review ---------- */
@@ -225,6 +225,7 @@
 
 /* lessons proposed from reviews, critic repairs and repeated failures */
 .lessons{font-size:12px;color:var(--muted);margin-top:6px}
+.lessons[open]{max-height:35vh;overflow:auto}
 .lessons summary{cursor:pointer}
 .lessons label{display:block;margin:6px 0}
 .lessons input{background:#0f141c;color:var(--ink);border:1px solid var(--line);padding:3px 6px}
@@ -233,6 +234,8 @@
 .lesson-meta{font-size:11px}
 
 /* agent run trace */
+#jobpanel{padding:0 12px}
+#jobpanel > a,#jobpanel > button{margin-left:8px}
 .trace-step{margin:2px 0 2px 8px}
 .trace-step summary{cursor:pointer}
 .trace-step pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;margin:4px 0;color:var(--muted)}
