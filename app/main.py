@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import sqlalchemy as sa
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -115,7 +116,13 @@ async def upload_document(file: UploadFile = File(...)) -> dict:
         raise HTTPException(400, "not a PDF (magic check failed)")
     if len(data) > 50 * 1024 * 1024:
         raise HTTPException(400, "PDF larger than 50 MB")
-    return store_pdf(file.filename or "upload.pdf", data)
+    return _with_detail_ids(store_pdf(file.filename or "upload.pdf", data))
+
+
+def _with_detail_ids(doc: dict) -> dict:
+    """Each drawing's AI detail id, so the workbench can find its running job."""
+    return {**doc, "figures": [{**f, "detail_id": ai_detail_id(doc["sha256"], f["crop_id"])}
+                               for f in doc["figures"]]}
 
 
 @app.get("/api/documents/{doc_id}")
@@ -123,7 +130,7 @@ async def document(doc_id: str) -> dict:
     doc = get_document(doc_id)
     if not doc:
         raise HTTPException(404, "unknown document")
-    return doc
+    return _with_detail_ids(doc)
 
 
 @app.get("/api/documents/{doc_id}/figures/{crop_id}")
@@ -381,6 +388,10 @@ async def get_library() -> dict:
     from . import database as tables
     from .runtime import repository
     from .v3_api import drawing_regions
+    with repository().engine.connect() as con:
+        active = dict(con.execute(sa.select(tables.runs.c.detail_id, tables.jobs.c.id)
+                      .join(tables.jobs, tables.jobs.c.id == tables.runs.c.job_id)
+                      .where(tables.jobs.c.state.in_(("queued", "running")))).all())
     for detail in repository().list(tables.details):
         version = _database_version(detail["id"])
         if version:
@@ -388,6 +399,7 @@ async def get_library() -> dict:
             entry = library.entry(spec, "ai" if spec.origin.startswith(("ai-", "user-")) else "human")
             entry["version_id"] = version["id"]
             entry["located"] = len(drawing_regions(repository(), version))
+            entry["generating"] = active.get(detail["id"])
             if entry["made_by"] == "ai":
                 # Versions are immutable: publishing moves the detail's pointer.
                 entry["review"] = "reviewed" if detail["published_version_id"] == version["id"] else "draft"
@@ -464,12 +476,17 @@ async def get_preview(detail_id: str):
         from . import database as tables
         from .runtime import repository
         repo = repository()
-        renders = repo.list(tables.renders, tables.renders.c.version_id == native["id"],
-                            tables.renders.c.view == "iso", tables.renders.c.tags == False,
-                            order=tables.renders.c.created_at)
-        if renders:
-            return Response(repo.artifacts.read(renders[-1]["artifact_id"]), media_type="image/jpeg",
-                            headers={"Cache-Control": "no-cache"})
+        # The newest clean iso render of this version, else of the nearest
+        # earlier version: a reviewer's edit makes a version with no render yet.
+        version = native
+        while version:
+            renders = repo.list(tables.renders, tables.renders.c.version_id == version["id"],
+                                tables.renders.c.view == "iso", tables.renders.c.tags == False,
+                                order=tables.renders.c.created_at)
+            if renders:
+                return Response(repo.artifacts.read(renders[-1]["artifact_id"]), media_type="image/jpeg",
+                                headers={"Cache-Control": "no-cache"})
+            version = repo.get(tables.versions, version["parent_version_id"]) if version["parent_version_id"] else None
     p = _preview_path(detail_id)
     if p is None or not p.is_file():
         raise HTTPException(404, "no preview yet")
@@ -701,6 +718,7 @@ def _persistent_generation(job_id: str) -> dict:
     if state == "failed" and not error:
         error = "; ".join(result.get("open_issues") or []) or job["state"].replace("_", " ")
     return {**job, "state": state, "native_state": job["state"], "gate_notes": [],
+            "continued_by": result.get("continued_by"),
             "error": error.get("message", error.get("code")) if isinstance(error, dict) else error}
 
 

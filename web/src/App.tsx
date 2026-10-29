@@ -7,6 +7,7 @@ import type {
   Component,
   DetailSpec,
   Doc,
+  Figure,
   GenJob,
   Scene,
   SpecSummary,
@@ -62,6 +63,7 @@ export default function App(): JSX.Element {
   const timer = useRef<number | null>(null);
   const errTimer = useRef<number | null>(null);
   const pollToken = useRef(0);
+  const genToken = useRef(0); // the generation the workbench is following
   const vpApi = useRef<Viewport3D | null>(null);
   const introNext = useRef(false);
   /* which detail the 3D on screen belongs to (the self-check renders it) */
@@ -224,30 +226,62 @@ export default function App(): JSX.Element {
     }
   };
 
-  /* AI: read the selected drawing, compose a detail program, gate, build. */
+  /* Follow a generation to its end, including the runs that continue it
+     when one spends its budget with work left. null if the user moved on. */
+  const followGeneration = async (start: GenJob): Promise<GenJob | null> => {
+    const my = ++genToken.current;
+    let g = start;
+    setGen(g);
+    for (;;) {
+      while (g.state === "queued" || g.state === "running") {
+        await new Promise((r) => setTimeout(r, 1000));
+        if (my !== genToken.current) return null;
+        g = await api.getGenerate(g.id);
+        setGen(g);
+      }
+      if (!g.continued_by) return g;
+      g = await api.getGenerate(g.continued_by);
+      setGen(g);
+    }
+  };
+
+  /* A finished generation: list the drawing's details again, open its 3D. */
+  const showGenerated = async (g: GenJob | null, cropId: string): Promise<void> => {
+    if (!g || !doc) return;
+    if (g.state !== "done" || !g.detail_id) {
+      showErr("AI generation failed: " + (g.error || "unknown").slice(0, 200));
+      return;
+    }
+    const vs = variantsFor((await api.listSpecs()).specs, doc.sha256);
+    setVariants(vs);
+    const m = await selectCrop(cropId, vs, g.detail_id);
+    if (m) await buildDetail(m.detail_id);
+  };
+
+  /* AI: the agent reads the selected drawing and builds its detail. */
   const generateAI = async (): Promise<void> => {
     if (!doc || !crop) return;
     showErr(null);
     try {
-      let g = await api.generate(doc.id, crop);
-      setGen(g);
-      while (g.state === "queued" || g.state === "running") {
-        await new Promise((r) => setTimeout(r, 1000));
-        g = await api.getGenerate(g.id);
-        setGen(g);
-      }
-      if (g.state !== "done" || !g.detail_id) {
-        showErr("AI generation failed: " + (g.error || "unknown").slice(0, 200));
-        return;
-      }
-      const vs = variantsFor((await api.listSpecs()).specs, doc.sha256);
-      setVariants(vs);
-      const m = await selectCrop(crop, vs, g.detail_id);
-      if (m && (await buildDetail(m.detail_id))) {
-        if (!g.version_id) await checkAI(m.detail_id); // native runs already render and critique on the server
-      }
+      await showGenerated(await followGeneration(await api.generate(doc.id, crop)), crop);
     } catch (e) {
       showErr("AI generation failed: " + (e as Error).message.slice(0, 200));
+    }
+  };
+
+  /* Select a drawing. If its AI detail has a run going (started before a
+     reload, or from another page), pick it back up and follow it. */
+  const openCrop = async (f: Figure): Promise<void> => {
+    genToken.current++; // stop following another drawing's run
+    setGen(null);
+    await selectCrop(f.crop_id);
+    if (!f.detail_id) return;
+    try {
+      const { jobs } = await api.activeJobs(f.detail_id);
+      const running = jobs.find((j) => j.kind === "generate_detail" || j.kind === "revise_detail");
+      if (running) await showGenerated(await followGeneration(await api.getGenerate(running.id)), f.crop_id);
+    } catch (e) {
+      showErr("Could not follow the running AI job: " + (e as Error).message.slice(0, 200));
     }
   };
 
@@ -476,7 +510,7 @@ export default function App(): JSX.Element {
                 key={f.crop_id}
                 className={"crop" + (crop === f.crop_id ? " sel" : "")}
                 data-crop={f.crop_id}
-                onClick={() => void selectCrop(f.crop_id)}
+                onClick={() => void openCrop(f)}
               >
                 <img
                   loading="lazy"

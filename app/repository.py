@@ -287,6 +287,17 @@ class Repository:
         con.execute(d.runs.update().where(d.runs.c.job_id == job_id).values(outcome=state))
         self._event(con, job_id, state, data=result or error)
 
+    def continue_job(self, job_id, kind, payload):
+        """Schedule the run that continues `job_id`, once (idempotent), and
+        record the link on the finished job so the UI can follow it."""
+        with d.transaction(self.engine) as con:
+            follow = self.enqueue_in(con, kind, payload, f"continue:{job_id}")
+            job = row(con, d.jobs, job_id, True)
+            con.execute(d.jobs.update().where(d.jobs.c.id == job_id).values(
+                        result={**(job["result"] or {}), "continued_by": follow["id"]}))
+            self._event(con, job_id, "continued", f"continues as job {follow['id']}", {"job_id": follow["id"]})
+            return follow["id"]
+
     def retry(self, fence, error):
         with d.transaction(self.engine) as con:
             job = self._check(con, fence)

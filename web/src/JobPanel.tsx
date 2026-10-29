@@ -3,7 +3,8 @@ import type { JSX } from "react";
 
 type Job = {
   id: string; state: string; run_id: string; version_id: string | null;
-  detail_id: string | null; progress: string[]; result?: { open_issues?: string[]; states?: Record<string, number> };
+  detail_id: string | null; progress: string[];
+  result?: { open_issues?: string[]; states?: Record<string, number>; continued_by?: string };
   error?: { message?: string };
 };
 /* Compact trace rows from GET /api/runs/{id}/steps (see v3_api.step_summary). */
@@ -100,6 +101,8 @@ export default function JobPanel({ jobId, onSettled }: { jobId: string; onSettle
     {job?.result?.open_issues?.map(issue => <p key={issue}>{issue}</p>)}
     {job?.result?.states && <p>{Object.entries(job.result.states).map(([state, count]) => `${count} ${state.replaceAll("_", " ")}`).join(" · ")}</p>}
     {job?.version_id && job.detail_id && <a href={`#/d/${encodeURIComponent(job.detail_id)}`}>Open detail</a>}
+    {job?.result?.continued_by && <p>The run used its budget with work left, so it continues automatically:{" "}
+      <a href={`#/jobs/${encodeURIComponent(job.result.continued_by)}`}>next run →</a></p>}
     <details className="trace"><summary>Run trace ({steps.length} steps)</summary>
       {steps.map(step => <StepRow key={step.id} step={step} ended={!!job && !["queued", "running"].includes(job.state)} />)}
     </details>

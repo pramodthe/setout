@@ -21,6 +21,16 @@ export default function VersionPanel({ detailId, revision, onSelect, onUpdated }
     }).then(value => live && setHistory(value)).catch((e: Error) => live && setError(e.message));
     return () => { live = false; };
   }, [detailId, revision]);
+  // Pick up a run already going on this detail (after a reload, or one that
+  // continued automatically): follow the newest.
+  useEffect(() => {
+    let live = true;
+    void fetch(`/api/jobs?detail_id=${encodeURIComponent(detailId)}&active=1`)
+      .then(async response => response.ok ? (await response.json() as { jobs: { id: string }[] }).jobs : [])
+      .then(jobs => { if (live && jobs.length) setJobId(jobs[0].id); })
+      .catch(() => undefined);
+    return () => { live = false; };
+  }, [detailId, revision]);
   const recheck = async () => {
     if (!history) return;
     const response = await fetch("/api/jobs", { method: "POST", headers: { "Content-Type": "application/json" },

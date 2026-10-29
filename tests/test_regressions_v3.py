@@ -229,3 +229,81 @@ def test_rejected_request_ends_the_job_for_review_not_retry(source_repo):
     Worker(source_repo, responder=refuse).run_once()
     final = source_repo.get(d.jobs, job["id"])
     assert final["state"] == "needs_review" and final["error"]["code"] == "provider_rejected"
+
+
+# Workbench and library can find a detail's running job after a reload.
+def test_running_jobs_are_listed_per_detail_and_flagged_on_cards(client, source_repo):
+    version = _generated(source_repo)
+    detail = version["detail_id"]
+    job = source_repo.enqueue("revise_detail", {"detail_id": detail, "base_version_id": version["id"],
+                                                "requested_changes": "x"})
+    listed = client.get(f"/api/jobs?detail_id={detail}&active=1").json()["jobs"]
+    assert [j["id"] for j in listed] == [job["id"]] and listed[0]["kind"] == "revise_detail"
+    assert len(client.get(f"/api/jobs?detail_id={detail}").json()["jobs"]) == 2  # the finished generation too
+    card = next(e for e in client.get("/api/library").json()["details"] if e["detail_id"] == detail)
+    assert card["generating"] == job["id"]
+    source_repo.cancel(job["id"])
+    card = next(e for e in client.get("/api/library").json()["details"] if e["detail_id"] == detail)
+    assert card["generating"] is None
+
+
+def test_document_figures_name_their_ai_detail(client, tmp_path, monkeypatch):
+    from app import main
+    monkeypatch.setattr(store, "VAR", tmp_path)
+    pdf = io.BytesIO()
+    Image.new("RGB", (400, 300), "white").save(pdf, "PDF")
+    doc = client.post("/api/documents", files={"file": ("own.pdf", pdf.getvalue(), "application/pdf")}).json()
+    for figure in (doc["figures"][0], client.get(f"/api/documents/{doc['id']}").json()["figures"][0]):
+        assert figure["detail_id"] == main.ai_detail_id(doc["sha256"], figure["crop_id"])
+
+
+def _cut_short(repo, failing=True, tokens=300_000, continuation=0):
+    """A generation that ended needs_review after spending its budget."""
+    base = _generated(repo)
+    job = repo.enqueue("revise_detail", {"detail_id": base["detail_id"], "base_version_id": base["id"],
+                                         "requested_changes": "x", "continuation": continuation})
+    fence = repo.claim("w", only_ids=[job["id"]])
+    with d.transaction(repo.engine) as con:
+        made = repo.insert_version(con, detail_id=base["detail_id"], expected_parent=base["id"], program=base["program"],
+                                   spec=base["spec"], figure_id=base["figure_id"], read_id=base["drawing_read_id"])
+        manifest = con.execute(d.verifications.select().where(d.verifications.c.version_id == base["id"])).mappings().first()
+        con.execute(d.verifications.insert().values(id="v-" + job["id"], version_id=made["version_id"], manifest_sha="m",
+                    manifest_artifact_id=manifest["manifest_artifact_id"], verifier_version="x", checks=[{"id": "cad-rail", "status": "FAIL" if failing else "PASS", "required": True}],
+                    quality={}, created_at=0))
+        con.execute(d.runs.update().where(d.runs.c.job_id == job["id"]).values(
+                    working_version_id=made["version_id"], consumed={"tokens": tokens, "cad_calls": 2}))
+    repo.end(fence, "needs_review", {"version_id": made["version_id"]})
+    return job, made["version_id"]
+
+
+def test_a_run_cut_short_with_work_left_continues_once(source_repo):
+    from app.worker import continue_if_cut_short
+    job, version_id = _cut_short(source_repo)
+    follow = continue_if_cut_short(source_repo, job["id"], limit=2)
+    assert follow and continue_if_cut_short(source_repo, job["id"], limit=2) == follow  # idempotent
+    payload = source_repo.get(d.jobs, follow)["payload"]
+    assert payload["base_version_id"] == version_id and payload["continuation"] == 1
+    assert source_repo.get(d.jobs, job["id"])["result"]["continued_by"] == follow
+
+
+@pytest.mark.parametrize("failing,tokens,continuation", [(False, 300_000, 0), (True, 50_000, 0), (True, 300_000, 2)])
+def test_no_continuation_without_work_budget_cut_or_room(source_repo, failing, tokens, continuation):
+    from app.worker import continue_if_cut_short
+    job, _ = _cut_short(source_repo, failing, tokens, continuation)
+    assert continue_if_cut_short(source_repo, job["id"], limit=2) is None
+
+
+def test_workbench_follows_a_continued_run(client, source_repo):
+    from app.worker import continue_if_cut_short
+    job, _ = _cut_short(source_repo)
+    follow = continue_if_cut_short(source_repo, job["id"], limit=2)
+    assert client.get(f"/api/generate/{job['id']}").json()["continued_by"] == follow
+
+
+def test_card_image_falls_back_to_an_earlier_versions_render(client, source_repo):
+    version = _generated(source_repo)  # rendered by the fake renderer
+    first = client.get(f"/api/specs/{version['detail_id']}/preview")
+    assert first.status_code == 200
+    review_v3.apply(source_repo, version, [{"name": "width", "value": 120}], [], [], reviewer="R")
+    after = client.get(f"/api/specs/{version['detail_id']}/preview")
+    assert after.status_code == 200 and after.content == first.content

@@ -29,6 +29,7 @@ class Generate(Strict):
     manufacturer: str | None = None
     detail_id: str | None = None
     expected_current_version_id: str | None = None
+    continuation: int = Field(default=0, ge=0, le=10)
 
 
 class Revise(Strict):
@@ -36,6 +37,7 @@ class Revise(Strict):
     base_version_id: str
     requested_changes: str
     manufacturer: str | None = None
+    continuation: int = Field(default=0, ge=0, le=10)  # n-th automatic continuation
 
 
 class Render(Strict):
@@ -139,6 +141,19 @@ def submit(kind, raw_payload, idempotency_key=None, budget=None):
         raise HTTPException(422, str(error)[:500])
     ensure_worker()
     return job_result(result["id"])
+
+
+@router.get("/jobs")
+def list_jobs(detail_id: str, active: bool = False, limit: int = 10):
+    """Recent jobs on one detail, newest first; active: queued or running only.
+    Lets a reloaded page pick a running job back up."""
+    query = (sa.select(d.jobs.c.id, d.jobs.c.kind, d.jobs.c.state, d.jobs.c.created_at)
+             .join(d.runs, d.runs.c.job_id == d.jobs.c.id).where(d.runs.c.detail_id == detail_id))
+    if active:
+        query = query.where(d.jobs.c.state.in_(("queued", "running")))
+    query = query.order_by(d.jobs.c.created_at.desc()).limit(max(1, min(limit, 50)))
+    with repository().engine.connect() as con:
+        return {"jobs": [dict(r) for r in con.execute(query).mappings()]}
 
 
 @router.get("/jobs/{ident}")

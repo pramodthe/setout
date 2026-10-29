@@ -185,11 +185,18 @@ app/worker.py                    leases a job (60 s, heartbeat 15 s, fencing, re
   -> app/agent_tools.py          read_drawing · recall · write_program / patch_program · model_component /
                                  reuse_component · build_and_verify · render · critic · locate_on_drawing ·
                                  remember · finish
-GET  /api/jobs/{id} · /events (SSE) · /api/runs/{id}/steps (compact; ?full=1 raw)
+GET  /api/jobs?detail_id=…&active=1 · /api/jobs/{id} · /events (SSE) · /api/runs/{id}/steps (compact; ?full=1 raw)
 GET  /api/details/{id}/versions · /api/versions/{id}[/scene|/reviews] · /api/artifacts/{id}
 POST /api/versions/{id}/reviews  accept / correct / resolve / activate_memory · /api/details/{id}/publish
 GET/POST /api/memories           lessons (proposed until a reviewer activates them)
 ```
+
+A run that spends its budget while its draft still has FAILs (e.g. CAD
+placeholders) and made progress continues automatically as a `revise_detail`
+job, at most `SETOUT_AUTO_CONTINUE` times (default 2; `0` turns it off). The
+finished job records `continued_by`, and the workbench, detail page and trace
+follow the chain. A page reload picks a running job back up through
+`/api/jobs?detail_id=…&active=1`.
 
 The older routes stay for the UI and map onto jobs: `POST /api/generate`,
 `/api/specs/{id}/critique|cad|locate` enqueue jobs and are polled with
@@ -206,10 +213,15 @@ Cross-file contracts. These are not obvious from any single file:
   with a note. An agent can never create `user_input` or `manufacturer_doc`
   values. Never loosen this to make a demo look better.
 - **Roles come from the drawing, not our vocabulary.** The READ classifies each
-  label as `layer`, `object` or `other`; `check_roles` makes a part carrying that
-  label take the matching role. Objects declare `form` (`shaped` / `block`), and
-  the verifier's form check reads the declaration. Never key a check off part
-  names: the engine is trade-agnostic.
+  label as `layer`, `object`, `zone` or `other`; `check_roles` makes a part
+  carrying that label take the matching role. Objects declare `form` (`shaped` /
+  `block`), and the verifier's form check reads the declaration. SAM chooses its
+  prompts by role too. Never key a check off part names: the engine is
+  trade-agnostic.
+- **Zones are drawn, not built** (clearances, circulation spaces, set-out lines,
+  datums): role `zone`, an exact primitive compiled with representation `zone`,
+  shown see-through, with no install step and no physical relations. They may
+  carry extent features, so a printed clearance can still be measured.
 - **Labels are a choice, not free text.** The authoring schema
   (`program_schema(labels=...)`) offers only the READ's labels or null;
   `label-coverage` lists layer/object labels no part carries.

@@ -1,6 +1,22 @@
 # Status — running log, newest first
 
-## 2026-10-29 (latest) — v3 implemented, reviewed against PLAN_V3 and fixed
+## 2026-10-29 (latest) — PR #14 review fixes; zones; runs continue; jobs survive a reload
+
+- A code review of PR #14 found 18 likely bugs; the 7 regressions against main
+  and 4 v3 bugs are fixed, each with a test that failed first
+  (`tests/test_regressions_v3.py`).
+- Trying a third-party WC-ambulant layout showed three gaps, now fixed:
+  - the workbench forgot a running job on reload: workbench, detail page and
+    library card ("generating…") pick it back up;
+  - clearance zones were modelled as floor slabs: new `zone` role and READ
+    category, drawn see-through and never physical;
+  - runs stopped with most objects as CAD placeholders: a run cut short by
+    its budget with work left continues automatically (`SETOUT_AUTO_CONTINUE`,
+    default 2).
+- SAM chooses prompts from part roles; the waterproofing skip list is gone.
+- Card images fall back to an earlier version's render after a review edit.
+
+## 2026-10-29 — v3 implemented, reviewed against PLAN_V3 and fixed
 
 - The team's v3 work is on branch `feat/v3-agent`: database and Alembic,
   persistent jobs, the Muse tool agent, AI-written CAD objects, headless

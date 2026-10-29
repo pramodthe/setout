@@ -97,6 +97,9 @@ export const api = {
       body: JSON.stringify({ doc_id: docId, crop_id: cropId }),
     }),
   getGenerate: (id: string): Promise<GenJob> => req(`/api/generate/${id}`),
+  /* Queued or running jobs on one detail, newest first. */
+  activeJobs: (detailId: string): Promise<{ jobs: { id: string; kind: string; state: string }[] }> =>
+    req(`/api/jobs?detail_id=${encodeURIComponent(detailId)}&active=1`),
   critique: (detailId: string): Promise<GenJob> =>
     req(`/api/specs/${detailId}/critique`, {
       method: "POST",

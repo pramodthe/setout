@@ -243,3 +243,6 @@
 .trace-bad{color:var(--bad)}
 .trace-images{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0}
 .trace-images img{width:180px;height:auto;border:1px solid var(--line);border-radius:4px;background:#fff}
+
+/* a card whose detail an AI run is working on */
+.badge.b-gen{background:#173a5e;color:#cfe0f5;border-color:var(--accent)}
