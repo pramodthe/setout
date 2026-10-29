@@ -16,6 +16,8 @@ moving the 3D for you.
 Meta Global AI Developer Hackathon 2026 · Indie Developer Track · Build for Your World
 Submit by **Wed 4 Nov 9:00 PM ET** = **Thu 5 Nov 1:00 PM Sydney**
 
+**Live demo (read-only, with the AI guide):** https://pthebe-sfsu--setout-demo-web.us-east.modal.run
+
 ---
 
 ## Contents
@@ -30,7 +32,7 @@ Submit by **Wed 4 Nov 9:00 PM ET** = **Thu 5 Nov 1:00 PM Sydney**
 8. [The detail grammar](#8-the-detail-grammar)
 9. [Repository layout](#9-repository-layout)
 10. [Development and testing](#10-development-and-testing)
-11. [Performance and cost](#11-performance-and-cost)
+11. [Evaluation, performance and cost](#11-evaluation-performance-and-cost)
 12. [Known limitations and roadmap](#12-known-limitations-and-roadmap)
 13. [Source documents, licensing and scope](#13-source-documents-licensing-and-scope)
 14. [The NCC track](#14-the-ncc-track)
@@ -45,6 +47,8 @@ Submit by **Wed 4 Nov 9:00 PM ET** = **Thu 5 Nov 1:00 PM Sydney**
 | **Detail page** (`#/d/<id>`) | Full-screen 3D: studio lighting, procedurally generated materials, a stepped cutaway that reveals each layer, drawing-label tags on every part, parts in install order, evidence per part (value, source, exact quote), and view / solo / explode / cut / install-step controls. |
 | **AI installation guide** | A sidebar chat. Ask *"walk me through the install"* and the guide answers as a narrated tour that **drives the 3D**: it flies the camera to parts, isolates them, steps the install sequence, explodes and cuts. Every number it speaks is checked against the detail. |
 | **Add from PDF** (`#/workbench`) | Upload any installation PDF. Embedded drawings are extracted. Pick one and press **Generate 3D with AI**: the model reads it, writes a detail program, code checks it, and the 3D is built and verified. An automatic **self-check** then compares a render with the drawing and corrects it. |
+| **Review and publish** | Before an AI-generated detail is trusted, an expert reviews it: values printed on the drawing are listed first, each with its exact quote and the parts it drives (click to isolate them in 3D). Accept a value, fix it (every dimension computed from it moves too), set labels only to text printed on the drawing, then publish as *reviewed by <name>*. |
+| **Drawing ↔ 3D link (SAM 3.1)** | The source drawing sits in a panel beside the 3D, turned upright. SAM 3.1 finds each part on it; click a box on the drawing to fly to that part, or select a part to light up its box. |
 | **Model with AI (CadQuery)** | For a part the shape grammar can't express (a perforated grate, a mixer), the model writes CadQuery code that runs in an isolated, no-network sandbox. The result is labelled illustrative. |
 | **Verification report** | Every detail ships with PASS / FAIL / UNVERIFIED / N/A checks: geometry built exactly as specified, drawing values actually driving geometry, labels verbatim, install sequence acyclic. |
 | **Downloads** | `spec.json`, `scene.json`, `model.glb` (glTF, metres), `report.json`. |
@@ -138,9 +142,9 @@ flowchart LR
 | Backend | Python, FastAPI 0.162, Pydantic 2.14, Uvicorn | REST API, background jobs (threads), compiler, mesh generators, verification, glTF export — all pure Python (no geometry kernel needed locally). |
 | Storage | SQLite + files under `SETOUT_VAR` | Uploaded PDFs and extracted figures, build artifacts, the AI-generated library. Gitignored. |
 | PDF handling | pypdf 6, Pillow 13 | Extracts embedded drawing images losslessly; re-encodes JPEG 2000 figures as PNG (browsers and the model API can't read JP2). |
-| AI | Meta Model API — Muse (`muse-spark-1.3` by default) | Reads drawings, writes detail programs, critiques renders, writes CadQuery, guides users. |
+| AI | Meta Model API — Muse (`muse-spark-1.3` by default) and SAM 3.1 | Muse reads drawings, writes detail programs, critiques renders, writes CadQuery and guides users; SAM locates parts on the drawing. |
 | Sandbox | Modal Sandboxes + CadQuery 2.8 (OpenCascade) | Executes model-written CAD code in isolation, with networking blocked. |
-| Testing | pytest, Vitest, Playwright | 82 backend tests (no network), 13 frontend tests, a headless browser acceptance pass. |
+| Testing | pytest, Vitest, Playwright | 96 backend tests (no network), 13 frontend tests, a headless browser acceptance pass. |
 
 The browser never talks to Meta or Modal directly; API keys stay on the server.
 
@@ -204,15 +208,24 @@ sequenceDiagram
    `DetailSpec`. Closed-set generators turn it into triangles. If anything fails,
    the error goes back to the model once.
 6. **CAD parts** (optional). See §5.2.
-7. **Verification.** `verify.py` checks structure, that each part was built exactly
+7. **Drawing links (SAM 3.1).** The drawing is turned upright using the rotation
+   the read pass reported (SAM finds nothing in a sideways drawing), then SAM is
+   asked for each part by up to three short names: its drawing label, its type,
+   and an everyday synonym ("bathtub", "floor drain", "sink"). The best box with
+   confidence ≥ 0.5 is stored. Thin layers (membranes, screeds, slabs) are not
+   prompted: SAM can't see them in a line drawing.
+8. **Verification.** `verify.py` checks structure, that each part was built exactly
    as specified (mesh bounds vs program, ±0.01 mm), that every drawing value drives
    some geometry, labels, products and install order.
-8. **Self-check.** The browser renders iso and section views, stamps every part
+9. **Self-check.** The browser renders iso and section views, stamps every part
    with its id, and sends them back. Muse compares them with the drawing and
    returns issues plus a corrected program. The correction goes through the same
    gates and is **accepted only if** failures don't increase and neither the
    number of drawing values driving geometry nor the number of verbatim labels
    drops. CAD parts are frozen. Every round is kept as a revision.
+10. **Human review.** Nothing is marked *reviewed* until a named person has
+    checked it. A reviewer's edits become `user_input`; a reviewer can never
+    promote a value to "from the drawing" — only the gates can.
 
 ---
 
@@ -243,10 +256,24 @@ All calls go through one small stdlib client, `app/meta_client.py`.
 | **Critique** | `generate.CRITIQUE_SCHEMA` | drawing + 2 renders + current program + read | issues `{part_id, problem, fix}` + corrected program |
 | **Guide** | `guide.GUIDE_SCHEMA` | question + compact detail summary + history | steps `{say, actions[]}` + follow-up |
 
-The NCC track (§14) uses the same endpoint for rule extraction and the benchmark,
-and SAM 3.1 for the perception kill-check.
+The NCC track (§14) uses the same endpoint for rule extraction and the benchmark.
 
-### 5.2 Modal Sandboxes + CadQuery
+### 5.2 SAM 3.1 (Meta segmentation)
+
+`app/sam.py` links parts to the drawing.
+
+- **Endpoint:** the same `POST /v1/responses`, model `sam-3.1`, one concept per
+  request: an `input_text` prompt plus the drawing as an `input_image` data URL,
+  with `metadata: {include_confidence: "true", mask_encoding: "one_bit"}`.
+- **Output:** streamed text tokens, one record per object,
+  `<0f>0<|box;x1=…;y1=…;x2=…;y2=…;w=…;h=…;c=0.91|><|mask;…|>`. We parse the box and
+  confidence (masks are ignored) and store fractions of the upright image.
+- **How:** rotate upright first (the read pass reports the rotation), try up to
+  three names per part, keep the best box ≥ 0.5 confidence, run prompts in
+  parallel. On a bathroom drawing, "bathtub" scored 0.92, "sink" 0.84, "floor
+  drain" 0.80. A failed prompt finds nothing; nothing is guessed.
+
+### 5.3 Modal Sandboxes + CadQuery
 
 Used only when a part needs geometry the grammar can't express.
 
@@ -275,7 +302,18 @@ proc = sb.exec("python", "-c", script, timeout=120)   # script = our wrapper + m
    dimensions are assumptions, and verification only checks that it stays inside
    its envelope. The code and its sha256 are stored with the detail.
 
-### 5.3 Three.js viewer
+### 5.4 Modal (hosting)
+
+The live demo runs the same FastAPI app as a Modal ASGI app
+(`deploy/modal_app.py`): Python 3.12 image, the built frontend and `app/` added
+as local directories, the library on a Modal Volume, and `SETOUT_PUBLIC=1`.
+Public mode is read-only: no uploads, edits or generation; source drawings are
+never served (they are third-party documents); the guide is rate-limited (60
+questions per hour) so a public link can't drain the API budget. The guide is on
+only when deployed with `SETOUT_DEMO_GUIDE=1`, which attaches the `setout-meta`
+Modal secret holding the API key.
+
+### 5.5 Three.js viewer
 
 `web/src/viewport.ts` is a plain Three.js class driven by React:
 
@@ -292,7 +330,7 @@ proc = sb.exec("python", "-c", script, timeout=120)   # script = our wrapper + m
   in install order; room floors step back to reveal the membrane), drawing-label
   tags with leader-line de-cluttering, explode, section clip, install-step playback.
 
-### 5.4 Other libraries
+### 5.6 Other libraries
 
 FastAPI and Pydantic (API and schemas), pypdf and Pillow (PDF figures), SQLite
 (job and document records), Playwright with system Chrome (acceptance test),
@@ -339,7 +377,10 @@ A wrong dimension in a construction tool is worse than a missing one. So:
 | `GET` | `/api/specs/{id}` | The full canonical spec. |
 | `PATCH` | `/api/specs/{id}` | User correction of a parameter or label (recorded as `user_input`). |
 | `GET` | `/api/specs/{id}/scene` | Build + verify now; returns the viewer payload. |
-| `GET` | `/api/specs/{id}/thumb` | The source drawing for a detail (if uploaded on this server). |
+| `GET` | `/api/specs/{id}/drawing` | The source drawing, upright (alias `/thumb`); 404 if not uploaded here. |
+| `GET` | `/api/specs/{id}/review` | Review state: values (printed first) with quotes and the parts they drive, labels, what the checks changed. |
+| `POST` | `/api/specs/{id}/review` | `{edits, accept, labels, publish, reviewer}`; edits recompile the program. |
+| `POST` | `/api/specs/{id}/locate` | SAM 3.1: locate parts on the upright drawing (job). |
 | `POST` | `/api/builds` | Background build job → artifacts. |
 | `GET` | `/api/builds/{job_id}` | Build state and progress. |
 | `GET` | `/api/builds/{job_id}/artifacts/{name}` | `spec.json`, `scene.json`, `model.glb`, `report.json`, `error.txt`. |
@@ -391,6 +432,8 @@ app/                     FastAPI backend
   meta_client.py         Meta Model API client (streaming, strict JSON schema)
   cad_sandbox.py         CadQuery static gate, Modal runner, STL fitting
   guide.py               AI guide: tour schema, grounding check
+  review.py              human review and publish
+  sam.py                 SAM 3.1 part location on the drawing
   library.py             library index by situation and component
   geometry.py            closed-set mesh generators, GLB and scene export
   verify.py              verification checks and report
@@ -401,10 +444,13 @@ web/                     React + TypeScript frontend (Vite)
   src/Library.tsx        library front page
   src/DetailView.tsx     detail page
   src/Guide.tsx          AI guide sidebar
+  src/ReviewPanel.tsx    review and publish panel
   src/App.tsx            workbench (add from PDF, AI generate / check / CAD)
   src/viewport.ts        Three.js viewer and camera API
   src/materials.ts       procedural material library
-tests/                   pytest (82 tests, no network)
+tests/                   pytest (96 tests, no network)
+eval/batch_eval.py       run the AI pipeline over every drawing in a PDF
+deploy/modal_app.py      hosted public demo on Modal
 e2e/drive.py             headless browser acceptance pass
 docs/                    plan, status log, earlier audit and architecture notes
 ncc/                     original NCC shower-details track (see §14)
@@ -417,7 +463,7 @@ data/                    local manuals and footage (gitignored)
 ## 10. Development and testing
 
 ```sh
-python -m pytest tests/ -q                       # 82 tests, Muse and Modal stubbed
+python -m pytest tests/ -q                       # 96 tests, Muse, SAM and Modal stubbed
 python -m pytest tests/test_cad.py -q            # one file
 cd web && npm test                               # Vitest (materials, UVs, provenance)
 cd web && npx tsc -b && npm run lint             # type-check + lint
@@ -434,13 +480,29 @@ and the original spec, geometry, verification and API suites.
 
 ---
 
-## 11. Performance and cost
+## 11. Evaluation, performance and cost
+
+**Batch evaluation** (`eval/batch_eval.py`, details in `docs/EVAL.md`): the full AI
+pipeline on all 24 drawings of a 22-page wet-area waterproofing guide.
+
+| Measure | Result |
+|---|---|
+| Generated and built | **24/24** (16 sections, 7 room isometrics, 1 other) |
+| Verification FAILs | **0** |
+| Printed values confirmed against the drawing | **86** (55 drive geometry) |
+| Distinct drawing labels used verbatim | **173 of 221** (78%) |
+| Values the gates had to demote | **0** |
+| Median time / tokens per drawing | **111 s** / **~30k** |
+
+"Confirmed" means the read and compose passes agree on the printed words and
+number; whether a value sits on the *right part* is what the review screen is
+for.
 
 Measured on real drawings with `muse-spark-1.3`:
 
 | Step | Time | Tokens |
 |---|---|---|
-| Generate one detail (read + compose) | 70–150 s | 22–38k (measured on 4 drawings) |
+| Generate one detail (read + compose) | 54–212 s, median 111 s | median ~30k (24 drawings) |
 | Self-check round | ~1–2 min | not yet measured |
 | CAD part (Modal) | 20–40 s (first run ~45 s while the image builds) | not yet measured |
 | Guide answer | ~20–40 s | not yet measured |
@@ -451,8 +513,10 @@ Measured on real drawings with `muse-spark-1.3`:
 ## 12. Known limitations and roadmap
 
 - The model sometimes attaches a printed dimension to the wrong part. The gates
-  stop invented numbers, not misplaced ones. **Next: a human review screen**
-  (drawing beside the 3D, accept or fix each value, publish as reviewed).
+  stop invented numbers, not misplaced ones; the review screen is where an
+  expert catches them (it shows every part a printed value drives).
+- SAM finds discrete objects (baths, basins, wastes, taps) on line drawings, not
+  thin layers, so only some parts get a drawing link.
 - Section proportions can read flat; the self-check helps but isn't guaranteed.
 - Parts are axis-aligned prisms, revolutions, sweeps or fixtures; doubly curved
   products rely on the illustrative CAD path.
@@ -460,8 +524,7 @@ Measured on real drawings with `muse-spark-1.3`:
 - Jobs run in-process; AI jobs are kept in memory and lost on restart (the
   generated details themselves are saved).
 - Later: AR on site (point a phone at a junction — SAM 3.1 perception is
-  prototyped in the NCC track), batch generation for a whole manual, photoreal
-  renders.
+  prototyped in the NCC track) and photoreal renders.
 
 ---
 

@@ -15,7 +15,7 @@ function Card({ d, part }: { d: LibraryEntry; part?: string }): JSX.Element {
     <a className="card" href={href} data-detail={d.detail_id}>
       <div className="thumb">
         {thumb ? (
-          <img src={api.thumbUrl(d.detail_id)} alt="" loading="lazy" onError={() => setThumb(false)} />
+          <img src={api.drawingUrl(d.detail_id)} alt="" loading="lazy" onError={() => setThumb(false)} />
         ) : (
           <span>{d.kind}</span>
         )}
@@ -24,9 +24,10 @@ function Card({ d, part }: { d: LibraryEntry; part?: string }): JSX.Element {
         <div className="path">{d.situation.join(" › ")}</div>
         <div className="title">{d.title}</div>
         <div className="meta">
-          <span className={d.made_by === "ai" ? "badge b-assump" : "badge b-draw"}>
-            {d.made_by === "ai" ? "AI-generated" : "human transcription"}
+          <span className={d.made_by === "ai" && d.review !== "reviewed" ? "badge b-assump" : "badge b-draw"}>
+            {d.made_by === "ai" ? (d.review === "reviewed" ? "AI · reviewed" : "AI · draft") : "human transcription"}
           </span>
+          {d.located > 0 && <span title="parts located on the drawing by SAM 3.1">◎ {d.located}</span>}
           <span>{d.parts} parts · {d.drawing_values} drawing values · {d.labels} labels</span>
         </div>
         {part && <div className="meta">shows <b>{human(part)}</b></div>}
@@ -43,8 +44,13 @@ export default function Library(): JSX.Element {
   const [comp, setComp] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [pub, setPub] = useState(false);
 
   useEffect(() => {
+    api
+      .aiStatus()
+      .then((s) => setPub(s.public))
+      .catch(() => setPub(false));
     api
       .library()
       .then((b) => {
@@ -88,9 +94,11 @@ export default function Library(): JSX.Element {
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
-        <a className="btn primary" href="#/workbench">
-          + Add from PDF
-        </a>
+        {!pub && (
+          <a className="btn primary" href="#/workbench">
+            + Add from PDF
+          </a>
+        )}
       </header>
       <nav className="tabs">
         <button className={tab === "situation" ? "on" : ""} onClick={() => setTab("situation")}>

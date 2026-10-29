@@ -6,7 +6,8 @@ import type { JSX } from "react";
 import { api } from "./api";
 import Guide from "./Guide";
 import { badgeClass, badgeLabel, worstProv } from "./provenance";
-import type { GuideAction, Scene } from "./types";
+import ReviewPanel from "./ReviewPanel";
+import type { GuideAction, Region, Scene } from "./types";
 import type { ViewPreset, Viewport3D } from "./viewport";
 import { labelText } from "./viewport";
 import ViewportView from "./ViewportView";
@@ -23,6 +24,47 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
   const [solo, setSolo] = useState(false);
   const vp = useRef<Viewport3D | null>(null);
   const [visible] = useState<Record<string, boolean>>({});
+  const [mode, setMode] = useState<"guide" | "review">("guide");
+  const [pub, setPub] = useState(false);
+  const [aiOn, setAiOn] = useState(true);
+  const [showDrawing, setShowDrawing] = useState(true);
+  const [hasDrawing, setHasDrawing] = useState(true);
+  const [ver, setVer] = useState(0);
+  const [locating, setLocating] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .aiStatus()
+      .then((s) => {
+        setPub(s.public);
+        setAiOn(s.configured);
+      })
+      .catch(() => setPub(false));
+  }, []);
+
+  /* geometry changed (review fix, SAM regions): rebuild, keep the camera */
+  const reload = () =>
+    api
+      .scene(detailId)
+      .then((s) => {
+        setScene(s);
+        setVer((v) => v + 1);
+      })
+      .catch((e: Error) => setErr(e.message));
+
+  const locate = async () => {
+    setLocating("locating parts with SAM 3.1…");
+    try {
+      const job = await api.waitJob(await api.locate(detailId), (j) =>
+        setLocating(j.progress[j.progress.length - 1] || "locating…"),
+      );
+      if (job.state !== "done") throw new Error(job.error || "failed");
+      await reload();
+      setLocating(null);
+    } catch (e) {
+      setLocating("SAM: " + (e as Error).message.slice(0, 120));
+    }
+  };
 
   useEffect(() => {
     setScene(null);
@@ -52,6 +94,15 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
     {},
   );
   const situation = (scene?.context.situation as string[] | undefined) || [];
+  const isAI = !!scene?.origin.startsWith("ai-generated");
+  const regions = (scene?.context.drawing_regions as Record<string, Region> | undefined) || {};
+  const nLocated = Object.keys(regions).length;
+  const show = (ids: string[]) => {
+    setSelected(ids[0]);
+    setSolo(true);
+    vp.current?.isolate(ids);
+    vp.current?.flyTo(ids);
+  };
 
   const focus = (id: string) => {
     setSelected(id);
@@ -129,6 +180,15 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
         <span className="vsum">
           {counts.PASS || 0} pass · {counts.FAIL || 0} fail · {counts.UNVERIFIED || 0} unverified
         </span>
+        {isAI && !pub && (
+          <button
+            id="reviewToggle"
+            className={mode === "review" ? "on" : ""}
+            onClick={() => setMode(mode === "review" ? "guide" : "review")}
+          >
+            {mode === "review" ? "← Guide" : "Review"}
+          </button>
+        )}
       </header>
       {err && <div className="liberr">Could not load this detail: {err}</div>}
       <div className="dvgrid">
@@ -188,6 +248,11 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
                 solo
               </button>
               <button onClick={() => vp.current?.playIntro()}>build ▶</button>
+              {hasDrawing && !pub && (
+                <button className={showDrawing ? "on" : ""} onClick={() => setShowDrawing(!showDrawing)}>
+                  drawing
+                </button>
+              )}
             </span>
             <label>
               explode
@@ -218,6 +283,35 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
               {seqOn && seqIdx >= 0 && <span className="n">{seqIdx + 1}/{order.length}</span>}
             </label>
           </div>
+          {showDrawing && hasDrawing && !pub && scene && (
+            <div className="pip" id="drawingPip">
+              <div className="pipimg">
+                <img src={`${api.drawingUrl(detailId)}?v=${ver}`} alt="source drawing" onError={() => setHasDrawing(false)} />
+                <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+                  {Object.entries(regions).map(([id, r]) => (
+                    <rect
+                      key={id}
+                      x={r.x0 * 100}
+                      y={r.y0 * 100}
+                      width={(r.x1 - r.x0) * 100}
+                      height={(r.y1 - r.y0) * 100}
+                      className={id === selected ? "sel" : ""}
+                      onClick={() => focus(id)}
+                    >
+                      <title>{`${id} · SAM “${r.prompt}” ${Math.round(r.c * 100)}%`}</title>
+                    </rect>
+                  ))}
+                </svg>
+              </div>
+              <div className="pipfoot">
+                {nLocated ? `${nLocated} part(s) located by SAM 3.1 · click a box` : "source drawing"}
+                {isAI && !locating && (
+                  <button onClick={() => void locate()}>{nLocated ? "re-locate" : "Locate parts (SAM)"}</button>
+                )}
+                {locating && <span className="k"> {locating}</span>}
+              </div>
+            </div>
+          )}
           <ViewportView
             scene={scene}
             visible={visible}
@@ -233,7 +327,11 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
             apiRef={vp}
           />
         </main>
-        <Guide detailId={detailId} run={run} />
+        {mode === "review" && isAI ? (
+          <ReviewPanel detailId={detailId} onShow={show} onSaved={() => void reload()} />
+        ) : (
+          <Guide detailId={detailId} run={run} off={!aiOn} />
+        )}
       </div>
     </div>
   );

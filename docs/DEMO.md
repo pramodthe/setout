@@ -1,29 +1,29 @@
-# Demo script (3 min) — door-sill vertical slice
+# Demo script (3 min)
 
-0:00–0:25 The problem. "Waterproofing is the most common serious defect in
-NSW apartments — and the detail that prevents it lives in a PDF nobody can
-query. This playground turns one installation detail into traceable 3D."
+**Rule for every shot: never show a third-party manual page or drawing on
+screen.** Use your own drawing for anything where the source drawing is visible:
+the upload, the drawing panel, and the review screen. For details generated from
+third-party documents, keep the drawing panel closed and show only the 3D. The
+hosted demo enforces this (source drawings are not served).
 
-0:25–0:55 Upload + crop. Upload the Conpro door/window-sills sheet. Point:
-7 embedded figures extracted losslessly, checksummed. Select the "standard
-sill section" crop; overlay shows indicative component regions. "Every box
-and label below traces to this crop."
+Before recording: generate your own detail once, so the 1–3 minute generation can
+be shown as a short cut rather than live. Warm up Modal (one CAD run) and the
+guide (one question).
 
-0:55–1:30 Components + evidence. Click membrane in the list: exact drawing
-label "Waterproof membrane", provenance badges — blue drawing values vs
-amber assumptions. Open unresolved: 7 items, e.g. membrane termination past
-the crop edge. "Assumptions are visible and never counted as verified."
+| Time | Shot | Say |
+|---|---|---|
+| 0:00–0:20 | Title, then the library | "Waterproofing is the most common serious defect in NSW apartments: 63% of serious defects in a study of 492 buildings. The right detail exists — in a PDF nobody on site reads." |
+| 0:20–0:40 | Library: *By situation*, then *By component* → membrane → a card | "Every detail here was generated from a drawing. Browse by where you are, or by product: where does this membrane go?" |
+| 0:40–1:10 | **Add from PDF** → your own drawing → **Generate 3D with AI** → cut to the build-up animation | "Meta's Muse reads the drawing — every label, every printed dimension — then writes a detail program. It never writes geometry: our compiler does, from the printed numbers." |
+| 1:10–1:30 | The self-check result panel (issues found, *correction accepted*) | "Then it checks its own work: it renders the 3D, compares it with the drawing, and fixes what's wrong. A fix is only accepted if the verifier says nothing got worse." |
+| 1:30–1:55 | **Review**: printed values first → click one → its parts isolate; click a box on the drawing panel → the camera flies to that part | "An expert reviews before anything is published. Every printed value shows its exact quote and the parts it drives. SAM 3.1 links each part to where it is on the drawing." |
+| 1:55–2:30 | Guide: *Walk me through the install* → camera moves, parts isolate, install steps play | "Then anyone on site can ask. The guide drives the 3D while it explains — and every number it says is checked against the detail. If it invents one, it's flagged." |
+| 2:30–2:45 | A part → **Model with AI (CadQuery)** → the perforated grate | "For shapes our grammar can't express, Muse writes CAD code that runs in an isolated Modal sandbox with no network. Always labelled illustrative." |
+| 2:45–3:00 | Back to the library; the live link | "Any installation manual becomes an interactive, traceable 3D guide. Muse and SAM do the reading; code does the checking." |
 
-1:30–2:10 Generate + inspect. Generate: watch queued→running→done. Orbit
-the assembly; toggle layers; click the sealant bead — 6 mm from the
-drawing. Explode slider; section clip; play the install sequence.
-"Membrane, fillet, bead follow the section — not blocks."
+**Numbers to have ready** (from `docs/EVAL.md` and the README): the batch
+evaluation result, the guide's grounding rule, and the NCC benchmark (35% cold,
+100% grounded, n=31) if asked.
 
-2:10–2:40 Verify + edit. Verification panel: PASS with UNVERIFIED items,
-zero FAIL; source check PASS against the uploaded PDF's sha. Change one
-assumption (packer height 8→10), rebuild, watch geometry move and contacts
-re-check. Download scene.json / model.glb / report.json.
-
-2:40–3:00 Close. "One detail, end to end, with evidence. Next: model-driven
-interpretation, CadQuery solids, and a second detail." Show benchmark line
-only if asked — cold 35%, grounded 100% (n=31, NCC rules).
+**Do not claim**: compliance verdicts, measurement of real installations, or
+product approvals. Setout shows what correct looks like.
