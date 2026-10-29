@@ -150,3 +150,18 @@ def test_preview_is_our_render_and_public_can_only_read(monkeypatch, tmp_path):
     monkeypatch.setattr(m, "PUBLIC", True)
     assert c.get(url).status_code == 200  # a render, not a source drawing
     assert c.post(url, content=jpeg).status_code == 403
+
+
+def test_locate_never_gives_one_box_to_two_parts():
+    tap = {"x0": 0.5, "y0": 0.4, "x1": 0.55, "y1": 0.47, "c": 0.66}
+    wc = {"x0": 0.1, "y0": 0.3, "x1": 0.35, "y1": 0.7, "c": 0.88}
+    boxes = {"tap": [tap], "WC": [wc], "BASIN MIXER": [dict(tap, c=0.6)]}
+    call = lambda png, prompt: boxes.get(prompt, [])  # noqa: E731
+    # a basin tap and a shower mixer both find the one "tap": ambiguous, neither gets it
+    found = sam.locate(b"png", [("basin_tap", "tap", None), ("shower_mixer", "tap", "SHOWER MIXER"),
+                                ("wc", "toilet", "WC")], call=call)
+    assert set(found) == {"wc"}
+    # unless one of them found it by its own drawing label
+    found = sam.locate(b"png", [("basin_tap", "tap", "BASIN MIXER"), ("shower_mixer", "tap", None)],
+                       call=call)
+    assert set(found) == {"basin_tap"} and "own" not in found["basin_tap"]

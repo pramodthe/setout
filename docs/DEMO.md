@@ -6,11 +6,18 @@ the upload, the drawing panel, and the review screen. For details generated from
 third-party documents, keep the drawing panel closed and show only the 3D. The
 hosted demo enforces this (source drawings are not served).
 
-**Our own drawing:** `python scripts/demo_drawing.py` draws a shower step-down
-section (`data/demo/shower-stepdown.pdf`). Its only printed numbers are the
-25 mm step-down and the 1800 mm membrane height, read from `ncc/rules/rules.json`;
-every other dimension comes out as an assumption. SAM finds nothing in a flat
-section like this, so show the SAM link on a drawing with objects in it, or skip it.
+**Our own drawings:** `python scripts/demo_drawing.py` writes
+`data/demo/setout-demo.pdf` with two pages:
+- page 1, a shower step-down section;
+- page 2, a bathroom elevation.
+
+Every printed number is read from `ncc/rules/rules.json`: the 25 mm step-down,
+the 1800 mm membrane height and the 150 mm water-resistant zone above the
+basin. Every other dimension comes out as an assumption.
+
+Show the SAM link on page 2. SAM finds nothing in a flat section, but on the
+elevation it locates the WC (0.88), the vanity (0.61) and the shower rose
+(0.62); click the WC box and the camera flies to the WC.
 
 Before recording: generate your own detail once, so the 1–3 minute generation can
 be shown as a short cut rather than live. Warm up Modal (one CAD run) and the

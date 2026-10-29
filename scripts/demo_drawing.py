@@ -1,4 +1,5 @@
-"""Draw the demo detail: a shower step-down section, our own work.
+"""Draw the demo drawings, our own work: a shower step-down section and a
+bathroom elevation.
 
     python scripts/demo_drawing.py [out_dir]          # default data/demo/
 
@@ -6,8 +7,10 @@ Made for the demo video and the public demo, so no third-party drawing is
 ever on screen. Every printed number is a minimum read from
 ncc/rules/rules.json (human-confirmed, cited to NCC 2022 Housing Provisions
 Part 10.2); nothing else carries a number, so the AI has to treat it as an
-assumption. Not to scale. Writes a PNG and a one-page PDF with the drawing
-embedded as an image, which is what the upload screen extracts.
+assumption. Not to scale. The elevation has recognisable fixtures because
+SAM 3.1 finds objects, not layers. Writes one PNG per drawing and a two-page
+PDF with each drawing embedded as an image, which is what the upload screen
+extracts.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ def rule(rule_id: str) -> int:
 
 STEP = rule("NCC-10.2-shower-stepdown")          # shower floor below FFL outside
 WALL = rule("NCC-10.2-membrane-wall-height")      # membrane above finished tile
+BASIN = rule("NCC-10.2-sink-wall-height")         # water resistant above a basin
 
 
 def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
@@ -65,6 +69,7 @@ def hatch(img: Image.Image, poly: list, fill: int, step: int = 18,
 
 def leader(d: ImageDraw.ImageDraw, text: str, at: tuple, to: tuple, f) -> None:
     w = d.textlength(text, font=f)
+    d.rectangle([at[0] - 4, at[1] - 2, at[0] + w + 4, at[1] + f.size + 6], fill="white")
     d.text(at, text, font=f, fill=INK)
     x0 = at[0] + w + 8 if to[0] >= at[0] + w / 2 else at[0] - 8  # nearer end
     y0 = at[1] + f.size * 0.6
@@ -84,7 +89,7 @@ def vtext(img: Image.Image, centre: tuple, text: str, f) -> None:
     img.paste(INK, (int(centre[0] - t.width / 2), int(centre[1] - t.height / 2)), t)
 
 
-def draw() -> Image.Image:
+def section() -> Image.Image:
     img = Image.new("RGB", (W, H), "white")
     d = ImageDraw.Draw(img)
     f, fb, fs = font(30), font(46, bold=True), font(26)
@@ -188,22 +193,114 @@ def draw() -> Image.Image:
     leader(d, "SCREED LAID TO FALL TO WASTE", (980, 1400), (1200, 1040), f)
     leader(d, "CONCRETE SLAB SET DOWN AT SHOWER", (980, 1470), (1400, 1180), f)
 
-    # title block
-    d.rectangle([1700, 1400, 2550, 1650], outline=INK, width=3)
-    d.text((1730, 1420), "SHOWER STEP-DOWN — SECTION", font=fb, fill=INK)
-    d.text((1730, 1485), "NOT TO SCALE. DIMENSIONS IN MM.", font=fs, fill=INK)
-    d.text((1730, 1525), "MINIMUM VALUES: NCC 2022 HOUSING PROVISIONS PART 10.2", font=fs, fill=INK)
-    d.text((1730, 1565), "SETOUT DEMONSTRATION DRAWING", font=fs, fill=INK)
+    title_block(d, 1400, "SHOWER STEP-DOWN — SECTION", fb, fs)
+    return img
+
+
+def title_block(d: ImageDraw.ImageDraw, y: int, title: str, fb, fs) -> None:
+    d.rectangle([1700, y, 2550, y + 250], outline=INK, width=3)
+    d.text((1730, y + 20), title, font=fb, fill=INK)
+    d.text((1730, y + 85), "NOT TO SCALE. DIMENSIONS IN MM.", font=fs, fill=INK)
+    d.text((1730, y + 125), "MINIMUM VALUES: NCC 2022 HOUSING PROVISIONS PART 10.2", font=fs, fill=INK)
+    d.text((1730, y + 165), "SETOUT DEMONSTRATION DRAWING", font=fs, fill=INK)
+
+
+def elevation() -> Image.Image:
+    img = Image.new("RGB", (W, 2000), "white")
+    d = ImageDraw.Draw(img)
+    f, fb = font(30), font(46, bold=True)
+    floor, left, right, screen = 1450, 150, 2450, 1900
+    membrane_top, rim, cx, vx = 560, 940, 400, 1050    # shower membrane, basin rim, WC, vanity
+    resist_top = rim - 60
+
+    # zones under the tile grid: membrane in the shower, water resistant behind the basin
+    d.rectangle([screen + 30, membrane_top, right, floor], fill=(222, 234, 250))
+    d.rectangle([vx, resist_top, vx + 600, 1000], fill=(232, 238, 246))
+    for x in range(left, right, 150):
+        d.line([(x, 250), (x, floor)], fill=(200, 200, 200), width=2)
+    for y in range(250, floor, 150):
+        d.line([(left, y), (right, y)], fill=(200, 200, 200), width=2)
+    d.rectangle([left, 250, right, floor], outline=INK, width=4)
+    d.line([(screen + 30, membrane_top), (right, membrane_top)], fill=MEMBRANE, width=5)
+    d.rectangle([100, floor, 2500, floor + 20], fill="white", outline=INK, width=3)
+    for x in range(250, 2500, 150):
+        d.line([(x, floor), (x, floor + 20)], fill=INK, width=2)
+    hatch(img, [(100, floor + 20), (2500, floor + 20), (2500, floor + 90), (100, floor + 90)],
+          225, step=0, dots=500)
+
+    # WC, side elevation: cistern and button, bowl, seat, pedestal
+    d.rounded_rectangle([cx, 760, cx + 110, 1080], radius=18, fill="white", outline=INK, width=5)
+    d.rounded_rectangle([cx + 20, 735, cx + 90, 760], radius=8, fill="white", outline=INK, width=4)
+    d.pieslice([cx + 40, 1000, cx + 520, 1220], 0, 180, fill="white", outline=INK, width=5)
+    d.rounded_rectangle([cx + 40, 1080, cx + 520, 1110], radius=12, fill="white", outline=INK, width=5)
+    d.polygon([(cx + 170, 1200), (cx + 360, 1200), (cx + 330, floor), (cx + 200, floor)], fill="white")
+    d.line([(cx + 170, 1200), (cx + 200, floor)], fill=INK, width=5)
+    d.line([(cx + 360, 1200), (cx + 330, floor)], fill=INK, width=5)
+
+    # vanity: top, two-door cabinet on legs, vessel basin, mixer, mirror
+    d.rectangle([vx, 1000, vx + 600, 1030], fill="white", outline=INK, width=5)
+    d.rectangle([vx + 20, 1030, vx + 580, 1330], fill="white", outline=INK, width=5)
+    d.line([(vx + 300, 1030), (vx + 300, 1330)], fill=INK, width=4)
+    for hx in (vx + 270, vx + 320):
+        d.rounded_rectangle([hx, 1150, hx + 10, 1210], radius=4, fill=INK)
+    for lx in (vx + 50, vx + 530):
+        d.rectangle([lx, 1330, lx + 20, floor], fill="white", outline=INK, width=4)
+    d.chord([vx + 150, rim, vx + 450, 1060], 180, 360, fill="white", outline=INK, width=5)
+    d.line([(vx + 300, rim), (vx + 300, 860), (vx + 360, 860), (vx + 360, 885)], fill=INK, width=9)
+    d.rounded_rectangle([vx + 120, 380, vx + 480, 800], radius=20, fill=(235, 242, 248), outline=INK, width=5)
+    d.line([(vx + 170, 450), (vx + 260, 380)], fill=(170, 190, 210), width=6)
+
+    # shower: rose on its arm, mixer, fixed glass screen (edge on), floor waste
+    d.line([(right - 10, 420), (2280, 420)], fill=INK, width=10)
+    d.polygon([(2230, 430), (2330, 430), (2310, 460), (2250, 460)], fill=(80, 80, 80))
+    for k in range(6):
+        d.line([(2250 + k * 12, 470), (2240 + k * 14, 560)], fill=(150, 180, 210), width=2)
+    d.ellipse([2380, 980, 2440, 1040], fill="white", outline=INK, width=6)
+    d.line([(2410, 1010), (2350, 1010)], fill=INK, width=8)
+    d.rectangle([screen, 330, screen + 22, floor], fill=(205, 225, 240), outline=INK, width=4)
+    d.rectangle([screen + 22, 330, screen + 30, floor], fill=(150, 150, 150))
+    d.rectangle([2180, floor - 6, 2300, floor + 4], fill=(90, 90, 90))
+    for gx in range(2190, 2300, 14):
+        d.line([(gx, floor - 6), (gx, floor + 4)], fill="white", width=3)
+
+    # dimensions
+    d.line([(right + 5, membrane_top), (2545, membrane_top)], fill=INK, width=2)
+    d.line([(2505, floor), (2545, floor)], fill=INK, width=2)
+    d.line([(2530, membrane_top - 20), (2530, floor + 20)], fill=INK, width=2)
+    tick(d, 2530, membrane_top), tick(d, 2530, floor)
+    vtext(img, (2572, (membrane_top + floor) / 2), f"{WALL} MIN. ABOVE FINISHED TILE", f)
+    d.line([(vx + 455, rim), (1685, rim)], fill=INK, width=2)
+    d.line([(vx + 605, resist_top), (1685, resist_top)], fill=INK, width=2)
+    d.line([(1670, resist_top - 20), (1670, rim + 20)], fill=INK, width=2)
+    tick(d, 1670, resist_top), tick(d, 1670, rim)
+    d.text((1690, resist_top + 12), f"{BASIN} MIN.", font=f, fill=INK)
+
+    # labels (our own words)
+    d.text((1960, 280), "SHOWER", font=font(40, bold=True), fill=GREY)
+    leader(d, "WALL TILES", (190, 290), (330, 340), f)
+    leader(d, "WC PAN AND CISTERN", (560, 640), (cx + 55, 900), f)
+    leader(d, "WATER RESISTANT BEHIND BASIN", (560, 830), (vx + 30, 950), f)
+    leader(d, "MIRROR", (1560, 330), (vx + 450, 450), f)
+    leader(d, "SHOWER ROSE", (2000, 600), (2280, 445), f)
+    leader(d, "WATERPROOF MEMBRANE", (1960, 800), (2300, 900), f)
+    leader(d, "SHOWER MIXER", (2000, 1060), (2380, 1010), f)
+    leader(d, "FIXED GLASS SCREEN", (1960, 1300), (screen + 12, 1000), f)
+    leader(d, "FLOOR TILES", (600, 1580), (700, floor + 10), f)
+    leader(d, "VANITY WITH BASIN", (1150, 1580), (vx + 300, 1250), f)
+    leader(d, "FLOOR WASTE", (2050, 1580), (2240, floor), f)
+    title_block(d, 1700, "BATHROOM — ELEVATION", fb, font(26))
     return img
 
 
 def main() -> None:
     out = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "data" / "demo"
     out.mkdir(parents=True, exist_ok=True)
-    img = draw()
-    img.save(out / "shower-stepdown.png")
-    img.save(out / "shower-stepdown.pdf", "PDF", resolution=200)
-    print(out / "shower-stepdown.pdf")
+    pages = [section(), elevation()]
+    pages[0].save(out / "shower-stepdown.png")
+    pages[1].save(out / "bathroom-elevation.png")
+    pages[0].save(out / "setout-demo.pdf", "PDF", resolution=200, save_all=True,
+                  append_images=pages[1:])
+    print(out / "setout-demo.pdf")
 
 
 if __name__ == "__main__":

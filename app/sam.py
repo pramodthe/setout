@@ -107,24 +107,46 @@ def _call(png: bytes, prompt: str) -> list[dict]:
     return parse_boxes("".join(text))
 
 
+def _same(a: dict, b: dict) -> bool:
+    """Two boxes cover the same thing (IoU >= 0.7)."""
+    w = max(0.0, min(a["x1"], b["x1"]) - max(a["x0"], b["x0"]))
+    h = max(0.0, min(a["y1"], b["y1"]) - max(a["y0"], b["y0"]))
+    inter = w * h
+    area = lambda r: (r["x1"] - r["x0"]) * (r["y1"] - r["y0"])  # noqa: E731
+    return inter > 0 and inter / (area(a) + area(b) - inter) >= 0.7
+
+
 def locate(png: bytes, parts: list[tuple[str, str, str | None]],
            call=None) -> dict[str, dict]:
-    """parts: (id, type, label). Returns {part_id: best box with prompt, c}."""
+    """parts: (id, type, label). Returns {part_id: best box with prompt, c}.
+
+    A box claimed by two parts (a basin tap and a shower mixer both asking
+    for "tap") can't be told apart, so it goes to neither, unless exactly one
+    of them found it with its own drawing label."""
     call = call or _call
-    todo = [(pid, pr) for pid, t, lab in parts for pr in prompts_for(t, lab)]
+    todo = [(pid, pr, pr == lab) for pid, t, lab in parts for pr in prompts_for(t, lab)]
 
     def one(item):
-        pid, prompt = item
+        pid, prompt, own = item
         try:
             boxes = [b for b in call(png, prompt) if b["c"] >= MIN_CONFIDENCE]
         except Exception:  # noqa: BLE001 - a failed prompt just finds nothing
             return pid, None
         best = max(boxes, key=lambda b: b["c"], default=None)
-        return pid, ({**best, "prompt": prompt} if best else None)
+        return pid, ({**best, "prompt": prompt, "own": own} if best else None)
 
-    found: dict[str, dict] = {}
+    hits: dict[str, list[dict]] = {}
     with ThreadPoolExecutor(max_workers=6) as ex:
         for pid, box in ex.map(one, todo):
-            if box and box["c"] > found.get(pid, {}).get("c", -1):
-                found[pid] = box  # best name wins
-    return found
+            if box:
+                hits.setdefault(pid, []).append(box)
+    found = {}
+    for pid, hs in hits.items():
+        best = max(hs, key=lambda b: b["c"])  # best name wins
+        found[pid] = {**best, "own": any(h["own"] and _same(h, best) for h in hs)}
+    out = {}
+    for pid, box in found.items():
+        rivals = [q for q, b in found.items() if q != pid and _same(box, b)]
+        if not rivals or (box["own"] and not any(found[q]["own"] for q in rivals)):
+            out[pid] = {k: v for k, v in box.items() if k != "own"}
+    return out

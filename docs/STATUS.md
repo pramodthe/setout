@@ -350,6 +350,23 @@
   needs real membrane-stage footage, which we don't have. It stays future work
   (README §12).
 
+## 2026-10-29 (night) — own bathroom elevation; SAM never shares a box
+
+- `scripts/demo_drawing.py` now also draws a bathroom elevation: a WC, a
+  vanity with basin, a mirror and a shower with rose, mixer, screen and waste.
+  The printed numbers (1800 MIN. membrane, 150 MIN. water resistant above the
+  basin) come from `rules.json`. Both drawings go into one 2-page
+  `setout-demo.pdf`.
+- Pipeline on the elevation: 115 s, ~40.6k tokens; 16 parts (the shower rose
+  modelled in CadQuery on Modal); both values kept as drawing minimums; 0 gate
+  notes; 39 PASS, 0 FAIL.
+- Bug found and fixed in `sam.locate`: the basin tap and the shower mixer
+  both asked for "tap" and got the same box, so the shower mixer pointed at the
+  basin tap. A box claimed by two parts now goes to neither, unless exactly one
+  found it by its own drawing label. There's a regression test, and it fails on
+  the old code. Result: 3 correct links (WC 0.88, vanity 0.61, shower rose
+  0.62). Clicking the WC box on the drawing flies the camera to the WC.
+
 ## Milestone ledger
 
 | Milestone | State | Evidence |

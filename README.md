@@ -213,7 +213,9 @@ sequenceDiagram
    asked for each part by up to three short names: its drawing label, its type,
    and an everyday synonym ("bathtub", "floor drain", "sink"). The best box with
    confidence ≥ 0.5 is stored. Thin layers (membranes, screeds, slabs) are not
-   prompted: SAM can't see them in a line drawing.
+   prompted: SAM can't see them in a line drawing. If two parts claim the same
+   box (a basin tap and a shower mixer both asking for "tap"), neither gets it,
+   unless exactly one of them found it with its own drawing label.
 8. **Verification.** `verify.py` checks structure, that each part was built exactly
    as specified (mesh bounds vs program, ±0.01 mm), that every drawing value drives
    some geometry, labels, products and install order.
