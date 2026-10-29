@@ -35,16 +35,16 @@ def material_tokens(part_type):
 
 
 def label_coverage(program, read):
-    """Drawing labels the READ classed as a layer or object that no part
+    """Drawing labels the READ classed as a layer, object or zone that no part
     carries. Informational: it never blocks completion, but the agent and the
     reviewer see what is missing. Older reads without categories are skipped."""
     wanted = {e["label_verbatim"] for e in read.get("elements", [])
-              if e.get("label_verbatim") and e.get("category") in ("layer", "object")}
+              if e.get("label_verbatim") and e.get("category") in ("layer", "object", "zone")}
     if not wanted:
         return None
     missing = sorted(wanted - {part.label for part in program.parts if part.label})
     return check("label-coverage", "UNVERIFIED" if missing else "PASS",
-                 "Every drawing label for a layer or object is carried by a part", required=False,
+                 "Every drawing label for a layer, object or zone is carried by a part", required=False,
                  missing=missing)
 
 

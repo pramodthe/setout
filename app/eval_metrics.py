@@ -26,7 +26,7 @@ def result_row(repo, job_id, seconds):
     printed = {e["label_verbatim"] for e in read.get("elements",[])}
     # Labels the READ classed as a layer or object: zone names, notes and
     # table text are not parts. None when the read has no categories.
-    part_labels = {e["label_verbatim"] for e in read.get("elements",[]) if e.get("category") in ("layer","object")}
+    part_labels = {e["label_verbatim"] for e in read.get("elements",[]) if e.get("category") in ("layer","object","zone")}
     buildable = bool(reports) and not any(c["id"].startswith(("cad-","object-form-","fixture-form-","B-built-","B-mesh-")) and
         c["status"] in ("FAIL","UNVERIFIED") for c in checks)
     return {"job_id":job_id,"version_id":version_id,"state":job["state"],"error":job["error"],

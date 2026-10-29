@@ -68,7 +68,7 @@ class StagedRepository:
 LABEL_RULES = ("LABELS: a part's label is exactly one READ label_verbatim, copied character for character, "
                "or null; never your own wording, a shortened callout or a label with words added. Every piece "
                "of a split layer carries the same READ label; position words (wall, floor, left, upturn) go in "
-               "id, type or note. Give every READ label with category layer or object a part that carries it. ")
+               "id, type or note. Give every READ label with category layer, object or zone a part that carries it. ")
 
 
 class Tools:
@@ -423,7 +423,8 @@ class Tools:
                 self.repo.model_response(self.fence, step, {"output": [], "boxes": boxes},
                                          {"model_calls": 1, "tokens": 8192})
                 return boxes
-            found = sam.locate(png, [(p["id"], p["type"], p.get("label")) for p in version["program"]["parts"]], call=call)
+            found = sam.locate(png, [(p["id"], p["type"], p.get("label"), p.get("role", "object"))
+                                     for p in version["program"]["parts"]], call=call)
             return {"regions": found}
         if name == "finish":
             return {"result": args}

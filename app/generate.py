@@ -35,7 +35,7 @@ READ_SCHEMA = _obj({
     "title": STR,
     "elements": {"type": "array", "items": _obj({
         "label_verbatim": STR, "kind": STR, "where": STR,
-        "category": {"type": "string", "enum": ["layer", "object", "other"]}})},
+        "category": {"type": "string", "enum": ["layer", "object", "zone", "other"]}})},
     "dimensions": {"type": "array", "items": _obj({
         "value_mm": {"type": "number"}, "quote_verbatim": STR, "applies_to": STR})},
 })
@@ -48,7 +48,9 @@ READ_PROMPT = (
     "sheet or board (substrate, slab, screed, bed, membrane, coating, "
     "insulation, cladding board, finish); object for a discrete manufactured "
     "item (fixing, bracket, anchor, flashing piece, trim, grate, fixture, "
-    "appliance); other for notes and annotations. dimensions: every printed dimension, value in mm (a ratio like "
+    "appliance); zone for something drawn that is not built: a clearance or "
+    "circulation space, a set-out line, a datum, a dimension zone; other for "
+    "notes and annotations. dimensions: every printed dimension, value in mm (a ratio like "
     "1:80 as 0.0125), the exact printed words, and what it applies to. Never "
     "invent a value.")
 

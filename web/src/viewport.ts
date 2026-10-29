@@ -35,6 +35,9 @@ function surfacePoints(m: THREE.Mesh, n: number): THREE.Vector3[] {
 const CUTBACK = 0.6; // staircase: last-installed part starts this far along z
 
 /* Label text: the drawing's own short label when there is one, else the id. */
+const ZONE_COLOR = 0x4ea1ff;
+const ZONE_OPACITY = 0.12;
+
 export function labelText(id: string, sourceLabel: string | null): string {
   if (sourceLabel && sourceLabel.length <= 32) return sourceLabel;
   const t = id.replace(/_/g, " ");
@@ -256,6 +259,21 @@ export class Viewport3D {
       g.setAttribute("uv", new THREE.BufferAttribute(boxProjectUVs(solid.tris, SPECS[cls].repeatMm), 2));
       g.computeVertexNormals();
       const idx = Math.max(0, this.order.indexOf(solid.id));
+      if (solid.representation === "zone") {
+        // Drawn but not built (a clearance, set-out line or datum): a faint
+        // volume with outlined edges, no shadow, never mistaken for a part.
+        const zoneMat = new THREE.MeshBasicMaterial({ color: ZONE_COLOR, transparent: true, opacity: ZONE_OPACITY,
+          depthWrite: false, side: THREE.DoubleSide, clippingPlanes: [this.clipPlane] });
+        const zone = new THREE.Mesh(g, zoneMat);
+        zone.add(new THREE.LineSegments(new THREE.EdgesGeometry(g, 30),
+          new THREE.LineBasicMaterial({ color: ZONE_COLOR, transparent: true, opacity: 0.8, clippingPlanes: [this.clipPlane] })));
+        zone.userData = { id: solid.id, cls, baseOpacity: ZONE_OPACITY };
+        this.meshes.set(solid.id, zone);
+        this.root.add(zone);
+        this.base.set(solid.id, pos.slice());
+        zone.add(this.makeTag(solid.id, `${labelText(solid.id, solid.source_label)} · zone (not built)`, solid.source_label));
+        continue;
+      }
       const mat = makeMaterial(cls, solid.color);
       mat.envMapIntensity = cls === "ceramic" || cls === "glass" ? 0.9 : 0.45;
       mat.side = THREE.DoubleSide; // generated shapes: never lose a face to winding
@@ -313,8 +331,10 @@ export class Viewport3D {
     this.selected = id;
     this.meshes.forEach((mesh, cid) => {
       const m = mesh.material as THREE.MeshStandardMaterial;
-      m.emissive.set(cid === id ? 0x2563eb : 0x000000);
-      m.emissiveIntensity = cid === id ? 0.35 : 0;
+      if (m.emissive) { // zones use a basic material: their tag shows the selection
+        m.emissive.set(cid === id ? 0x2563eb : 0x000000);
+        m.emissiveIntensity = cid === id ? 0.35 : 0;
+      }
       this.tags.get(cid)?.element.classList.toggle("sel", cid === id);
     });
     this.layout();

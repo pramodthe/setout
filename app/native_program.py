@@ -79,7 +79,9 @@ class Feature(BaseModel):
 
 class NativePart(ProgPart):
     shape: Literal["box", "sheet", "post", "rod", "wedge", "fillet", "profile", "revolve", "sweep", "cad", "annotation"]
-    role: Literal["substrate", "covered_layer", "finish", "object"]
+    # zone: drawn but not built (clearance, circulation space, set-out line,
+    # datum). An exact primitive, shown see-through, never in a physical check.
+    role: Literal["substrate", "covered_layer", "finish", "object", "zone"]
     # Objects only. shaped: the drawing shows a form beyond its envelope
     # (openings, cavities, bowls, flanges, legs, profiles), so the measured
     # solid may not fill its box. block: the manufactured item really is a
@@ -124,6 +126,8 @@ class NativeProgram(DetailProgram):
                 raise ValueError(f"{part.id}: layers/substrates use exact primitives, not CAD")
             if part.form and part.role != "object":
                 raise ValueError(f"{part.id}: form is declared only on objects")
+            if part.role == "zone" and part.shape not in ("box", "sheet", "wedge", "profile"):
+                raise ValueError(f"{part.id}: a zone is an exact primitive (box, sheet, wedge or profile)")
             if len({f.id for f in part.features}) != len(part.features):
                 raise ValueError(f"{part.id}: duplicate feature IDs")
             for feature in part.features:
@@ -225,12 +229,22 @@ def check_roles(program, read, human=False):
         if found == "object" and part.role != "object":
             raise ValueError(f"{part.id}: the drawing reading classifies {part.label!r} as a manufactured "
                              "object; keep the label and change the part to role=object with parametric CAD")
-        if found == "layer" and part.role == "object":
+        if found == "layer" and part.role in ("object", "zone"):
             raise ValueError(f"{part.id}: the drawing reading classifies {part.label!r} as a layer; keep the "
                              "label and change the part to an exact primitive with role substrate, covered_layer or finish")
+        if found == "zone" and part.role != "zone":
+            raise ValueError(f"{part.id}: the drawing reading classifies {part.label!r} as a zone that is not "
+                             "built (a clearance, set-out line or datum); keep the label and use role=zone")
         if part.role == "object" and part.form is None and not human:
             raise ValueError(f"{part.id}: objects declare form=shaped or form=block")
+    zones = {part.id for part in program.parts if part.role == "zone"}
+    for part in program.parts:
+        if zones & set(part.install_after) or (part.id in zones and part.install_after):
+            raise ValueError(f"{part.id}: zones are not installed; leave them out of install_after")
     for relation in program.relations:
+        if {relation.source, relation.target} & zones:
+            raise ValueError(f"{relation.source}->{relation.target}: a zone is not built, so it has no physical "
+                             "relations; describe clearances with features or a note instead")
         # Seen 29 Oct: min_coverage 90 meant 90%, and every relation FAILed at
         # full coverage. Reject it rather than guess the unit. (Authoring only:
         # stored versions keep loading.)
@@ -313,6 +327,9 @@ def prepare(raw, source, detail_id, read, base=None, human=False):
     if any(not math.isfinite(p.value) for c in spec.components for p in c.params):
         raise ValueError("compiled dimensions must be finite")
     spec.context["program_version"] = "3.0"
+    for part, component in zip(program.parts, spec.components):
+        if part.role == "zone":
+            component.representation = "zone"
     for parameter in spec.context.get("drawing_params", []):
         for part in program.parts:
             expressions = list(part.param_bindings.values()) + list(part.placement.values())

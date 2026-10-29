@@ -75,7 +75,9 @@ class Component(BaseModel):
     id: str
     type: str  # normalised type, e.g. "membrane", "sealant_bead"
     source_label: str | None = None  # EXACT drawing label; null when none
-    representation: Literal["solid", "sheet", "coating", "annotation"]
+    # zone: drawn but not built (a clearance, set-out line or datum); shown
+    # see-through and never treated as a physical part.
+    representation: Literal["solid", "sheet", "coating", "annotation", "zone"]
     generator: GeneratorRef
     params: list[Param] = Field(default_factory=list)
     product: ProductRef | None = None

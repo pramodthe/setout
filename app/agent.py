@@ -17,7 +17,7 @@ dozens of independent absolute coordinates which disconnect source dimensions.
 Use lowercase snake_case parameter names and part IDs.
 Pass program as a JSON OBJECT, never a quoted or escaped JSON string. The harness
 supplies source, origin, detail_id and optimistic parent identity; do not invent IDs.
-Cover the drawing: every READ label with category layer or object gets a part that
+Cover the drawing: every READ label with category layer, object or zone gets a part that
 carries that exact label (usually 8-30 parts). A part's label is a READ label copied
 exactly, or null; pieces of a split layer keep the same label, and position words go
 in the id, type or note. Add or repair parts in successor versions. If write_program
@@ -28,8 +28,12 @@ LAYERS/SUBSTRATES MUST USE EXACT PRIMITIVES, NEVER CAD. Anything built up in pla
 or laid as a sheet or board (substrates, slabs, screeds, beds, membranes, coatings,
 insulation, boards, finishes) uses box, sheet, wedge or profile. Only discrete
 manufactured objects (fixings, brackets, anchors, trims, grates, fixtures,
-appliances) use role=object and cad. read_drawing classifies each printed label as
-layer, object or other; a part carrying that label must take the matching role.
+appliances) use role=object and cad. Things drawn but not built (clearance and
+circulation spaces, set-out lines, datums) use role=zone with an exact primitive:
+they are shown see-through, have no install step and no physical relations, and
+may carry extent features for printed clearances. read_drawing classifies each
+printed label as layer, object, zone or other; a part carrying that label must
+take the matching role.
 Shape dimensions are a dims ARRAY of {name,expr}, with expressions in mm:
 - box: x0,x1,y0,y1,z0,z1. Thin rectangular layers are boxes too.
 - sheet: thickness,z0,z1 and path [{x:expr,y:expr},...].

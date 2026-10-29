@@ -339,3 +339,49 @@ def test_coverage_given_as_a_percentage_is_rejected_when_authoring():
     with pytest.raises(ValueError, match="fraction from 0 to 1"):
         check_roles(program, {})
     NativeProgram.model_validate(program.model_dump(mode="json"))  # stored versions still load
+
+
+def test_zones_are_drawn_not_built(source_repo):
+    """A clearance or set-out zone is an exact primitive shown see-through,
+    with no install step, no physical relations, and its own READ category."""
+    from app.native_program import check_roles
+    from app.model_gateway import ModelGateway
+    from app import library
+    program = _layer_program()
+    zone = program.parts[2].model_copy(update={"id": "clear_space", "type": "circulation_space", "role": "zone",
+                                               "label": "Labelled item", "install_after": []})
+    with pytest.raises(ValueError, match="as a zone"):
+        check_roles(program.model_copy(update={"parts": [program.parts[2].model_copy(update={"label": "Labelled item"})]}),
+                    _read("zone"))
+    check_roles(program.model_copy(update={"parts": [zone], "relations": []}), _read("zone"))
+    with pytest.raises(ValueError, match="no physical"):
+        check_roles(program.model_copy(update={"parts": [program.parts[0], zone], "relations": [
+            program.relations[0].model_copy(update={"source": "clear_space", "target": "membrane"})]}), {})
+    with pytest.raises(ValueError, match="not installed"):
+        check_roles(program.model_copy(update={"parts": [program.parts[0], zone.model_copy(update={"install_after": ["membrane"]})],
+                                               "relations": []}), {})
+    raw = program.model_dump(mode="json")
+    raw["parts"][2].update(role="zone", shape="cad", cad_brief="clearance")
+    with pytest.raises(ValueError, match="exact primitive"):
+        NativeProgram.model_validate(raw)
+    # Compiled as a see-through zone, and not counted as a part on the card.
+    tools_repo = source_repo
+    job = tools_repo.enqueue("generate_detail", {"figure_id": "figure"})
+    fence = tools_repo.claim("zones", only_ids=[job["id"]])
+    tools = Tools(tools_repo, fence, ModelGateway(tools_repo, fence, ScriptedModel()))
+    tools.run("read", "read_drawing", {})
+    candidate = program_with_zone()
+    written = tools.run("write", "write_program", {"program": candidate})
+    version = tools_repo.get(d.versions, written["version_id"])
+    reps = {c["id"]: c["representation"] for c in version["spec"]["components"]}
+    assert reps["clear_space"] == "zone" and reps["wall"] == "solid"
+    from app.spec import DetailSpec
+    assert library.entry(DetailSpec.model_validate(version["spec"]), "ai")["parts"] == 1
+
+
+def program_with_zone():
+    raw = program()
+    zone = copy.deepcopy(raw["parts"][0])
+    zone.update(id="clear_space", type="circulation_space", label=None, role="zone", features=[], install_after=[])
+    raw["parts"].append(zone)
+    return raw

@@ -28,7 +28,7 @@ export interface Component {
   id: string;
   type: string;
   source_label: string | null;
-  representation: "solid" | "sheet" | "coating" | "annotation";
+  representation: "solid" | "sheet" | "coating" | "annotation" | "zone";
   generator: { id: string; version: string };
   params: Param[];
   product: { ref: string | null; system: string | null; note: string | null } | null;

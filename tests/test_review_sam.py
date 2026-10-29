@@ -12,9 +12,12 @@ def test_sam_parsing_prompts_and_confidence_floor():
     boxes = sam.parse_boxes(text)
     assert boxes[0] == {"x0": 0.1, "y0": 0.1, "x1": 0.3, "y1": 0.2, "c": 0.9}
     assert sam.prompt_for("bath", None) == "bath"
-    assert sam.prompt_for("membrane", None) is None  # thin layers: SAM can't see them
-    assert sam.prompt_for("membrane", "Waterproofed walls") == "Waterproofed walls"
-    found = sam.locate(b"png", [("bath", "bath", None), ("m", "membrane", None)],
+    # The declared role decides, never the name: a layer is searched by its label only.
+    assert sam.prompt_for("membrane", None, "covered_layer") is None
+    assert sam.prompt_for("membrane", "Waterproofed walls", "covered_layer") == "Waterproofed walls"
+    assert sam.prompt_for("cladding_board", None, "finish") is None
+    assert sam.prompt_for("membrane", None, "object") == "membrane"
+    found = sam.locate(b"png", [("bath", "bath", None, "object"), ("m", "membrane", None, "covered_layer")],
                        call=lambda png, prompt: boxes)
     assert set(found) == {"bath"} and found["bath"]["c"] == 0.9  # 0.2 box dropped
     assert sam.prompts_for("basin_vanity", None) == ["basin vanity", "washbasin", "sink"]

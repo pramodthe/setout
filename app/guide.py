@@ -90,8 +90,10 @@ def context(spec: DetailSpec) -> dict:
                    "from": "drawing" if p.provenance == Provenance.DRAWING else p.provenance.value,
                    **({"quote": p.source_quote} if p.source_quote else {})}
                   for p in c.params if p.role.value == "physical"][:10]
+        zone = c.representation == "zone"  # drawn, not built: never an install step
         parts.append({"id": c.id, "type": c.type, "label": c.source_label,
-                      "install_step": order.index(c.id) + 1 if c.id in order else None,
+                      "install_step": order.index(c.id) + 1 if c.id in order and not zone else None,
+                      **({"not_built": "clearance, set-out line or datum"} if zone else {}),
                       "note": (c.note or "")[:160], "params": params})
     return {"title": spec.title, "kind": spec.context.get("kind", "section"),
             "situation": spec.context.get("situation") or [],
