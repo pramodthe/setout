@@ -503,7 +503,11 @@ def load_cad_mesh(spec: DetailSpec, c: Component) -> Mesh:
     info = (spec.context.get("cad_parts") or {}).get(c.id)
     if not info:
         raise ValueError(f"{c.id}: AI-modelled part has no generated mesh")
-    data = json.loads((var_root() / "library" / info["file"]).read_text())
+    base = (var_root() / "library").resolve()
+    path = (base / str(info["file"])).resolve()
+    if not path.is_relative_to(base) or path.suffix != ".json" or not path.is_file():
+        raise ValueError(f"{c.id}: CAD mesh file must be a .json inside the library")
+    data = json.loads(path.read_text())
     m = Mesh(c.id, color=c.color)
     m.positions = [float(v) for v in data["positions"]]
     return m

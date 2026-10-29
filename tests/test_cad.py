@@ -203,3 +203,30 @@ def test_remodel_part_swaps_in_cad_geometry(tmp_path, monkeypatch):
     meshes = build_assembly(new)
     res = {r.id: r for r in verify_all(new, meshes, None)}
     assert res["B-built-bath"].status == "PASS" and res["C-cad-bath"].status == "N/A"
+
+
+def test_cad_mesh_path_must_stay_in_library(tmp_path, monkeypatch):
+    """#6: a tampered record can't make load_cad_mesh read outside var/library."""
+    from app.geometry import load_cad_mesh
+    monkeypatch.setattr(store, "VAR", tmp_path)
+    (tmp_path / "library").mkdir()
+    (tmp_path / "secret.json").write_text(json.dumps({"positions": [0] * 9}))
+    src = SourceDoc(filename="t.pdf", sha256="0" * 64, page_index=0, crop_id="p0_x",
+                    page_width_pt=595, page_height_pt=842)
+    env = [{"name": k, "expr": "1"} for k in ("x0", "x1", "y0", "y1", "z0", "z1")]
+    spec = compile_program(DetailProgram(
+        detail_id="t", title="t", origin="t", source=src,
+        parts=[{"id": "g", "type": "x", "shape": "cad", "cad_brief": "b", "dims": env}]))
+    for bad in ("../secret.json", "/etc/hosts", "cad/../../secret.json"):
+        spec.context["cad_parts"] = {"g": {"file": bad}}
+        with pytest.raises(ValueError):
+            load_cad_mesh(spec, spec.component("g"))
+
+
+def test_figure_lookup_rejects_bad_ids_and_creates_nothing(tmp_path, monkeypatch):
+    from app.store import figure_path
+    monkeypatch.setattr(store, "VAR", tmp_path)
+    for doc, crop in (("..", "p0_x"), ("abc", "p0_x"), ("0123456789ab", "../x"),
+                      ("0123456789ab", "p0_..")):
+        assert figure_path(doc, crop) is None
+    assert not (tmp_path / "docs").exists()
