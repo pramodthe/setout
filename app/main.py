@@ -19,11 +19,13 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from . import cad_sandbox, guide, library, meta_client
+from . import generate as ai
 from .geometry import build_assembly, export_glb, export_scene_json
 from .seed import door_sill_d3, door_subsill_d4
 from .spec import DetailSpec, Provenance
-from .store import (build_dir, db, figure_path, get_document, store_pdf,
-                    var_root)
+from .store import (build_dir, db, figure_path, find_document_by_sha,
+                    get_document, store_pdf, var_root)
 from .verify import summarize, verify_all
 
 app = FastAPI(title="Setout", version="0.1.0")
@@ -97,17 +99,27 @@ SPECS = {"conpro-door-sill-D3": door_sill_d3,
          "conpro-subsill-D4": door_subsill_d4}
 
 
+def _load_spec(detail_id: str) -> DetailSpec | None:
+    """Seed specs (human transcriptions) first, then AI-generated library."""
+    if detail_id in SPECS:
+        return SPECS[detail_id]()
+    return ai.load_library_spec(detail_id)
+
+
 @app.get("/api/specs")
 async def list_specs() -> dict:
-    return {"specs": [{"detail_id": k,
-                       "title": v().title} for k, v in SPECS.items()]}
+    seeds = [{"detail_id": k, "title": (s := v()).title,
+              "crop_id": s.source.crop_id, "sha256": s.source.sha256,
+              "origin": s.origin} for k, v in SPECS.items()]
+    return {"specs": seeds + ai.list_library()}
 
 
 @app.get("/api/specs/{detail_id}")
 async def get_spec(detail_id: str) -> dict:
-    if detail_id not in SPECS:
+    spec = _load_spec(detail_id)
+    if spec is None:
         raise HTTPException(404, "unknown detail")
-    return SPECS[detail_id]().model_dump()
+    return spec.model_dump()
 
 
 class Correction(BaseModel):
@@ -122,9 +134,10 @@ async def correct_spec(detail_id: str, fix: Correction) -> dict:
     """User correction: param values and labels. Param edits are recorded
     with USER_INPUT provenance and re-validated; source (drawing) values can
     only be overridden explicitly, never silently."""
-    if detail_id not in SPECS:
+    loaded = _load_spec(detail_id)
+    if loaded is None:
         raise HTTPException(404, "unknown detail")
-    spec = SPECS[detail_id]()
+    spec = loaded
     try:
         comp = spec.component(fix.component_id)
     except KeyError:
@@ -154,7 +167,10 @@ def _active_spec(detail_id: str) -> DetailSpec:
     override = var_root() / f"spec-{detail_id}.json"
     if override.exists():
         return DetailSpec.model_validate_json(override.read_text())
-    return SPECS[detail_id]()
+    spec = _load_spec(detail_id)
+    if spec is None:
+        raise KeyError(detail_id)
+    return spec
 
 
 # ---------------------------------------------------------------- builds
@@ -202,7 +218,7 @@ def _run_build(job_id: str, req: BuildRequest, doc_sha: str | None) -> None:
 
 @app.post("/api/builds")
 async def create_build(req: BuildRequest) -> dict:
-    if req.detail_id not in SPECS:
+    if _load_spec(req.detail_id) is None:
         raise HTTPException(404, "unknown detail")
     doc_sha = None
     if req.doc_id:
@@ -246,6 +262,180 @@ async def artifact(job_id: str, name: str):
     if name == "error.txt":
         media = "text/plain"
     return FileResponse(p, media_type=media, filename=f"{job_id}-{name}")
+
+
+# ---------------------------------------------------------------- library
+
+@app.get("/api/library")
+async def get_library() -> dict:
+    entries = [library.entry(f(), "human") for f in SPECS.values()]
+    for row in ai.list_library():
+        spec = ai.load_library_spec(row["detail_id"])
+        if spec is not None:
+            entries.append(library.entry(spec, "ai"))
+    return {"details": entries, "components": library.component_index(entries)}
+
+
+@app.get("/api/specs/{detail_id}/scene")
+async def get_scene(detail_id: str) -> dict:
+    """Build + verify on demand (fast: pure-Python meshes) for the viewer page."""
+    try:
+        spec = _active_spec(detail_id)
+    except KeyError:
+        raise HTTPException(404, "unknown detail")
+    meshes = build_assembly(spec)
+    verify_all(spec, meshes, None)
+    return export_scene_json(spec, meshes)
+
+
+@app.get("/api/specs/{detail_id}/thumb")
+async def get_thumb(detail_id: str):
+    spec = _load_spec(detail_id)
+    doc = find_document_by_sha(spec.source.sha256) if spec else None
+    p = figure_path(doc["id"], spec.source.crop_id) if doc and spec else None
+    if not p:
+        raise HTTPException(404, "source drawing not uploaded on this server")
+    return FileResponse(p, media_type="image/jpeg" if p.suffix == ".jpg" else "image/png")
+
+
+class GuideRequest(BaseModel):
+    detail_id: str
+    question: str
+    history: list[dict] = []
+
+
+def _run_guide(job_id: str, req: GuideRequest) -> None:
+    job = GEN_JOBS[job_id]
+    try:
+        job["state"] = "running"
+        job["progress"].append("thinking")
+        job["result"] = guide.ask(_active_spec(req.detail_id), req.question, req.history)
+        job.update(state="done", detail_id=req.detail_id)
+    except Exception as e:  # noqa: BLE001 - surfaced to the UI
+        job.update(state="failed", error=str(e)[:500])
+
+
+@app.post("/api/guide")
+async def ask_guide(req: GuideRequest) -> dict:
+    if not meta_client.configured():
+        raise HTTPException(503, "AI not configured: set META_API_KEY in .env")
+    if _load_spec(req.detail_id) is None:
+        raise HTTPException(404, "unknown detail")
+    job_id = uuid.uuid4().hex[:12]
+    GEN_JOBS[job_id] = {"id": job_id, "state": "queued", "progress": [], "result": None,
+                        "detail_id": None, "error": None, "gate_notes": []}
+    threading.Thread(target=_run_guide, args=(job_id, req), daemon=True).start()
+    return GEN_JOBS[job_id]
+
+
+# ---------------------------------------------------------------- AI generation
+
+GEN_JOBS: dict[str, dict] = {}
+
+
+class GenerateRequest(BaseModel):
+    doc_id: str
+    crop_id: str
+
+
+@app.get("/api/ai/status")
+async def ai_status() -> dict:
+    return {"configured": meta_client.configured(),
+            "model": meta_client.default_model(),
+            "cad_sandbox": cad_sandbox.available()}
+
+
+def _run_generate(job_id: str, req: GenerateRequest) -> None:
+    job = GEN_JOBS[job_id]
+
+    def progress(msg: str) -> None:
+        job["progress"].append(msg)
+
+    try:
+        job["state"] = "running"
+        rec = ai.generate(req.doc_id, req.crop_id, progress)
+        job.update(state="done", detail_id=rec["detail_id"],
+                   gate_notes=rec["gate_notes"], seconds=rec["seconds"])
+    except Exception as e:  # noqa: BLE001 - surfaced to the UI
+        job.update(state="failed", error=str(e)[:500])
+        job["progress"].append(f"FAILED: {str(e)[:200]}")
+
+
+@app.post("/api/generate")
+async def start_generate(req: GenerateRequest) -> dict:
+    if not get_document(req.doc_id):
+        raise HTTPException(404, "unknown document")
+    if not figure_path(req.doc_id, req.crop_id):
+        raise HTTPException(404, "unknown figure")
+    if not meta_client.configured():
+        raise HTTPException(503, "AI not configured: set META_API_KEY in .env")
+    job_id = uuid.uuid4().hex[:12]
+    GEN_JOBS[job_id] = {"id": job_id, "state": "queued", "progress": [],
+                        "detail_id": None, "error": None, "gate_notes": []}
+    threading.Thread(target=_run_generate, args=(job_id, req), daemon=True).start()
+    return GEN_JOBS[job_id]
+
+
+class RemodelRequest(BaseModel):
+    part_id: str
+    brief: str | None = None
+
+
+def _run_remodel(job_id: str, detail_id: str, req: RemodelRequest) -> None:
+    job = GEN_JOBS[job_id]
+    try:
+        job["state"] = "running"
+        ai.remodel_part(detail_id, req.part_id, req.brief, job["progress"].append)
+        job.update(state="done", detail_id=detail_id)
+    except Exception as e:  # noqa: BLE001 - surfaced to the UI
+        job.update(state="failed", error=str(e)[:500])
+        job["progress"].append(f"FAILED: {str(e)[:200]}")
+
+
+@app.post("/api/specs/{detail_id}/cad")
+async def remodel_part(detail_id: str, req: RemodelRequest) -> dict:
+    if not meta_client.configured() or not cad_sandbox.available():
+        raise HTTPException(503, "AI or CAD sandbox not configured")
+    job_id = uuid.uuid4().hex[:12]
+    GEN_JOBS[job_id] = {"id": job_id, "state": "queued", "progress": [],
+                        "detail_id": None, "error": None, "gate_notes": []}
+    threading.Thread(target=_run_remodel, args=(job_id, detail_id, req), daemon=True).start()
+    return GEN_JOBS[job_id]
+
+
+class CritiqueRequest(BaseModel):
+    renders: list[str]  # data:image/... URLs captured by the viewer
+
+
+def _run_critique(job_id: str, detail_id: str, req: CritiqueRequest) -> None:
+    job = GEN_JOBS[job_id]
+    try:
+        job["state"] = "running"
+        job["result"] = ai.critique(detail_id, req.renders, job["progress"].append)
+        job.update(state="done", detail_id=detail_id)
+    except Exception as e:  # noqa: BLE001 - surfaced to the UI
+        job.update(state="failed", error=str(e)[:500])
+        job["progress"].append(f"FAILED: {str(e)[:200]}")
+
+
+@app.post("/api/specs/{detail_id}/critique")
+async def critique(detail_id: str, req: CritiqueRequest) -> dict:
+    if not meta_client.configured():
+        raise HTTPException(503, "AI not configured: set META_API_KEY in .env")
+    if not req.renders or len(req.renders) > 3 or sum(len(r) for r in req.renders) > 8_000_000:
+        raise HTTPException(400, "send 1-3 renders under 8 MB total")
+    job_id = uuid.uuid4().hex[:12]
+    GEN_JOBS[job_id] = {"id": job_id, "state": "queued", "progress": [], "result": None,
+                        "detail_id": None, "error": None, "gate_notes": []}
+    threading.Thread(target=_run_critique, args=(job_id, detail_id, req), daemon=True).start()
+    return GEN_JOBS[job_id]
+
+
+@app.get("/api/generate/{job_id}")
+async def get_generate(job_id: str) -> dict:
+    if job_id not in GEN_JOBS:
+        raise HTTPException(404, "unknown generation job")
+    return GEN_JOBS[job_id]
 
 
 # ---------------------------------------------------------------- eval

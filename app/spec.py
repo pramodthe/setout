@@ -66,6 +66,7 @@ class PathPoint(BaseModel):
 
     x: float
     y: float
+    z: float | None = None  # only for 3D paths (sweep)
     provenance: Provenance = Provenance.ASSUMPTION
     note: str | None = None
 

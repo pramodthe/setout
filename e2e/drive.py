@@ -26,7 +26,7 @@ with sync_playwright() as p:
     page.on("pageerror", lambda e: errors.append(f"pageerror: {e}"))
     page.on("console", lambda m: errors.append(f"console-{m.type}: {m.text}")
             if m.type in ("error", "warning") else None)
-    page.goto(URL, wait_until="networkidle")
+    page.goto(URL + "/#/workbench", wait_until="networkidle")
     shot("01-loaded")
 
     # upload

@@ -5,11 +5,15 @@ import type {
   Build,
   CheckStatus,
   Component,
+  CritiqueResult,
   DetailSpec,
   Doc,
+  GenJob,
   Scene,
+  SpecSummary,
 } from "./types";
 import ViewportView from "./ViewportView";
+import type { ViewPreset, Viewport3D } from "./viewport";
 
 import { badgeClass, badgeLabel, worstProv } from "./provenance";
 
@@ -23,6 +27,12 @@ interface Variant {
   crop_id: string;
   location: string;
 }
+
+/* Specs that belong to this document: same checksum (crop ids repeat across PDFs). */
+const variantsFor = (specs: SpecSummary[], sha: string): Variant[] =>
+  specs
+    .filter((s) => s.sha256 === sha)
+    .map((s) => ({ detail_id: s.detail_id, title: s.title, crop_id: s.crop_id, location: s.origin }));
 
 export default function App(): JSX.Element {
   const [doc, setDoc] = useState<Doc | null>(null);
@@ -52,6 +62,14 @@ export default function App(): JSX.Element {
   const timer = useRef<number | null>(null);
   const errTimer = useRef<number | null>(null);
   const pollToken = useRef(0);
+  const vpApi = useRef<Viewport3D | null>(null);
+  const introNext = useRef(false);
+  const [gen, setGen] = useState<GenJob | null>(null);
+  const [cadJob, setCadJob] = useState<GenJob | null>(null);
+  const [check, setCheck] = useState<GenJob | null>(null);
+  const [solo, setSolo] = useState(false);
+  const [cutaway, setCutaway] = useState(true);
+  const [labels, setLabels] = useState(true);
 
   // Native listeners: the drive sets .value + dispatches a non-bubbling
   // 'input' event, which React synthetic onChange would miss.
@@ -98,29 +116,19 @@ export default function App(): JSX.Element {
       setScene(null);
       setJob(null);
       setSelected(null);
-      const list = (await api.listSpecs()).specs;
-      const vs: Variant[] = [];
-      for (const s of list) {
-        const full = await api.getSpec(s.detail_id);
-        vs.push({
-          detail_id: s.detail_id,
-          title: s.title,
-          crop_id: full.source.crop_id,
-          location: (full.context.location as string) || s.detail_id,
-        });
-      }
-      setVariants(vs);
+      setGen(null);
+      setVariants(variantsFor((await api.listSpecs()).specs, d.sha256));
     } catch (e) {
       showErr("Upload failed: " + (e as Error).message.slice(0, 200));
     }
   };
 
-  const selectCrop = async (cropId: string): Promise<void> => {
+  const selectCrop = async (cropId: string, vs: Variant[] = variants): Promise<DetailSpec | null> => {
     setCrop(cropId);
     setSelected(null);
     setOvr(false);
     let matched: DetailSpec | null = null;
-    for (const s of variants) {
+    for (const s of vs) {
       if (s.crop_id === cropId) {
         matched = await api.getSpec(s.detail_id);
         break;
@@ -128,7 +136,9 @@ export default function App(): JSX.Element {
     }
     if (!matched) {
       setSpec(null);
-      return;
+      setScene(null); // don't keep showing the previous detail's 3D
+      setJob(null);
+      return null;
     }
     const m: DetailSpec = matched;
     setSpec(m);
@@ -137,6 +147,7 @@ export default function App(): JSX.Element {
       for (const c of m.components) if (!(c.id in next)) next[c.id] = true;
       return next;
     });
+    return m;
   };
 
   const poll = async (jobId: string): Promise<void> => {
@@ -158,6 +169,10 @@ export default function App(): JSX.Element {
     }
     const s = await api.getScene(jobId);
     setScene(s);
+    if (introNext.current) {
+      introNext.current = false;
+      window.setTimeout(() => vpApi.current?.playIntro(), 60);
+    }
     setOrder(s.install_order);
     setSeqIdx(s.install_order.length - 1);
     setSpec((prev) =>
@@ -170,18 +185,104 @@ export default function App(): JSX.Element {
   };
 
   const build = async (): Promise<void> => {
-    if (!spec || !doc) return;
+    if (spec) await buildDetail(spec.detail_id);
+  };
+
+  const buildDetail = async (detailId: string): Promise<void> => {
+    if (!doc) return;
     showErr(null);
     try {
       const b = await api.createBuild(
-        spec.detail_id,
+        detailId,
         doc.id,
         disptRef.current?.checked || false,
       );
       setJob(b);
-      void poll(b.id);
+      await poll(b.id);
     } catch (e) {
       showErr("Build request failed: " + (e as Error).message.slice(0, 200));
+    }
+  };
+
+  /* AI: read the selected drawing, compose a detail program, gate, build. */
+  const generateAI = async (): Promise<void> => {
+    if (!doc || !crop) return;
+    showErr(null);
+    try {
+      let g = await api.generate(doc.id, crop);
+      setGen(g);
+      while (g.state === "queued" || g.state === "running") {
+        await new Promise((r) => setTimeout(r, 1000));
+        g = await api.getGenerate(g.id);
+        setGen(g);
+      }
+      if (g.state !== "done" || !g.detail_id) {
+        showErr("AI generation failed: " + (g.error || "unknown").slice(0, 200));
+        return;
+      }
+      const vs = variantsFor((await api.listSpecs()).specs, doc.sha256);
+      setVariants(vs);
+      const m = await selectCrop(crop, vs);
+      if (m) {
+        await buildDetail(m.detail_id);
+        await checkAI(m.detail_id); // one self-check round right away
+      }
+    } catch (e) {
+      showErr("AI generation failed: " + (e as Error).message.slice(0, 200));
+    }
+  };
+
+  /* AI self-check: render our 3D, compare with the drawing, accept the
+     correction only if the verifier says it isn't worse. */
+  const checkAI = async (detailId: string): Promise<void> => {
+    await new Promise((r) => setTimeout(r, 400)); // let the new scene mount
+    const vp = vpApi.current;
+    if (!vp || !crop) return;
+    try {
+      const renders = [vp.snapshot("iso"), vp.snapshot("front")];
+      let g = await api.critique(detailId, renders);
+      setCheck(g);
+      while (g.state === "queued" || g.state === "running") {
+        await new Promise((r) => setTimeout(r, 1000));
+        g = await api.getGenerate(g.id);
+        setCheck(g);
+      }
+      if (g.state !== "done") {
+        showErr("Self-check failed: " + (g.error || "unknown").slice(0, 200));
+        return;
+      }
+      if ((g.result as CritiqueResult | null)?.accepted) {
+        const m = await selectCrop(crop);
+        if (m) await buildDetail(m.detail_id);
+      }
+    } catch (e) {
+      showErr("Self-check failed: " + (e as Error).message.slice(0, 200));
+    }
+  };
+
+  /* AI: re-model the selected part in CadQuery (Modal sandbox), then rebuild. */
+  const remodel = async (partId: string): Promise<void> => {
+    if (!spec || !crop) return;
+    showErr(null);
+    try {
+      let g = await api.remodelPart(spec.detail_id, partId);
+      setCadJob(g);
+      while (g.state === "queued" || g.state === "running") {
+        await new Promise((r) => setTimeout(r, 1000));
+        g = await api.getGenerate(g.id);
+        setCadJob(g);
+      }
+      if (g.state !== "done") {
+        showErr("CAD re-model failed: " + (g.error || "unknown").slice(0, 200));
+        return;
+      }
+      const m = await selectCrop(crop);
+      if (m) {
+        setSelected(partId);
+        await buildDetail(m.detail_id);
+      }
+    } catch (e) {
+      showErr("CAD re-model failed: " + (e as Error).message.slice(0, 200));
     }
   };
 
@@ -240,6 +341,20 @@ export default function App(): JSX.Element {
     }
   };
 
+  const focus = (id: string): void => {
+    setSelected(id);
+    vpApi.current?.flyTo([id]);
+    if (solo) vpApi.current?.isolate([id]);
+  };
+
+  const toggleSolo = (): void => {
+    const on = !solo && !!selected;
+    setSolo(on);
+    vpApi.current?.isolate(on && selected ? [selected] : null);
+  };
+
+  const view = (v: ViewPreset): void => vpApi.current?.setView(v);
+
   const selComp: Component | null =
     spec?.components.find((c) => c.id === selected) || null;
   const verdict = job?.report?.verdict || "no build";
@@ -283,7 +398,10 @@ export default function App(): JSX.Element {
   return (
     <>
       <header>
-        <h1>Setout — door-sill playground</h1>
+        <a href="#/" className="back">
+          ← Library
+        </a>
+        <h1>Setout — add a detail from a PDF</h1>
         <span className="sub" id="docline">
           {doc
             ? `${doc.filename} · sha256 ${doc.sha256.slice(0, 12)}…`
@@ -368,7 +486,7 @@ export default function App(): JSX.Element {
                     width={(r.x1 - r.x0) * 100}
                     height={(r.y1 - r.y0) * 100}
                     className={c.id === selected ? "sel" : ""}
-                    onClick={() => setSelected(c.id)}
+                    onClick={() => focus(c.id)}
                   >
                     <title>{c.id}</title>
                   </rect>
@@ -384,16 +502,68 @@ export default function App(): JSX.Element {
             Boxes are indicative regions from the spec — not SAM masks.
           </div>
           <h2>3 · Components</h2>
+          {spec?.origin.startsWith("ai-generated") && (
+            <div className="step ai-note">
+              AI-generated from this drawing (Muse: read, then compose, then code gates).
+              Unreviewed. A <b>drawing</b> value was confirmed against the printed
+              words; everything else is an <b>assumption</b>.
+              <div style={{ marginTop: 6 }}>
+                <button
+                  id="checkAI"
+                  disabled={!scene || (!!check && (check.state === "queued" || check.state === "running"))}
+                  onClick={() => spec && void checkAI(spec.detail_id)}
+                  title="Render the 3D, compare it with the drawing, correct it (verifier-guarded)"
+                >
+                  Check against drawing (AI)
+                </button>
+              </div>
+              {check && (
+                <div id="checkLog" className="genlog">
+                  {check.progress.map((l, i) => (
+                    <div key={i}>{l}</div>
+                  ))}
+                  {check.result && "issues" in check.result && (
+                    <div className={check.result.accepted ? "chk pass" : "chk unv"} style={{ marginTop: 6 }}>
+                      <b>{check.result.accepted ? "Correction accepted" : "No change applied"}</b>
+                      {" — "}
+                      {check.result.reason}
+                      {check.result.issues.map((x, i) => (
+                        <div key={i} style={{ marginTop: 4 }}>
+                          <b>{x.part_id}</b>: {x.problem} → {x.fix}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           <div id="comps">
             {!spec && (
               <div className="step">
                 {crop ? (
                   <>
-                    No specification covers crop <b>{crop}</b> yet. Only the D3
-                    seed spec exists in v0.
+                    No detail for drawing <b>{crop}</b> yet.
+                    <div style={{ marginTop: 8 }}>
+                      <button
+                        id="genAI"
+                        className="primary"
+                        disabled={!!gen && (gen.state === "queued" || gen.state === "running")}
+                        onClick={() => void generateAI()}
+                      >
+                        Generate 3D with AI
+                      </button>
+                    </div>
+                    {gen && (
+                      <div id="genProgress" className="genlog">
+                        {gen.progress.map((l, i) => (
+                          <div key={i}>{l}</div>
+                        ))}
+                      </div>
+                    )}
                   </>
                 ) : (
-                  "Select the D3 crop to load its specification."
+                  "Select a drawing to open its detail, or generate one with AI."
                 )}
               </div>
             )}
@@ -401,7 +571,7 @@ export default function App(): JSX.Element {
               <div
                 key={c.id}
                 className={"comp" + (c.id === selected ? " sel" : "")}
-                onClick={() => setSelected(c.id)}
+                onClick={() => focus(c.id)}
               >
                 <input
                   type="checkbox"
@@ -516,6 +686,36 @@ export default function App(): JSX.Element {
               {playing ? "stop" : "play"}
             </button>
             <span id="seqLabel">{seqLabel}</span>
+            <span className="views">
+              <button disabled={!scene} onClick={() => vpApi.current?.flyTo(null)}>fit</button>
+              <button disabled={!scene} onClick={() => view("iso")}>iso</button>
+              <button disabled={!scene} onClick={() => view("front")}>section</button>
+              <button disabled={!scene} onClick={() => view("top")}>top</button>
+              <button disabled={!scene || !selected} className={solo ? "on" : ""} onClick={toggleSolo}>
+                solo
+              </button>
+              <button
+                disabled={!scene}
+                className={cutaway ? "on" : ""}
+                onClick={() => {
+                  setCutaway(!cutaway);
+                  vpApi.current?.setCutaway(!cutaway);
+                }}
+              >
+                cutaway
+              </button>
+              <button
+                disabled={!scene}
+                className={labels ? "on" : ""}
+                onClick={() => {
+                  setLabels(!labels);
+                  vpApi.current?.setLabels(!labels);
+                }}
+              >
+                labels
+              </button>
+              <button disabled={!scene} onClick={() => vpApi.current?.playIntro()}>build ▶</button>
+            </span>
           </div>
           <ViewportView
             scene={scene}
@@ -527,6 +727,7 @@ export default function App(): JSX.Element {
             seqIdx={seqIdx}
             selected={selected}
             onPick={setSelected}
+            apiRef={vpApi}
             hud={hud}
           />
         </main>
@@ -624,6 +825,25 @@ export default function App(): JSX.Element {
                 <button id="applyP" onClick={() => void applyParams(selComp)}>
                   Apply &amp; rebuild
                 </button>
+                {spec.origin.startsWith("ai-generated") && (
+                  <div style={{ marginTop: 8 }}>
+                    <button
+                      id="cadAI"
+                      disabled={!!cadJob && (cadJob.state === "queued" || cadJob.state === "running")}
+                      onClick={() => void remodel(selComp.id)}
+                      title="Muse writes CadQuery for this part; it runs in a no-network Modal sandbox"
+                    >
+                      Model with AI (CadQuery)
+                    </button>
+                    {cadJob && (
+                      <div className="genlog">
+                        {cadJob.progress.map((l, i) => (
+                          <div key={i}>{l}</div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
                 <h2 style={{ marginTop: 10 }}>Product</h2>
                 <div className="kv">
                   {selComp.product?.ref ? (

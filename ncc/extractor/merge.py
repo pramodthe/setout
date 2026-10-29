@@ -2,7 +2,7 @@
 Merge HUMAN-VERIFIED candidates into rules.json. Assigns stable rule ids.
 
     python3 merge.py --candidates ../data/candidates.reviewed.json \\
-        --source-id ARDEX-WPM-2024 --title "Ardex waterproofing manual" \\
+        --source-id MFR-WPM-2024 --title "Manufacturer waterproofing manual" \\
         --url https://example.com/manual --dry-run
     python3 merge.py ... --apply     # actually writes rules/rules.json
 
@@ -28,9 +28,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from validate_rules import validate  # noqa: E402
 
-ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_RULES = ROOT / "rules" / "rules.json"
-DEFAULT_BENCH = ROOT / "benchmark" / "questions.jsonl"
+ROOT = Path(__file__).resolve().parent.parent.parent
+DEFAULT_RULES = ROOT / "ncc" / "rules" / "rules.json"
+DEFAULT_BENCH = ROOT / "ncc" / "benchmark" / "questions.jsonl"
 SNAKE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 

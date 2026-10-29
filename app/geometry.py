@@ -238,7 +238,251 @@ def gen_post(c: Component, z0: float, z1: float, sides: int = 8) -> Mesh:
     return m
 
 
+# ---------------------------------------------------------------- spec v2 shapes
+
+def _area2(poly: list[tuple[float, float]]) -> float:
+    """Twice the signed area (positive = counter-clockwise)."""
+    return sum(x0 * y1 - x1 * y0
+               for (x0, y0), (x1, y1) in zip(poly, poly[1:] + poly[:1]))
+
+
+def _cross(o, a, b) -> float:
+    return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+
+def triangulate(poly: list[tuple[float, float]]) -> list[tuple[int, int, int]]:
+    """Ear clipping for a simple polygon of any winding; returns CCW index
+    triples (concave outlines such as L-angles and channels are fine)."""
+    idx = list(range(len(poly)))
+    if _area2(poly) < 0:
+        idx.reverse()
+    tris: list[tuple[int, int, int]] = []
+    eps = 1e-9
+    while len(idx) > 3:
+        for k in range(len(idx)):
+            i0, i1, i2 = idx[k - 1], idx[k], idx[(k + 1) % len(idx)]
+            a, b, c = poly[i0], poly[i1], poly[i2]
+            if _cross(a, b, c) <= eps:
+                continue  # reflex or collinear corner: not an ear
+            if any(_cross(a, b, poly[j]) >= -eps and _cross(b, c, poly[j]) >= -eps
+                   and _cross(c, a, poly[j]) >= -eps
+                   for j in idx if j not in (i0, i1, i2) and poly[j] not in (a, b, c)):
+                continue  # another vertex inside: not an ear
+            tris.append((i0, i1, i2))
+            del idx[k]
+            break
+        else:
+            # no ear: drop a collinear vertex if there is one, else give up
+            flat = [k for k in range(len(idx))
+                    if abs(_cross(poly[idx[k - 1]], poly[idx[k]],
+                                  poly[idx[(k + 1) % len(idx)]])) <= eps]
+            if not flat:
+                raise ValueError("profile outline self-intersects")
+            del idx[flat[0]]
+    if len(idx) == 3 and _cross(poly[idx[0]], poly[idx[1]], poly[idx[2]]) > eps:
+        tris.append((idx[0], idx[1], idx[2]))
+    return tris
+
+
+def _tri_safe(m: Mesh, a, b, c) -> None:
+    """Skip zero-area triangles (revolve poles, collinear points)."""
+    u = (b[0] - a[0], b[1] - a[1], b[2] - a[2])
+    v = (c[0] - a[0], c[1] - a[1], c[2] - a[2])
+    n = (u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0])
+    if n[0] * n[0] + n[1] * n[1] + n[2] * n[2] > 1e-12:
+        _tri(m, a, b, c)
+
+
+def _extrude(m: Mesh, poly: list[tuple[float, float]], z0: float, z1: float) -> None:
+    if _area2(poly) < 0:
+        poly = poly[::-1]
+    n = len(poly)
+    for i in range(n):
+        (x0, y0), (x1, y1) = poly[i], poly[(i + 1) % n]
+        _quad(m, (x0, y0, z0), (x1, y1, z0), (x1, y1, z1), (x0, y0, z1))
+    for a, b, c in triangulate(poly):
+        _tri(m, (*poly[a], z1), (*poly[b], z1), (*poly[c], z1))
+        _tri(m, (*poly[a], z0), (*poly[c], z0), (*poly[b], z0))
+
+
+def gen_profile(c: Component, z0: float, z1: float) -> Mesh:
+    """Any closed 2D outline in the section plane (x, y), extruded along z."""
+    m = Mesh(c.id, color=c.color)
+    poly = [(p.x, p.y) for p in c.path]
+    if len(poly) > 3 and poly[0] == poly[-1]:
+        poly = poly[:-1]
+    if len(poly) < 3 or abs(_area2(poly)) < 1e-6:
+        raise ValueError(f"profile: {c.id} needs a closed outline of >= 3 points")
+    _extrude(m, poly, z0, z1)
+    return m
+
+
+def _revolve_into(m: Mesh, cx: float, cz: float,
+                  prof: list[tuple[float, float]], segs: int = 24) -> None:
+    """Lathe a (radius, y) profile around the vertical axis at (cx, cz)."""
+    ring = [(math.cos(2 * math.pi * j / segs), math.sin(2 * math.pi * j / segs))
+            for j in range(segs + 1)]
+    pt = lambda r, y, j: (cx + r * ring[j][0], y, cz + r * ring[j][1])
+    for j in range(segs):
+        for (r0, y0), (r1, y1) in zip(prof, prof[1:]):
+            a, b = pt(r0, y0, j), pt(r1, y1, j)
+            c_, d = pt(r1, y1, j + 1), pt(r0, y0, j + 1)
+            _tri_safe(m, a, b, c_)
+            _tri_safe(m, a, c_, d)
+    for r, y in (prof[0], prof[-1]):  # close open ends with discs
+        if r > 1e-9:
+            for j in range(segs):
+                _tri_safe(m, (cx, y, cz), pt(r, y, j), pt(r, y, j + 1))
+
+
+def gen_revolve(c: Component, z0: float, z1: float) -> Mesh:
+    """Round parts (waste, tap body, flange): profile x = radius, y = height."""
+    m = Mesh(c.id, color=c.color)
+    g = {p.name: p.value for p in c.params}
+    prof = [(p.x, p.y) for p in c.path]
+    if len(prof) < 2 or any(r < 0 for r, _ in prof):
+        raise ValueError(f"revolve: {c.id} needs >= 2 points with radius >= 0")
+    _revolve_into(m, g["cx"], g["cz"], prof)
+    return m
+
+
+def gen_sweep(c: Component, z0: float, z1: float, sides: int = 12) -> Mesh:
+    """Round tube of radius r along a 3D polyline (pipes, conduits)."""
+    m = Mesh(c.id, color=c.color)
+    r = {p.name: p.value for p in c.params}["r"]
+    pts = [(p.x, p.y, p.z if p.z is not None else 0.0) for p in c.path]
+    if len(pts) < 2 or r <= 0:
+        raise ValueError(f"sweep: {c.id} needs >= 2 path points and r > 0")
+
+    def sub(a, b):
+        return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+    def unit(v):
+        n = math.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2)
+        if n < 1e-9:
+            raise ValueError(f"sweep: {c.id} has repeated points")
+        return (v[0] / n, v[1] / n, v[2] / n)
+
+    def dot(a, b):
+        return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+    def crs(a, b):
+        return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+    tans = [unit(sub(pts[min(i + 1, len(pts) - 1)], pts[max(i - 1, 0)]))
+            for i in range(len(pts))]
+    up = (0.0, 1.0, 0.0) if abs(tans[0][1]) < 0.9 else (1.0, 0.0, 0.0)
+    n = unit(sub(up, tuple(dot(up, tans[0]) * t for t in tans[0])))
+    rings = []
+    for p, t in zip(pts, tans):  # parallel transport of the normal
+        n = unit(sub(n, tuple(dot(n, t) * k for k in t)))
+        b = crs(t, n)
+        rings.append([tuple(p[k] + r * (math.cos(a) * n[k] + math.sin(a) * b[k]) for k in range(3))
+                      for a in (2 * math.pi * j / sides for j in range(sides))])
+    for r0, r1 in zip(rings, rings[1:]):
+        for j in range(sides):
+            _quad(m, r0[j], r0[(j + 1) % sides], r1[(j + 1) % sides], r1[j])
+    for ring, p in ((rings[0], pts[0]), (rings[-1], pts[-1])):
+        for j in range(sides):
+            _tri(m, p, ring[(j + 1) % sides], ring[j])
+    return m
+
+
+def _envelope(c: Component) -> tuple[float, float, float, float, float, float]:
+    g = {p.name: p.value for p in c.params}
+    x0, x1, y0, y1, z0, z1 = (g[k] for k in ("x0", "x1", "y0", "y1", "z0", "z1"))
+    if x1 <= x0 or y1 <= y0 or z1 <= z0:
+        raise ValueError(f"fixture: {c.id} envelope must have positive size")
+    return x0, x1, y0, y1, z0, z1
+
+
+def _tub(m: Mesh, env, wall: float, base: float) -> None:
+    x0, x1, y0, y1, z0, z1 = env
+    _box_tris(m, x0, y0, z0, x1, y0 + base, z1)
+    _box_tris(m, x0, y0 + base, z0, x0 + wall, y1, z1)
+    _box_tris(m, x1 - wall, y0 + base, z0, x1, y1, z1)
+    _box_tris(m, x0 + wall, y0 + base, z0, x1 - wall, y1, z0 + wall)
+    _box_tris(m, x0 + wall, y0 + base, z1 - wall, x1 - wall, y1, z1)
+
+
+def gen_fixture_bath(c: Component, z0: float, z1: float) -> Mesh:
+    m = Mesh(c.id, color=c.color)
+    env = _envelope(c)
+    W, H, D = env[1] - env[0], env[3] - env[2], env[5] - env[4]
+    _tub(m, env, min(60.0, 0.12 * min(W, D)), min(50.0, 0.25 * H))
+    return m
+
+
+def gen_fixture_shower_tray(c: Component, z0: float, z1: float) -> Mesh:
+    m = Mesh(c.id, color=c.color)
+    env = _envelope(c)
+    W, H, D = env[1] - env[0], env[3] - env[2], env[5] - env[4]
+    _tub(m, env, min(30.0, 0.1 * min(W, D)), 0.6 * H)
+    return m
+
+
+def gen_fixture_wc(c: Component, z0: float, z1: float) -> Mesh:
+    """Cistern against the back (min z), pan reaching the front (max z)."""
+    m = Mesh(c.id, color=c.color)
+    x0, x1, y0, y1, ez0, ez1 = _envelope(c)
+    W, H, D = x1 - x0, y1 - y0, ez1 - ez0
+    cd = min(0.25 * D, 220.0)
+    _box_tris(m, x0, y0 + 0.5 * H, ez0, x1, y1, ez0 + cd)
+    R = min(0.42 * W, 0.4 * (D - cd))
+    cx, cz, hp = (x0 + x1) / 2, ez1 - R, 0.5 * H
+    _revolve_into(m, cx, cz, [(0.55 * R, y0), (0.6 * R, y0 + 0.3 * hp), (R, y0 + 0.85 * hp),
+                              (R, y0 + hp), (0.85 * R, y0 + hp), (0.35 * R, y0 + 0.45 * hp)])
+    _box_tris(m, cx - 0.35 * R, y0, ez0 + cd, cx + 0.35 * R, y0 + 0.9 * hp, cz)
+    return m
+
+
+def gen_fixture_basin(c: Component, z0: float, z1: float) -> Mesh:
+    m = Mesh(c.id, color=c.color)
+    x0, x1, y0, y1, ez0, ez1 = _envelope(c)
+    H, R = y1 - y0, min(x1 - x0, ez1 - ez0) / 2
+    _revolve_into(m, (x0 + x1) / 2, (ez0 + ez1) / 2,
+                  [(0.3 * R, y0), (0.55 * R, y0 + 0.35 * H), (R, y1 - 0.1 * H), (R, y1),
+                   (0.9 * R, y1), (0.35 * R, y0 + 0.45 * H)])
+    return m
+
+
+def gen_fixture_vanity(c: Component, z0: float, z1: float) -> Mesh:
+    m = Mesh(c.id, color=c.color)
+    x0, x1, y0, y1, ez0, ez1 = _envelope(c)
+    top = min(30.0, 0.05 * (y1 - y0))
+    kick = min(80.0, 0.12 * (y1 - y0))
+    _box_tris(m, x0, y1 - top, ez0, x1, y1, ez1)
+    _box_tris(m, x0, y0 + kick, ez0, x1, y1 - top, ez1 - 20)
+    _box_tris(m, x0, y0, ez0, x1, y0 + kick, ez1 - 70)
+    return m
+
+
+def gen_fixture_door(c: Component, z0: float, z1: float) -> Mesh:
+    """Frame (two jambs + head) filling the envelope, leaf centred in depth."""
+    m = Mesh(c.id, color=c.color)
+    x0, x1, y0, y1, ez0, ez1 = _envelope(c)
+    j = min(40.0, 0.1 * (x1 - x0))
+    _box_tris(m, x0, y0, ez0, x0 + j, y1, ez1)
+    _box_tris(m, x1 - j, y0, ez0, x1, y1, ez1)
+    _box_tris(m, x0 + j, y1 - j, ez0, x1 - j, y1, ez1)
+    t = min(40.0, 0.4 * (ez1 - ez0))
+    zc = (ez0 + ez1) / 2
+    _box_tris(m, x0 + j + 3, y0 + 10, zc - t / 2, x1 - j - 3, y1 - j - 3, zc + t / 2)
+    return m
+
+
+FIXTURES = ("bath", "shower_tray", "wc", "basin", "vanity", "door")
+
 REGISTRY = {
+    "profile": gen_profile,
+    "revolve": gen_revolve,
+    "sweep": gen_sweep,
+    "fixture_bath": gen_fixture_bath,
+    "fixture_shower_tray": gen_fixture_shower_tray,
+    "fixture_wc": gen_fixture_wc,
+    "fixture_basin": gen_fixture_basin,
+    "fixture_vanity": gen_fixture_vanity,
+    "fixture_door": gen_fixture_door,
     "box": gen_box,
     "l_angle": gen_l_angle,
     "sheet_follow": gen_sheet_follow,
@@ -251,6 +495,20 @@ REGISTRY = {
 }
 
 
+def load_cad_mesh(spec: DetailSpec, c: Component) -> Mesh:
+    """AI-modelled part: triangles produced in the CAD sandbox at generation
+    time, stored beside the library record (absolute mm, Setout axes)."""
+    from .store import var_root  # local: geometry stays storage-agnostic
+
+    info = (spec.context.get("cad_parts") or {}).get(c.id)
+    if not info:
+        raise ValueError(f"{c.id}: AI-modelled part has no generated mesh")
+    data = json.loads((var_root() / "library" / info["file"]).read_text())
+    m = Mesh(c.id, color=c.color)
+    m.positions = [float(v) for v in data["positions"]]
+    return m
+
+
 def build_assembly(spec: DetailSpec, use_display: bool = False
                    ) -> dict[str, Mesh]:
     extent = float(spec.context.get("illustrative_extent_z_mm", 600))
@@ -258,16 +516,24 @@ def build_assembly(spec: DetailSpec, use_display: bool = False
     meshes: dict[str, Mesh] = {}
     for comp in spec.components:
         gid = comp.generator.id
+        if gid == "cad_mesh":
+            meshes[comp.id] = load_cad_mesh(spec, comp)
+            continue
         if gid not in REGISTRY:
             raise ValueError(f"unknown generator {gid!r} on {comp.id}")
         if comp.generator.version != GEN_VERSION:
             raise ValueError(f"{comp.id}: generator version "
                              f"{comp.generator.version!r} != {GEN_VERSION!r}")
+        # spec v2 parts may carry their own z extent (rooms run in x and z)
+        g = {p.name: p.value for p in comp.params}
+        cz0, cz1 = (g["z0"], g["z1"]) if "z0" in g and "z1" in g else (z0, z1)
+        if cz1 <= cz0:
+            raise ValueError(f"{comp.id}: z1 {cz1} <= z0 {cz0}")
         if gid == "sheet_follow":
-            meshes[comp.id] = gen_sheet_follow(comp, z0, z1,
+            meshes[comp.id] = gen_sheet_follow(comp, cz0, cz1,
                                                use_display=use_display)
         else:
-            meshes[comp.id] = REGISTRY[gid](comp, z0, z1)
+            meshes[comp.id] = REGISTRY[gid](comp, cz0, cz1)
     return meshes
 
 

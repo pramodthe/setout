@@ -2,6 +2,11 @@
 
 Date: 2026-10-28. Method: read every source file, ran the generator path by
 inspection, extracted the reference PDF, checked for backend calls.
+
+> Layout note: this audit cites pre-restructure paths. The legacy NCC track
+> (`rules/`, `generator/`, `extractor/`, `viewer/`, `perception/`,
+> `benchmark/`, `spec/`) now lives under `ncc/` with identical contents;
+> findings are unchanged.
 Reference PDF: Conpro "Door and Window Sills Waterproofing" (2 pages, fetched
 2026-10-28; page 1 = 4 door-sill drawings, page 2 = window sills). The PDF is
 NOT committed (repo rule + `.gitignore` `*.pdf`).
