@@ -118,11 +118,13 @@ def _same(a: dict, b: dict) -> bool:
 
 def locate(png: bytes, parts: list[tuple[str, str, str | None]],
            call=None) -> dict[str, dict]:
-    """parts: (id, type, label). Returns {part_id: best box with prompt, c}.
+    """parts: (id, type, label). Returns {part_id: box with prompt, c}.
 
-    A box claimed by two parts (a basin tap and a shower mixer both asking
-    for "tap") can't be told apart, so it goes to neither, unless exactly one
-    of them found it with its own drawing label."""
+    Each part ranks what SAM found: hits from its own drawing label first,
+    then by confidence. When two parts want the same box, the one that found
+    it with its own label keeps it. If neither or both did, nobody can tell
+    them apart (a basin tap and a shower mixer both asking for "tap"), so the
+    box goes to neither. A part that loses a box falls back to its next one."""
     call = call or _call
     todo = [(pid, pr, pr == lab) for pid, t, lab in parts for pr in prompts_for(t, lab)]
 
@@ -135,18 +137,30 @@ def locate(png: bytes, parts: list[tuple[str, str, str | None]],
         best = max(boxes, key=lambda b: b["c"], default=None)
         return pid, ({**best, "prompt": prompt, "own": own} if best else None)
 
-    hits: dict[str, list[dict]] = {}
+    ranked: dict[str, list[dict]] = {}
     with ThreadPoolExecutor(max_workers=6) as ex:
         for pid, box in ex.map(one, todo):
             if box:
-                hits.setdefault(pid, []).append(box)
-    found = {}
-    for pid, hs in hits.items():
-        best = max(hs, key=lambda b: b["c"])  # best name wins
-        found[pid] = {**best, "own": any(h["own"] and _same(h, best) for h in hs)}
-    out = {}
-    for pid, box in found.items():
-        rivals = [q for q, b in found.items() if q != pid and _same(box, b)]
-        if not rivals or (box["own"] and not any(found[q]["own"] for q in rivals)):
-            out[pid] = {k: v for k, v in box.items() if k != "own"}
-    return out
+                ranked.setdefault(pid, []).append(box)
+    for hs in ranked.values():
+        hs.sort(key=lambda b: (not b["own"], -b["c"]))  # stable: prompt order on ties
+    banned: list[dict] = []                               # ambiguous: nobody gets these
+    lost: dict[str, list[dict]] = {pid: [] for pid in ranked}  # given up to an owner
+    while True:
+        pick = {}
+        for pid, hs in ranked.items():
+            h = next((h for h in hs if not any(_same(h, x) for x in banned + lost[pid])), None)
+            if h:
+                pick[pid] = h
+        clash = next((p for p in pick for q in pick if p != q and _same(pick[p], pick[q])), None)
+        if clash is None:
+            break
+        group = [q for q in pick if _same(pick[q], pick[clash])]
+        owners = [q for q in group if pick[q]["own"]]
+        if len(owners) == 1:
+            for q in group:
+                if q != owners[0]:
+                    lost[q].append(pick[q])
+        else:
+            banned.append(pick[clash])
+    return {pid: {k: v for k, v in h.items() if k != "own"} for pid, h in pick.items()}

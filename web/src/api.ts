@@ -63,6 +63,9 @@ export const api = {
   thumbUrl: (detailId: string): string => `/api/specs/${encodeURIComponent(detailId)}/thumb`,
   /** Library card image: a render of the 3D, never the source drawing. */
   previewUrl: (detailId: string): string => `/api/specs/${encodeURIComponent(detailId)}/preview`,
+  /** False when there is no card image or it is older than the detail. */
+  hasPreview: async (detailId: string): Promise<boolean> =>
+    (await fetch(`/api/specs/${encodeURIComponent(detailId)}/preview`, { cache: "no-cache" })).ok,
   savePreview: async (detailId: string, jpegDataUrl: string): Promise<void> => {
     const body = await (await fetch(jpegDataUrl)).blob();
     await req(`/api/specs/${encodeURIComponent(detailId)}/preview`, {

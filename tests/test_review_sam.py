@@ -165,3 +165,51 @@ def test_locate_never_gives_one_box_to_two_parts():
     found = sam.locate(b"png", [("basin_tap", "tap", "BASIN MIXER"), ("shower_mixer", "tap", None)],
                        call=call)
     assert set(found) == {"basin_tap"} and "own" not in found["basin_tap"]
+
+
+def test_locate_prefers_own_label_and_falls_back_to_next_box():
+    tap = {"x0": 0.5, "y0": 0.4, "x1": 0.55, "y1": 0.47}
+    mixer = {"x0": 0.9, "y0": 0.5, "x1": 0.95, "y1": 0.55}
+    boxes = {"tap": [dict(tap, c=0.66)], "BASIN MIXER": [dict(tap, c=0.6)],
+             "SHOWER MIXER": [dict(mixer, c=0.55)]}
+    call = lambda png, prompt: boxes.get(prompt, [])  # noqa: E731
+    # the shower mixer's own label found the real mixer: that beats a generic "tap" hit
+    found = sam.locate(b"png", [("shower_mixer", "tap", "SHOWER MIXER"),
+                                ("basin_tap", "tap", "BASIN MIXER")], call=call)
+    assert found["shower_mixer"]["prompt"] == "SHOWER MIXER"
+    assert found["basin_tap"]["prompt"] == "BASIN MIXER"
+    # a part that loses a box to its owner falls back to its next box
+    a = {"x0": 0.1, "y0": 0.1, "x1": 0.3, "y1": 0.3}
+    b = {"x0": 0.6, "y0": 0.6, "x1": 0.8, "y1": 0.8}
+    boxes = {"Vanity": [dict(a, c=0.8)], "vanity": [dict(a, c=0.9)],
+             "vanity cabinet": [dict(b, c=0.7)]}
+    assert sam.prompts_for("vanity", None) == ["vanity", "vanity cabinet"]
+    found = sam.locate(b"png", [("v1", "x", "Vanity"), ("store", "vanity", None)],
+                       call=lambda png, pr: boxes.get(pr, []))
+    assert found["v1"]["prompt"] == "Vanity"  # its own label found box a
+    assert found["store"]["prompt"] == "vanity cabinet" and found["store"]["x0"] == 0.6
+
+
+def test_preview_guards_reach_the_id_check(monkeypatch, tmp_path):
+    import app.main as m
+    monkeypatch.setattr(store, "VAR", tmp_path)
+    assert m._preview_path("conpro-door-sill-D3\n") is None  # fullmatch, not match
+    assert m._preview_path("../x") is None
+    assert m._preview_path("ai-1_x") is not None
+
+
+def test_preview_goes_stale_when_the_detail_changes_and_size_is_capped(monkeypatch, tmp_path):
+    import os
+    from fastapi.testclient import TestClient
+    import app.main as m
+    monkeypatch.setattr(store, "VAR", tmp_path)
+    c = TestClient(m.app)
+    url = "/api/specs/conpro-door-sill-D3/preview"
+    assert c.post(url, content=b"\xff\xd8\xff" + b"0" * 64).status_code == 200
+    assert c.get(url).headers["cache-control"] == "no-cache"
+    override = tmp_path / "spec-conpro-door-sill-D3.json"  # a user edit, made later
+    override.write_text("{}")
+    pv = tmp_path / "library" / "previews" / "conpro-door-sill-D3.jpg"
+    os.utime(override, (pv.stat().st_mtime + 10,) * 2)
+    assert c.get(url).status_code == 404  # out of date: the next view retakes it
+    assert c.post(url, content=b"\xff\xd8\xff" + b"0" * (m.PREVIEW_MAX + 1)).status_code == 413

@@ -17,6 +17,21 @@ import { boxProjectUVs } from "./uv";
 const K = 0.01; // mm -> scene units (== app/units.py MM_PER_VIEW_UNIT)
 const INTRO_MS = 520; // drop-in time per component
 const GHOST = 0.12; // opacity of components outside an isolate() set
+
+/* Up to n points spread over a mesh's vertices (world space), each pulled 2%
+   toward their centroid so a ray stops just short of the surface. */
+function surfacePoints(m: THREE.Mesh, n: number): THREE.Vector3[] {
+  const pos = m.geometry.getAttribute("position") as THREE.BufferAttribute | undefined;
+  if (!pos || pos.count === 0) return [];
+  m.updateMatrixWorld();
+  const step = Math.max(1, Math.floor(pos.count / n));
+  const pts: THREE.Vector3[] = [];
+  for (let i = 0; i < pos.count && pts.length < n; i += step) {
+    pts.push(new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld));
+  }
+  const c = pts.reduce((a, p) => a.add(p), new THREE.Vector3()).divideScalar(pts.length);
+  return pts.map((p) => p.lerp(c, 0.02));
+}
 const CUTBACK = 0.6; // staircase: last-installed part starts this far along z
 
 /* Label text: the drawing's own short label when there is one, else the id. */
@@ -84,6 +99,8 @@ export class Viewport3D {
   private focusTarget: string[] | null = null; // parts the camera was sent to
   private occluders = new Set<string>(); // parts between the camera and focusTarget
   private occludedAt = 0;
+  private occludedKey = ""; // focus + camera when occluders were last computed
+  private clipOn = false;
   private selected: string | null = null;
   private tween: Tween | null = null;
   private intro: { t0: number; stepMs: number } | null = null;
@@ -314,6 +331,7 @@ export class Viewport3D {
     this.seqOn = v.seqOn;
     this.seqIdx = v.seqIdx;
     this.explode = v.explode;
+    this.clipOn = v.clipOn;
     this.applyVisibility();
     this.layout();
     this.clipPlane.constant = v.clipOn ? v.clipZ * K + this.root.position.z : 1e9;
@@ -407,25 +425,38 @@ export class Viewport3D {
   }
 
   /* Parts between the camera and the parts it was sent to fade, so a wall
-     never hides what the camera is looking at (also while orbiting). */
+     never hides what the camera is looking at (also while orbiting). Rays go
+     to points on the part's own surface, not its bounding-box centre, which
+     for an L-shaped part can be empty space. Recomputed only when the focus
+     or the camera moves. */
   private updateOccluders(now: number): void {
     if (now - this.occludedAt < 100) return;
     this.occludedAt = now;
-    const next = new Set<string>();
     const focus = this.focusTarget;
+    const cam = this.camera.position;
+    const key = focus
+      ? [focus.join(","), cam.x, cam.y, cam.z, this.explode, this.seqOn, this.seqIdx]
+          .map((v) => (typeof v === "number" ? v.toFixed(3) : String(v)))
+          .join("|")
+      : "";
+    if (key === this.occludedKey) return;
+    this.occludedKey = key;
+    const next = new Set<string>();
     if (focus) {
       const others = [...this.meshes.entries()]
         .filter(([id, m]) => m.visible && !focus.includes(id))
         .map(([, m]) => m);
-      const cam = this.camera.position;
       for (const id of focus) {
         const m = this.meshes.get(id);
         if (!m || !m.visible) continue;
-        const to = new THREE.Box3().setFromObject(m).getCenter(new THREE.Vector3()).sub(cam);
-        this.ray.set(cam, to.clone().normalize());
-        this.ray.far = to.length();
-        for (const hit of this.ray.intersectObjects(others, false)) {
-          next.add((hit.object.userData as { id: string }).id);
+        for (const p of surfacePoints(m, 16)) {
+          const to = p.sub(cam);
+          const dist = to.length();
+          this.ray.set(cam, to.divideScalar(dist));
+          this.ray.far = dist * 0.995; // not the face the part sits against
+          for (const hit of this.ray.intersectObjects(others, false)) {
+            next.add((hit.object.userData as { id: string }).id);
+          }
         }
       }
       this.ray.far = Infinity;
@@ -444,6 +475,21 @@ export class Viewport3D {
       ? opts.view === "iso" ? this.isoDir() : VIEW_DIRS[opts.view]
       : this.camera.position.clone().sub(this.controls.target).normalize();
     this.frame(ids, dir, opts.pad ?? (ids && ids.length ? 1.4 : 0.95), opts.ms ?? 900);
+  }
+
+  /** True when the view shows the whole detail as built: nothing selected,
+      isolated, focused, exploded, cut, stepped or moving. */
+  pristine(): boolean {
+    return (
+      !this.intro &&
+      !this.tween &&
+      this.selected === null &&
+      this.focusSet === null &&
+      this.focusTarget === null &&
+      this.explode === 0 &&
+      !this.seqOn &&
+      !this.clipOn
+    );
   }
 
   setView(view: ViewPreset, ms = 900): void {
@@ -619,17 +665,13 @@ export class Viewport3D {
     this.layout();
   }
 
-  /** True while the build-up animation is running. */
-  introPlaying(): boolean {
-    return this.intro !== null;
-  }
-
   /** Render one view to a JPEG data URL with every visible part tagged by its
       id, so a model can say which part is wrong (tags=false for a clean
       library card). The live camera is restored. */
   snapshot(view: ViewPreset, maxW = 1024, tags = true): string {
     const pos = this.camera.position.clone();
     const tgt = this.controls.target.clone();
+    const tween = this.tween; // a camera flight in progress continues afterwards
     const faded = this.occluders;
     this.occluders = new Set();
     this.skipIntro();
@@ -679,6 +721,7 @@ export class Viewport3D {
     this.camera.position.copy(pos);
     this.controls.target.copy(tgt);
     this.controls.update();
+    this.tween = tween;
     return url;
   }
 
