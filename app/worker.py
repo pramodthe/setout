@@ -17,7 +17,7 @@ from .repository import CUT_SHORT, BudgetExceeded, LostLease, Repository
 # A run that spends its budget with work left (CAD placeholders, FAILs)
 # continues in a fresh run, at most this many times per generation.
 AUTO_CONTINUE = int(os.environ.get("SETOUT_AUTO_CONTINUE", "2"))
-CONTINUE_REQUEST = ("Continue where the previous run stopped on its budget. Any empty required slot (a slot-missing "
+CONTINUE_REQUEST = ("Continue where the previous run stopped. Any empty required slot (a slot-missing "
                     "check) comes first: complete_assembly fills it. Then model the remaining placeholder objects with "
                     "CAD, then fix the remaining FAILs and what the critic named. Keep everything that already passes.")
 

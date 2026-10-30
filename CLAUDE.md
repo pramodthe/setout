@@ -306,8 +306,9 @@ Cross-file contracts. These are not obvious from any single file:
   crop is shape and topology only. Each object's form is then read in a low-effort call of its own, with
   its close-up beside its built section (`Tools._shape_readings`): a reader lists the
   drawing's features, ticks them, lists the built members and ticks those, and code
-  decides from the ticks. It is never shown the author's brief. A difference, or a part
-  the critic names as missing, cannot pass. The READ lists what is drawn with no label
+  decides from the ticks. It is never shown the author's brief. The critic reads each
+  layer the same way, drawing first (`LAYER_RULE`, `apply_layer_checks`), in its own
+  call. A difference, or a part the critic names as missing, cannot pass. The READ lists what is drawn with no label
   (`unlabelled`), and each entry gets a part.
 - **A run does not stop on what it can still fix** (`Tools._repairs`). While budget
   remains, `finish(needs_review)` is sent back if the last critic named errors or the

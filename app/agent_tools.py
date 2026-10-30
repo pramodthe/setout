@@ -36,7 +36,8 @@ SHAPE_CHECK_SCHEMA = obj({"close_up_shows_part": {"type": "boolean"},
                           "built_features": {"type": "array", "items": obj({"feature": STRING, "drawn": {"type": "boolean"}})}})
 CRITIC_SCHEMA = obj({"verdict": {"type": "string", "enum": ["pass", "fail", "inconclusive"]},
                      "issues": {"type": "array", "items": ISSUE_SCHEMA},
-                     "missing_parts": {"type": "array", "items": obj({"what": STRING, "where": STRING})}})
+                     "missing_parts": {"type": "array", "items": obj({"what": STRING, "where": STRING})},
+                     "layers": {"type": "array", "items": obj({"part": STRING, "drawn": STRING, "built": STRING, "same": {"type": "boolean"}})}})
 CAD_SCHEMA = obj({"code": STRING, "envelope_problem": STRING})
 
 
@@ -188,6 +189,7 @@ def model_view(name, output):
     if unbuilt:
         view["next_step"] = "Model these objects before any more patches: " + ", ".join(unbuilt)
     if name == "critic":
+        view.pop("layers", None)  # what differs is in the issues, and the rest is the trace's
         wrong = sorted({part for issue in view.get("issues", []) if issue["id"].startswith("shape-mismatch:") for part in issue["parts"]})
         absent = [issue["reason"] for issue in view.get("issues", []) if issue["id"].startswith("missing-part-")]
         steps = ([f"Add a part for each of these with patch_program, and the harness models it: {'; '.join(absent)}."] if absent else []) + (
@@ -250,6 +252,15 @@ SHAPE_RULE = ("Compare one object of a construction detail with the drawing it w
               "taper, and tick each against the drawing. drawn is true only if this part has that member in the drawing: a bar or plate drawn "
               "there that belongs to another object does not count, and a solid bar joining pieces the drawing leaves apart is not drawn. A close "
               "resemblance is not a match. Set close_up_shows_part false, with no features, if the left side does not show this part. ")
+# How the critic reads each layer. Seen live, on the drawing a run had just passed: asked
+# only to compare, a critic found nothing, and asked to go layer by layer it named the
+# unbuilt fall 3 times of 3 and a membrane built beside what it lies under 2 of 3.
+LAYER_RULE = ("Go through every layer and substrate of the program in layers, one entry each, in the order they build up. From the drawing "
+              "alone, before you look at the build, say in drawn where it starts and stops, what is under it and over it, and whether it "
+              "turns up, falls or steps. Then say the same of the build in built, from its dims and the renders. same is true only if they "
+              "agree: a layer the drawing runs the whole way that the build stops short, two the drawing stacks that the build puts side by "
+              "side, a layer drawn turning up that is built flat, and a layer drawn to a fall that is built level are all differences. "
+              "Neither is to scale: compare where things run and what they touch, never sizes. ")
 MISSING_RULE = ("List in missing_parts every distinct part the drawing shows that no part of the program stands for, labelled or not: go "
                 "over the drawing from one end to the other. A plate, a packer and a fixing are different parts even where they touch, and "
                 "a part merged into its neighbour is missing. The evidence lists what the reading found drawn without a label. "
@@ -285,6 +296,16 @@ def apply_shape_checks(result, shapes):
         result["verdict"] = "inconclusive"
         result["issues"].append({"id": "shape-unjudged", "parts": unjudged, "severity": "warning", "views": ["shape-pair"],
                                  "reason": "no shape comparison was possible for these objects", "needs_human": True})
+
+
+def apply_layer_checks(result, program):
+    """Turn the critic's reading of each layer into issues the rest of the system reads.
+    As for an object, its tally decides and its verdict does not."""
+    known = {part.id for part in program.parts}
+    for item in result.get("layers") or []:
+        if not item["same"] and item["part"] in known:
+            result["issues"].append({"id": "layout-mismatch:" + item["part"], "parts": [item["part"]], "severity": "error", "views": ["front"],
+                                     "reason": f"the drawing: {item['drawn']} | the build: {item['built']}", "needs_human": False})
 
 
 def critic_evidence(program):
@@ -887,7 +908,7 @@ class Tools:
             result = self.gateway.json("Independently compare the source installation drawing with the assembled renders. "
                      "Check dimension attribution, missing parts, layer placement/order and visible geometry. "
                      "Reject generic blocks standing in for recognisable objects, even if all dimension checks pass: each object must show the form the source shows (openings, cavities, bowls, flanges, legs, profiles, supports). A solid box standing in for a shaped object is a fidelity error. "
-                     + slot_brief(version["program"].get("assembly_class")) + RETENTION_RULE + MISSING_RULE +
+                     + slot_brief(version["program"].get("assembly_class")) + RETENTION_RULE + MISSING_RULE + LAYER_RULE +
                      "Return fail for errors; inconclusive if evidence is insufficient. Never approve an empty or unreadable render. "
                      "Version/evidence: " + canonical({"program": critic_evidence(version["program"]), **model_checks(report["checks"]),
                      "drawn_without_a_label": read.get("unlabelled", []),
@@ -897,6 +918,7 @@ class Tools:
             if result["verdict"] not in ("pass", "fail", "inconclusive") or not isinstance(result["issues"], list):
                 raise ValueError("invalid critic verdict")
             apply_shape_checks(result, self._shape_readings(version, program, pairs))
+            apply_layer_checks(result, program)
             if "missing_parts" in result:
                 apply_missing_parts(result)
             if result["verdict"] == "pass" and any(i.get("severity") == "error" for i in result["issues"]):

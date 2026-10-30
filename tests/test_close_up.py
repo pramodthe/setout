@@ -14,7 +14,7 @@ import pytest
 from PIL import Image, ImageDraw
 
 from app import agent_tools, close_up, database as d
-from app.agent_tools import CAD_SCHEMA, CRITIC_SCHEMA, Tools, apply_shape_checks, model_view
+from app.agent_tools import CAD_SCHEMA, CRITIC_SCHEMA, LAYER_RULE, Tools, apply_layer_checks, apply_shape_checks, model_view
 from app.model_gateway import ModelGateway
 from app.native_program import NativeProgram
 from test_agent_v3 import FakeRenderer, response_json, source_repo  # noqa: F401
@@ -292,7 +292,64 @@ def test_a_locating_call_that_comes_back_empty_costs_the_close_up_not_the_part(s
     assert result.get("component_id") and len(_images(model.payloads["cad"][0])) == 1
 
 
+def _layer_reading(part, same, drawn="runs the whole way", built="stops short"):
+    return {"part": part, "drawn": drawn, "built": built, "same": same}
+
+
+def test_a_layer_read_differently_is_an_error_whatever_the_critic_concludes():
+    """Seen live: a critic passed a membrane built beside the sheet the drawing lays over it."""
+    result = {"verdict": "pass", "issues": [], "layers": [_layer_reading("layer", False), _layer_reading("slab", True)]}
+    apply_layer_checks(result, NativeProgram.model_validate(_prepared_raw()))
+    assert [issue["id"] for issue in result["issues"]] == ["layout-mismatch:layer"]
+    issue = result["issues"][0]
+    assert issue["severity"] == "error" and not issue["needs_human"] and issue["parts"] == ["layer"]
+    assert "runs the whole way" in issue["reason"] and "stops short" in issue["reason"]
+
+
+def test_only_a_part_of_the_program_can_raise_a_layer_issue():
+    result = {"verdict": "pass", "issues": [], "layers": [_layer_reading("no_such_part", False)]}
+    apply_layer_checks(result, NativeProgram.model_validate(_prepared_raw()))
+    assert result["issues"] == []
+
+
+def test_a_critic_with_no_layer_reading_raises_nothing():
+    result = {"verdict": "pass", "issues": []}
+    apply_layer_checks(result, NativeProgram.model_validate(_prepared_raw()))
+    assert result["issues"] == []
+
+
+def test_the_critic_is_told_to_read_the_drawing_before_the_build(source_repo):
+    assert "layers" in CRITIC_SCHEMA["required"] and "before you look at the build" in LAYER_RULE
+    assert LAYER_RULE.index("drawn") < LAYER_RULE.index("built")
+
+
+def test_a_layer_the_critic_read_differently_fails_the_critic_and_is_a_repair(source_repo, close_ups):
+    model = Located()
+    real = model.__call__
+    job, tools, written = _tools(source_repo, model)
+    def critic(payload):
+        if payload["text"]["format"]["name"] == "critic":
+            assert LAYER_RULE in _text(payload)
+            return response_json({"verdict": "pass", "issues": [], "missing_parts": [], "layers": [_layer_reading("layer", False)]})
+        return real(payload)
+    tools.gateway.responder = critic
+    version = written["version_id"]
+    report = tools.run("v", "build_and_verify", {"version_id": version})
+    rendered = tools.run("r", "render", {"version_id": version})
+    verdict = tools.run("c", "critic", {"version_id": version, "verification_id": report["verification_id"],
+                                        "render_ids": [r["render_id"] for r in rendered["renders"]]})
+    assert verdict["verdict"] == "fail" and "layout-mismatch:layer" in tools._repairs(source_repo.run(job["id"]))
+    view = model_view("critic", verdict)
+    assert "layers" not in view and any(i["id"] == "layout-mismatch:layer" for i in view["issues"])
+
+
 SMALL = dict(track=(300, 300, 340, 340), bottom_tray=(200, 500, 800, 540))
+
+
+def _prepared_raw():
+    from test_threshold_run import SOURCE, READ
+    from app.native_program import prepare
+    return prepare(threshold(), SOURCE, "d", READ)[0].model_dump(mode="json")
 
 
 def _regions(model, repo):
