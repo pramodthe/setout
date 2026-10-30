@@ -2,7 +2,10 @@
 # each defined in our own words. `check` says what the verifier does with the
 # kind today: `geometric` kinds are measured on the built meshes against a pass
 # mark the verifier owns; `unverified` kinds cannot be measured, and stay open
-# as a required UNVERIFIED, so they cannot stand in for a measurement.
+# as a required UNVERIFIED, so they cannot stand in for a measurement. The
+# contact kinds share one measure. laps_over may have less contact between two
+# layers, fixed_to is measured on the solids along the fixing, and hosted_in on
+# the target's solid either side of the part.
 status: draft
 relations:
   - id: supported_by

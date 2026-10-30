@@ -275,13 +275,19 @@ Cross-file contracts. These are not obvious from any single file:
   passing independent critic on that version and manifest, and readable evidence.
   Publishing also needs a named reviewer's acceptance.
 - **A relation's pass mark belongs to the verifier** (`verification_v3.py`,
-  `CONTACT_FLOOR`, `COVER_FLOOR`). Every kind measures the same thing on the same
-  planes, which the verifier picks: the share of the smaller face that touches. A
-  declared `min_coverage` can only ask for more. `covers` must also hide the target's
-  face. A covered layer's obligation adds up the real contact of what lies on it,
-  whatever the kinds, and a part measured against nothing stays open. So neither
-  lowering a number, swapping a kind, nor deleting a relation gets past it. Values
-  come from measured runs; never change them to clear a check.
+  `CONTACT_FLOOR`, `COVER_FLOOR`). The contact kinds (`supported_by`, `bonded_to`,
+  `sealed_to`, `terminates_against`, `abuts`, `covers`, `laps_over`) measure the same
+  thing on planes the verifier picks: the share of the smaller face that touches.
+  `covers` must also hide the target's face. `laps_over` alone may have less, and
+  only between two layers by role, running past each other's ends by `LAP_WIDTHS`
+  times the thinner one; that bar is ours and rests on very little. `fixed_to` is
+  measured on the two solids along the fixing, and `hosted_in` on the target's solid
+  either side of the part, so resting on a surface fails both. `repeated_along` stays
+  open. A declared `min_coverage` can only ask for more, and a declared axis changes
+  nothing. A covered layer's obligation adds up the real contact of what lies on it,
+  whatever the kinds, and a part measured against nothing stays open. A new kind must
+  be classified in `tests/test_pass_marks.py`, or its hostile cases fail. Values come
+  from measured runs; never change them to clear a check.
 - **A drawing is looked at up close, never measured** (`app/close_up.py`). Before an
   object is modelled, two model calls place it and it is cut from the full-resolution
   figure; if they disagree the writer gets the whole drawing. The crop is shape and

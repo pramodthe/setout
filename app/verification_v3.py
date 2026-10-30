@@ -13,7 +13,7 @@ from .native_program import READ_ROLES, NativeProgram
 from .program import evaluate, expr_names
 from .repository import VERIFIER_VERSION, canonical, inferred_part_ids, outcome_tier, sha
 from .spec import DetailSpec
-from .verification_probes import AXES, CONTACT_KINDS, layer_order_probes, line_hits, probe_points
+from .verification_probes import CONTACT_KINDS, layer_order_probes, line_hits, lines_through, probe_points, shared_length, solid_spans
 from .verify import CONTACT_TOL_MM, verify_all
 from .versioning import archive_scene
 
@@ -27,7 +27,7 @@ def check(ident, status, reason=None, required=True, **values):
 # declare a stricter min_coverage, and nothing it declares lowers these. Measured
 # 30 Oct on all 32 versions of a real run and on both seeds:
 # - Contact, as a share of the SMALLER of the two faces, so it reads the same
-#   whichever part is the source and whichever kind is named. True contacts were
+#   whichever part is the source and whichever contact kind is named. True contacts were
 #   0.60 or more; the false ones an agent had to lower its mark for were 0.18 or less.
 #   Either single face fails true contacts: a wide plate on a small nut is 0.09 of
 #   the plate, and a small object on a slab is 0.04 of the slab.
@@ -35,6 +35,14 @@ def check(ident, status, reason=None, required=True, **values):
 #   face is hidden. True covers were 0.96 or more; the lowered ones 0.04 to 0.18.
 CONTACT_FLOOR = 0.5
 COVER_FLOOR = 0.5
+# Two layers may lap with less than that, as long sheets overlap by a small part of
+# their length: only layers, and only with an overlap this many times the thinner one.
+# Not a construction rule, and no standard's figure: a sanity bar against a sliver,
+# below the narrowest lap we have measured (16 times, one of three, all from the
+# hand-modelled seeds, and all at full contact, so none needed this at all). No live
+# run has ever measured a lap. A printed lap width belongs in a measured feature.
+LAP_ROLES = ("covered_layer", "finish")
+LAP_WIDTHS = 10
 
 
 # Words that say where a piece of a layer sits, not what it is made of.
@@ -253,18 +261,28 @@ def _dependencies(program, before, after):
     return visit(after)
 
 
-def is_lap(a, b, axis):
-    """Whether two parts' bounding boxes form a real lap across `axis`: along one
-    side of the interface each runs past the other's end, and along the other side
-    the overlap spans at least the floor's share of the narrower part. A part lying
-    wholly on another is contact, not a lap, so this never excuses a small contact."""
+def is_lap(program, relation, meshes, axis):
+    """Whether two layers lap across `axis`: the one case where a small share of a face
+    is a sound contact. In a section every part runs the same length along the sill, so
+    offset ends prove nothing by themselves: both must be layers by role, each must run
+    past the other's end, and the overlap must be wide for their thickness."""
+    by_id = {p.id: p for p in program.parts}
+    source, target = by_id[relation.source], by_id[relation.target]
+    a, b = meshes[source.id].bounds(), meshes[target.id].bounds()
+    if source.role not in LAP_ROLES or target.role not in LAP_ROLES or not a or not b:
+        return False
+    env = {p.name: p.value for p in program.params}
+    thinner = min(part_thickness(part, meshes[part.id], axis, env) for part in (source, target))
     i, j = [k for k in range(3) if k != axis]
-    def offset(k):
-        return (a[k] < b[k] - 1e-6 and a[k + 3] < b[k + 3] - 1e-6) or (a[k] > b[k] + 1e-6 and a[k + 3] > b[k + 3] + 1e-6)
-    def spans(k):
-        narrower = min(a[k + 3] - a[k], b[k + 3] - b[k])
-        return narrower > 0 and (min(a[k + 3], b[k + 3]) - max(a[k], b[k])) / narrower >= CONTACT_FLOOR
-    return any(min(a[k + 3], b[k + 3]) > max(a[k], b[k]) and offset(k) and spans(m) for k, m in ((i, j), (j, i)))
+    for along, across in ((i, j), (j, i)):
+        past = (a[along] < b[along] - 1e-6 and a[along + 3] < b[along + 3] - 1e-6) or (
+                a[along] > b[along] + 1e-6 and a[along + 3] > b[along + 3] + 1e-6)
+        narrower = min(a[across + 3] - a[across], b[across + 3] - b[across])
+        spanned = min(a[across + 3], b[across + 3]) - max(a[across], b[across])
+        width = min(a[along + 3], b[along + 3]) - max(a[along], b[along])
+        if past and width >= LAP_WIDTHS * thinner and narrower > 0 and spanned / narrower >= CONTACT_FLOOR:
+            return True
+    return False
 
 
 def relation_problem(relation, measured, low, high, declared, ordering, lap):
@@ -288,32 +306,60 @@ def relation_problem(relation, measured, low, high, declared, ordering, lap):
     return None
 
 
-def solid_relation(ident, relation, a, b, target, tolerance, ordering):
-    """fixed_to and hosted_in join solids, so they have no pair of faces to measure.
-    fixed_to: lines through the fixing, along its own length or the declared axis,
-    must meet the target within the fixing's span. hosted_in: the source must lie
-    inside the target's envelope. `contact` is the measured share either way."""
+def fixing_depth(program, meshes, relation):
+    """(mm of solid a fixing shares with its target along its own length, the mm it
+    must beat). Measured on both solids, never on the ends of a span: a part resting on
+    a surface shares none of it. The axis is the fixing's own, whatever a relation
+    declares, and the two must overlap by more than the contact tolerance every way."""
+    source, target = meshes[relation.source], meshes[relation.target]
+    a, b = source.bounds(), target.bounds()
+    tolerances = [pair_tolerance(program, meshes, relation.source, relation.target, k) for k in range(3)]
+    overlaps = [min(a[k + 3], b[k + 3]) - max(a[k], b[k]) for k in range(3)]
+    spans = [a[k + 3] - a[k] for k in range(3)]
+    axis = spans.index(max(spans))
+    if any(overlap <= tolerance for overlap, tolerance in zip(overlaps, tolerances)):
+        return 0., tolerances[axis]
+    i, j = [k for k in range(3) if k != axis]
+    points = lines_through(source, [max(a[k], b[k]) for k in (i, j)], [min(a[k + 3], b[k + 3]) for k in (i, j)], axis)
+    depths = [shared_length(solid_spans(first), solid_spans(second))
+              for first, second in zip(line_hits(source, axis, points), line_hits(target, axis, points))]
+    return max(depths, default=0.), tolerances[axis]
+
+
+def held_share(a, target):
+    """Of lines through a part's box, along the axis that does best, the share that find
+    the target's solid beyond both of the part's ends. That is an opening; an envelope
+    is not one: a part floating in the crook of a bent plate is inside its box."""
+    best = 0.
+    for axis in range(3):
+        points = probe_points(a, a, axis)
+        if not points:
+            continue
+        spans = [solid_spans(line) for line in line_hits(target, axis, points)]
+        held = sum(any(low < a[axis] - 1e-6 for low, _ in line) and any(high > a[axis + 3] + 1e-6 for _, high in line)
+                   for line in spans)
+        best = max(best, held / len(points))
+    return best
+
+
+def solid_relation(ident, relation, program, meshes, ordering):
+    """fixed_to and hosted_in join solids, not faces, so each has its own measure and
+    neither can stand in for a contact: a part resting on or beside another fails both."""
     if relation.kind == "fixed_to":
-        spans = [a[k + 3] - a[k] for k in range(3)]
-        axis = AXES.get(relation.constraints.get("axis"), spans.index(max(spans)))
-        points = probe_points(a, b, axis)
-        hits = line_hits(target, axis, points) if points else []
-        entered = sum(any(a[axis] - tolerance <= hit <= a[axis + 3] + tolerance for hit in line) for line in hits)
-        contact, reason = entered / len(points) if points else 0., "the fixing does not reach into the part it fixes"
+        depth, needed = fixing_depth(program, meshes, relation)
+        measured, ok = dict(embedded=depth, contact=min(depth / needed, 1.) if needed else 0.), depth > needed
+        problem = (f"{relation.source} runs {depth:.3g} mm inside {relation.target}, and a fixing must pass into what it fixes by "
+                   f"more than {needed:g} mm, whatever axis is declared. A part resting on or against another is a contact "
+                   "kind (supported_by, bonded_to, terminates_against), not fixed_to")
     else:
-        inside, volume = 1., 1.
-        for k in range(3):
-            inside *= max(0, min(a[k + 3], b[k + 3]) - max(a[k], b[k]))
-            volume *= max(0, a[k + 3] - a[k])
-        contact, reason = inside / volume if volume else 0., "the source does not sit inside the target's envelope"
-    ok = contact + 1e-6 >= CONTACT_FLOOR and ordering
-    if ok:
-        reason = None
-    elif contact + 1e-6 >= CONTACT_FLOOR:
-        reason = f"{relation.target} must be installed before {relation.source}"
-    else:
-        reason = f"{reason}: {contact:.0%} measured, {CONTACT_FLOOR:.0%} required"
-    return check(ident, "PASS" if ok else "FAIL", reason, contact=contact, order_valid=ordering)
+        share = held_share(meshes[relation.source].bounds(), meshes[relation.target])
+        measured, ok = dict(contact=share), share + 1e-6 >= CONTACT_FLOOR
+        problem = (f"{relation.target} has solid on both sides of {relation.source} along {share:.0%} of the lines through it, and "
+                   f"hosted_in needs {CONTACT_FLOOR:.0%}: inside an envelope is not inside an opening. A part resting on or "
+                   "against another is a contact kind (supported_by, bonded_to, terminates_against), not hosted_in")
+    if ok and not ordering:
+        ok, problem = False, f"{relation.target} must be installed before {relation.source}"
+    return check(ident, "PASS" if ok else "FAIL", None if ok else problem, **measured, order_valid=ordering)
 
 
 def facing_levels(part, mesh, planes, axis, side):
@@ -398,8 +444,7 @@ def spatial_checks(program, meshes, exposed=None, cad_planes=None, covered_befor
             if len(built) < 2 or a is None or b is None:
                 output.append(check(ident, "UNVERIFIED", f"{relation.kind} is measured once both parts are built"))
                 continue
-            tolerance = pair_tolerance(program, meshes, relation.source, relation.target, 0)
-            output.append(solid_relation(ident, relation, a, b, meshes[relation.target], tolerance, ordering))
+            output.append(solid_relation(ident, relation, program, meshes, ordering))
             anchored |= {relation.source, relation.target}
             continue
         settings = relation.constraints
@@ -448,7 +493,7 @@ def spatial_checks(program, meshes, exposed=None, cad_planes=None, covered_befor
             smaller = min(source_area, target_area)
             measurement = {"gap": (af - bf) * direction, "coverage": overlap / base if base else 0,
                            "contact": overlap / smaller if smaller else 0, "overlap": overlap}
-        lap = relation.kind == "laps_over" and bool(a and b) and is_lap(a, b, axis)
+        lap = relation.kind == "laps_over" and is_lap(program, relation, meshes, axis)
         problem = relation_problem(relation, measurement, min_gap, max_gap, declared, ordering, lap)
         result = check(ident, "FAIL" if problem else "PASS", problem, **measurement, order_valid=ordering, **band)
         output.append(result)

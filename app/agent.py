@@ -91,14 +91,16 @@ Every part declares substrate/covered_layer/finish/object. Define relations and 
 paths; every built part needs a measured relation to what holds it, and one measured
 against nothing stays open. A relation between faces names axis, source_face and target_face
 (one min and one max: the two faces that really meet), min_gap and max_gap (mm).
-THE VERIFIER SETS THE PASS MARK, and the same one for every kind: at least half of the smaller
-face must touch, and covers must also hide at least half of the target's face. Nothing you
-declare lowers that, and changing a relation's kind does not change what is measured. Leave
-min_coverage null unless the drawing shows more contact than that. When a relation FAILs, fix
-the geometry, or say what really happens: a part that rests on, stops at or is sealed to
-another is supported_by, terminates_against or sealed_to, and only what hides a face covers it.
-fixed_to is a fixing: lines along it must enter the target, so it must really reach what it
-fixes. hosted_in is a part inside another's envelope. abuts is two parts meeting edge to edge.
+THE VERIFIER SETS THE PASS MARK. For every contact kind, at least half of the smaller face must
+touch, and covers must also hide at least half of the target's face. Nothing you declare lowers
+that. Leave min_coverage null unless the drawing shows more contact than that. When a relation
+FAILs, fix the geometry, or say what really happens: a part that rests on, stops at or is sealed
+to another is supported_by, terminates_against or sealed_to, and only what hides a face covers it.
+Three kinds are not ways round this. fixed_to is a fixing: its solid must really pass into the
+target's solid, whatever axis you declare, so a part resting on a surface fails it. hosted_in is
+a part in an opening: the target's solid must lie on both sides of it. laps_over gets less
+contact only between two layers, each running past the other's end, overlapping by many times
+their thickness. abuts is two parts meeting edge to edge, measured as a contact.
 repeated_along cannot be measured and stays open, so give a spacing as a dimension or note.
 Remove a relation only between parts that do not touch.
 Relations on the fillet shape are not measured; a fillet that carries one is a triangular profile.

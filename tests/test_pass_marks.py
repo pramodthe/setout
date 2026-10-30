@@ -5,12 +5,15 @@ taken. The fixtures are our own: blocks of named sizes, no drawing. Measured on
 built meshes through the same code a version is verified with.
 """
 import copy
+from typing import get_args
 
 import pytest
 
 from app.geometry import Mesh, _box_tris
-from app.native_program import NativeProgram, prepare
-from app.verification_v3 import COVER_FLOOR, CONTACT_FLOOR, label_check, spatial_checks
+from app.native_program import NativeProgram, NativeRelation, prepare
+from app.verification_probes import shared_length, solid_spans
+from app.verification_v3 import (COVER_FLOOR, CONTACT_FLOOR, LAP_WIDTHS, is_lap, label_check, part_thickness,
+                                 spatial_checks)
 from test_constraints_v3 import _layer_program
 
 SOURCE = {"filename": "own.pdf", "sha256": "a" * 64, "page_index": 0, "crop_id": "p0_x",
@@ -235,60 +238,250 @@ def test_a_reviewer_can_still_accept_an_exposed_layer():
     assert check["status"] == "N/A" and not check["required"]
 
 
-# ---------------------------------------------------------------- kinds that had no measure
+# ------------------------------------------------- every kind against what is not true of it
 
-def test_a_lap_is_a_small_overlap_that_a_contact_floor_must_not_fail():
-    raw = _parts(("under", "substrate"), ("over", "finish"))
-    meshes = {"under": _box("under", 0, 0, 1000, 2), "over": _box("over", 900, 2, 1900, 4)}
+KINDS = get_args(NativeRelation.model_fields["kind"].annotation)
+# What each kind claims. A new kind fails test_every_kind_is_classified until it is added here.
+CONTACT_ONLY = ("supported_by", "bonded_to", "sealed_to", "terminates_against", "abuts", "laps_over")
+HIDES = ("covers",)
+SOLID = ("fixed_to", "hosted_in")
+NO_CLAIM_OF_CONTACT = ("installed_before", "repeated_along")
+
+
+def _foot_on_end_of_a_sheet():
+    """A foot 100 long whose last 19 mm rests on the end of a sheet, the shape of a
+    FAIL a live run reached. In a section both run the same length along the sill."""
+    raw = _parts(("sheet", "substrate"), ("foot", "object"))
+    raw["parts"][1].update(shape="cad", form="shaped", cad_brief="a foot", param_bindings={"width": "width"})
+    meshes = {"sheet": _box("sheet", 0, 0, 200, 2), "foot": _box("foot", 181, 2, 281, 6)}
+    return raw, meshes, {"foot": [([0, -1, 0], [231, 2, 50]), ([0, 1, 0], [231, 6, 50])]}, "foot", "sheet"
+
+
+def _floating_in_a_bent_plate():
+    """Inside the plate's bounding box, touching nothing."""
+    raw = _parts(("plate", "substrate"), ("part", "finish"))
+    plate = Mesh("plate")
+    _box_tris(plate, 0, 0, 0, 200, 5, 100)
+    _box_tris(plate, 0, 0, 0, 5, 200, 100)
+    return raw, {"plate": plate, "part": _box("part", 80, 80, 120, 120)}, {}, "part", "plate"
+
+
+def _beside_its_target():
+    raw = _parts(("block", "substrate"), ("part", "finish"))
+    return raw, {"block": _box("block", 0, 0, 100, 50), "part": _box("part", 120, 0, 220, 50)}, {}, "part", "block"
+
+
+def _resting_on_a_surface():
+    """All of a small part's face on a wide one: a true contact, and nothing more."""
+    raw = _parts(("slab", "substrate"), ("part", "finish"))
+    return raw, {"slab": _box("slab", 0, 0, 500, 50), "part": _box("part", 200, 50, 240, 90)}, {}, "part", "slab"
+
+
+HOSTILE = {"foot on the end of a sheet": _foot_on_end_of_a_sheet, "floating in a bent plate": _floating_in_a_bent_plate,
+           "beside its target": _beside_its_target, "resting on a surface": _resting_on_a_surface}
+# Every way of declaring a relation that might change what is measured.
+DECLARED = {"faces": dict(TOUCHING), "faces, asking nothing": {**TOUCHING, "min_coverage": 0.0}, "no constraints": {},
+            "axis x": {"axis": "x"}, "axis y": {"axis": "y"}, "axis z": {"axis": "z"}}
+
+
+def _verdict(case, kind, declared):
+    raw, meshes, planes, source, target = HOSTILE[case]()
+    raw["relations"] = [{"source": source, "target": target, "kind": kind, "constraints": copy.deepcopy(declared)}]
+    checks = _checks(raw, meshes, cad_planes=planes)
+    return checks[f"assembly-0-{kind}"], checks, source
+
+
+def test_every_kind_is_classified():
+    assert sorted(KINDS) == sorted(CONTACT_ONLY + HIDES + SOLID + NO_CLAIM_OF_CONTACT)
+
+
+@pytest.mark.parametrize("kind", KINDS)
+@pytest.mark.parametrize("case", ["foot on the end of a sheet", "floating in a bent plate", "beside its target"])
+@pytest.mark.parametrize("declared", DECLARED)
+def test_no_kind_passes_what_is_not_there(case, kind, declared):
+    """Renaming a relation, or declaring it differently, must never clear a measurement."""
+    found, checks, source = _verdict(case, kind, DECLARED[declared])
+    if kind == "installed_before":  # a sequence, which says nothing about contact
+        assert f"anchored-{source}" in checks
+    else:
+        assert found["status"] != "PASS", found
+        assert found["required"]
+
+
+@pytest.mark.parametrize("kind", KINDS)
+@pytest.mark.parametrize("declared", DECLARED)
+def test_a_part_resting_on_a_surface_is_a_contact_and_nothing_more(kind, declared):
+    found, checks, source = _verdict("resting on a surface", kind, DECLARED[declared])
+    if kind == "installed_before":
+        assert f"anchored-{source}" in checks
+    elif kind in CONTACT_ONLY and "source_face" in DECLARED[declared]:
+        assert found["status"] == "PASS" and found["contact"] == 1
+    else:
+        assert found["status"] != "PASS", found  # covers hides 8% of the slab; solids share nothing
+
+
+@pytest.mark.parametrize("kind", SOLID)
+def test_a_part_that_rests_is_told_to_say_so(kind):
+    found, _, _ = _verdict("resting on a surface", kind, {})
+    assert found["status"] == "FAIL" and "contact kind" in found["reason"] and "supported_by" in found["reason"]
+
+
+# ------------------------------------------------------------------------- a true lap
+
+def _lap(under, over, roles=("covered_layer", "finish")):
+    raw = _parts(("under", roles[0]), ("over", roles[1]))
     raw["relations"] = [_relation("over", "under", "laps_over")]
+    return raw, {"under": _box("under", *under), "over": _box("over", *over)}
+
+
+def test_two_layers_may_lap_with_a_small_share_of_their_faces():
+    raw, meshes = _lap((0, 0, 1000, 2), (850, 2, 1850, 4))
     check = _checks(raw, meshes)["assembly-0-laps_over"]
-    assert check["status"] == "PASS" and check["contact"] == pytest.approx(0.1)
+    assert check["status"] == "PASS" and check["contact"] == pytest.approx(0.15)
 
 
-def test_a_corner_touching_a_corner_is_not_a_lap():
-    """So laps_over is not a lower bar to escape to: the overlap must span the width."""
-    raw = _parts(("under", "substrate"), ("over", "finish"))
-    meshes = {"under": _box("under", 0, 0, 1000, 2), "over": Mesh("over")}
-    _box_tris(meshes["over"], 990, 2, 95, 1100, 4, 200)
+@pytest.mark.parametrize("over", [(999, 2, 1999, 4), (985, 2, 1985, 4)], ids=["1 mm", "15 mm"])
+def test_a_sliver_between_two_sheets_is_not_a_lap(over):
+    """Under ten times the thinner sheet. A sanity bar, not a lap width from any rule."""
+    raw, meshes = _lap((0, 0, 1000, 2), over)
+    check = _checks(raw, meshes)["assembly-0-laps_over"]
+    assert check["status"] == "FAIL" and "smaller face" in check["reason"]
+    assert LAP_WIDTHS == 10
+
+
+@pytest.mark.parametrize("roles", [("substrate", "finish"), ("object", "finish"), ("covered_layer", "object"), ("zone", "finish")])
+def test_only_layers_by_role_may_lap(roles):
+    """In a section every part has the same length along the sill, so this is the bar."""
+    raw, meshes = _lap((0, 0, 1000, 2), (850, 2, 1850, 4), roles)
+    for part in raw["parts"]:
+        if part["role"] == "object":
+            part.update(shape="cad", form="shaped", cad_brief="x", param_bindings={"width": "width"})
+    planes = {p["id"]: [([0, -1, 0], [500, 2, 50]), ([0, 1, 0], [500, 2, 50])] for p in raw["parts"] if p["role"] == "object"}
+    program = NativeProgram.model_validate(raw)
+    assert not is_lap(program, program.relations[0], meshes, 1)
+    if "zone" not in roles:
+        assert _checks(raw, meshes, cad_planes=planes)["assembly-0-laps_over"]["status"] == "FAIL"
+
+
+def test_a_layer_wholly_on_a_wider_layer_is_contact_not_a_lap():
+    raw, meshes = _lap((0, 0, 1000, 2), (100, 2, 300, 4))
+    program = NativeProgram.model_validate(raw)
+    assert not is_lap(program, program.relations[0], meshes, 1)
+    assert _checks(raw, meshes)["assembly-0-laps_over"]["contact"] == 1
+
+
+def test_a_bent_sheets_lap_is_judged_by_the_sheet_not_its_box():
+    """Its box is far taller than the sheet: read as thickness, no lap could ever pass."""
+    raw = _parts(("under", "covered_layer"), ("over", "finish"))
+    raw["params"].append({"name": "sheet_t", "value": 2, "unit": "mm", "kind": "exact", "provenance": "assumption"})
+    raw["parts"][0].update(shape="sheet", path=[{"x": "0", "y": "0"}, {"x": "width", "y": "0"}, {"x": "width", "y": "height"}],
+                           dims=[{"name": "thickness", "expr": "sheet_t"}, {"name": "z0", "expr": "0"}, {"name": "z1", "expr": "depth"}])
     raw["relations"] = [_relation("over", "under", "laps_over")]
-    check = _checks(raw, meshes)["assembly-0-laps_over"]
-    assert check["status"] == "FAIL" and check["contact"] < 0.01
+    program = NativeProgram.model_validate(raw)
+    bent = Mesh("under")
+    _box_tris(bent, 0, -1, 0, 100, 1, 100)
+    _box_tris(bent, 99, 1, 0, 100, 150, 100)
+    assert is_lap(program, program.relations[0], {"under": bent, "over": _box("over", 60, 1, 260, 21)}, 1)
+    assert not is_lap(program, program.relations[0], {"under": bent, "over": _box("over", 90, 1, 290, 21)}, 1)  # 10 mm
 
 
-def _screw(x, top, bottom):
-    return _box("screw", x, bottom, x + 6, top, z1=6)
+# ---------------------------------------------------------------------- a true fixing
 
-
-def test_a_fixing_must_reach_what_it_fixes():
-    """Seen live: a fixing built as a fragment in the slab, under a plate it never met."""
+def _fixing(screw, target=(0, 100, 200, 104)):
     raw = _parts(("plate", "substrate"), ("screw", "finish"))
     raw["relations"] = [{"source": "screw", "target": "plate", "kind": "fixed_to", "constraints": {}}]
-    plate = _box("plate", 0, 100, 200, 104)
-    meshes = {"plate": plate, "screw": _screw(50, 110, 60)}
-    through = _checks(raw, meshes)["assembly-0-fixed_to"]
-    assert through["status"] == "PASS" and through["contact"] == 1
-    meshes["screw"] = _screw(50, 90, 40)  # stops short of the plate
-    short = _checks(raw, meshes)["assembly-0-fixed_to"]
-    assert short["status"] == "FAIL" and "does not reach" in short["reason"]
-    meshes["screw"] = _screw(500, 110, 60)  # beside it
+    return raw, {"plate": _box("plate", *target), "screw": screw}
+
+
+def _headed_screw(x, top, bottom, head=30, shank=6):
+    screw = Mesh("screw")
+    _box_tris(screw, x - shank / 2, bottom, 47, x + shank / 2, top - 6, 53)
+    _box_tris(screw, x - head / 2, top - 6, 35, x + head / 2, top, 65)
+    return screw
+
+
+def test_a_fixing_that_passes_through_what_it_fixes_passes():
+    raw, meshes = _fixing(_box("screw", 50, 60, 56, 110, z1=6))
+    check = _checks(raw, meshes)["assembly-0-fixed_to"]
+    assert check["status"] == "PASS" and check["embedded"] == pytest.approx(4)
+
+
+def test_a_screw_with_a_head_wider_than_its_shank_is_found_by_its_shank():
+    """A fixed grid of lines through the head's box misses a thin shank."""
+    raw, meshes = _fixing(_headed_screw(100, 110, 60))
+    check = _checks(raw, meshes)["assembly-0-fixed_to"]
+    assert check["status"] == "PASS" and check["embedded"] == pytest.approx(4)
+
+
+def test_two_screws_in_one_part_are_found_though_nothing_lies_between_them():
+    """Their box is mostly air, and a line through its middle meets no screw."""
+    screws = Mesh("screw")
+    _box_tris(screws, 10, 60, 47, 14, 310, 53)
+    _box_tris(screws, 210, 60, 47, 214, 310, 53)
+    raw, meshes = _fixing(screws, (0, 100, 400, 104))
+    check = _checks(raw, meshes)["assembly-0-fixed_to"]
+    assert check["status"] == "PASS" and check["embedded"] == pytest.approx(4)
+
+
+def test_a_fixing_sunk_no_deeper_than_the_contact_tolerance_is_only_touching():
+    raw, meshes = _fixing(_box("screw", 50, 103, 56, 150, z1=6))
+    check = _checks(raw, meshes)["assembly-0-fixed_to"]
+    assert check["status"] == "FAIL" and check["embedded"] == 0
+
+
+def test_a_long_plate_sunk_into_a_slab_is_touching_not_fixed():
+    """Along its own length it shares a lot of solid; through its thickness, 1 mm."""
+    raw, meshes = _fixing(_box("screw", 20, 103, 180, 110), (0, 100, 200, 104))
+    check = _checks(raw, meshes)["assembly-0-fixed_to"]
+    assert check["status"] == "FAIL" and check["embedded"] == 0
+
+
+def test_a_line_through_a_shared_edge_is_one_crossing():
+    assert solid_spans([1, 1, 5]) == [(1, 5)]
+    assert solid_spans([1, 5, 8, 8, 8, 12]) == [(1, 5), (8, 12)]
+    assert shared_length([(0, 10)], [(4, 6), (8, 20)]) == 4
+
+
+def test_a_fixing_that_stops_short_of_the_plate_or_misses_it_fails():
+    raw, meshes = _fixing(_box("screw", 50, 40, 56, 90, z1=6))
     assert _checks(raw, meshes)["assembly-0-fixed_to"]["status"] == "FAIL"
-
-
-def test_a_part_hosted_in_another_lies_inside_its_envelope():
-    raw = _parts(("frame", "substrate"), ("leaf", "finish"))
-    raw["relations"] = [{"source": "leaf", "target": "frame", "kind": "hosted_in", "constraints": {}}]
-    frame = _box("frame", 0, 0, 100, 100)
-    assert _checks(raw, {"frame": frame, "leaf": _box("leaf", 10, 10, 90, 90)})["assembly-0-hosted_in"]["status"] == "PASS"
-    assert _checks(raw, {"frame": frame, "leaf": _box("leaf", 300, 10, 390, 90)})["assembly-0-hosted_in"]["status"] == "FAIL"
+    meshes["screw"] = _box("screw", 500, 60, 506, 110, z1=6)
+    assert _checks(raw, meshes)["assembly-0-fixed_to"]["status"] == "FAIL"
 
 
 def test_a_fixing_on_an_unbuilt_object_is_not_measured_on_its_placeholder():
     raw = _parts(("plate", "substrate"), ("screw", "object"))
     raw["parts"][1].update(shape="cad", form="shaped", cad_brief="a screw", param_bindings={"width": "width"})
     raw["relations"] = [{"source": "screw", "target": "plate", "kind": "fixed_to", "constraints": {}}]
-    meshes = {"plate": _box("plate", 0, 100, 200, 104), "screw": _screw(50, 110, 60)}
+    meshes = {"plate": _box("plate", 0, 100, 200, 104), "screw": _box("screw", 50, 60, 56, 110, z1=6)}
     check = _checks(raw, meshes, cad_planes={})["assembly-0-fixed_to"]
     assert check["status"] == "UNVERIFIED" and check["required"] and "once both parts are built" in check["reason"]
+
+
+def test_a_fixing_installed_before_what_it_fixes_fails():
+    raw, meshes = _fixing(_box("screw", 50, 60, 56, 110, z1=6))
+    raw["parts"][1]["install_after"], raw["parts"][0]["install_after"] = [], ["screw"]
+    assert "installed before" in _checks(raw, meshes)["assembly-0-fixed_to"]["reason"]
+
+
+# ---------------------------------------------------------------------- a true opening
+
+def test_a_part_in_a_channel_is_hosted_in_it():
+    raw = _parts(("frame", "substrate"), ("leaf", "finish"))
+    raw["relations"] = [{"source": "leaf", "target": "frame", "kind": "hosted_in", "constraints": {}}]
+    frame = Mesh("frame")
+    _box_tris(frame, 0, 0, 0, 10, 100, 100)
+    _box_tris(frame, 90, 0, 0, 100, 100, 100)
+    _box_tris(frame, 0, 0, 0, 100, 10, 100)
+    check = _checks(raw, {"frame": frame, "leaf": _box("leaf", 40, 20, 60, 80)})["assembly-0-hosted_in"]
+    assert check["status"] == "PASS" and check["contact"] == 1
+
+
+def test_a_part_set_into_a_solid_is_hosted_in_it():
+    raw = _parts(("block", "substrate"), ("rod", "finish"))
+    raw["relations"] = [{"source": "rod", "target": "block", "kind": "hosted_in", "constraints": {}}]
+    assert _checks(raw, {"block": _box("block", 0, 0, 100, 100), "rod": _box("rod", 40, 40, 60, 60, z1=50)})[
+        "assembly-0-hosted_in"]["status"] == "PASS"
 
 
 # ---------------------------------------------------------- shaped objects

@@ -104,7 +104,8 @@ class NativeRelation(BaseModel):
     source: str
     target: str
     kind: Literal["supported_by", "bonded_to", "covers", "laps_over", "terminates_against", "sealed_to", "installed_before",
-                  # ontology/relations.yaml kinds; the verifier reports them UNVERIFIED until it measures them
+                  # ontology/relations.yaml: abuts is measured as a contact, hosted_in and fixed_to on
+                  # their solids; repeated_along cannot be measured, so it stays open and blocks
                   "hosted_in", "fixed_to", "abuts", "repeated_along"]
     constraints: dict = Field(default_factory=dict)
 
