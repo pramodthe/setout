@@ -19,16 +19,23 @@ TERMINAL = {"succeeded", "failed", "needs_review", "cancelled"}
 # `tokens` counts what is paid for: uncached input plus output (billed_tokens).
 # Cached input is recorded beside it as consumed["cached_tokens"]; model_calls,
 # tool_calls and seconds are what bound a run that is nearly all cache hits.
-DEFAULT_BUDGET = {"model_calls": 32, "tool_calls": 48, "tokens": 320_000,
-                  "cad_calls": 8, "render_calls": 6, "seconds": 900}
+# Seen 30 Oct: a patching run spent 30 of 32 calls at 161k of 320k tokens, 5.4k and 20 s
+# a call, so calls stopped it at half its paid budget. With CAD first a run spends 10k a
+# call, and tokens are what stop it. 48 calls lets either kind of run reach its tokens;
+# seconds and tool calls move with it, or one of them would be the limit instead, and
+# CAD gets room to redo what the critic rejects. A run of nothing but cache hits still
+# stops at 48 calls.
+DEFAULT_BUDGET = {"model_calls": 48, "tool_calls": 64, "tokens": 320_000,
+                  "cad_calls": 12, "render_calls": 6, "seconds": 1200}
 # Tokens an agent turn may not touch once a draft exists, kept for the final
 # render and critique. Seen live: 24-25k for each critic call.
 REVIEW_TAIL = 40_000
 TAIL_MIN_BUDGET = 120_000  # a budget this small keeps no tail
-# Model calls an agent turn may leave: the critic needs one, and a turn can spend
-# three (itself, a CAD draft, its retry). Seen 30 Oct: two runs spent all 32 and
-# never had their draft reviewed, with a third of their tokens unspent.
-REVIEW_CALLS = 3
+# Model calls an agent turn may leave: the critic needs one, two more if its close-ups
+# were not found yet, and a turn can spend three (itself, a CAD draft, its retry). Seen
+# 30 Oct: two runs spent all their calls and never had their draft reviewed, with a
+# third of their tokens unspent.
+REVIEW_CALLS = 5
 # Why a run stopped, recorded in the job result as stop_reason at the moment it
 # stops. These leave work undone, so the worker continues them; the others are
 # "finished" (the agent called finish) and "provider_rejected".

@@ -10,8 +10,8 @@ from collections import Counter
 
 import sqlalchemy as sa
 
-from . import cad_components, cad_sandbox, completion, database as d, generate, meta_client, ontology, sam
-from .model_gateway import ModelGateway
+from . import cad_components, cad_sandbox, close_up, completion, database as d, generate, meta_client, ontology, sam, store
+from .model_gateway import ModelGateway, ProviderRejected
 from .native_program import kept_bindings, NativeProgram, prepare, expression_unit
 from .program import evaluate, expr_names
 from .program_edits import apply_edits
@@ -30,8 +30,13 @@ VERSION = {"version_id": STRING}
 ISSUE_SCHEMA = obj({"id": STRING, "parts": {"type": "array", "items": STRING}, "reason": STRING,
                     "severity": {"type": "string", "enum": ["error", "warning"]},
                     "views": {"type": "array", "items": STRING}, "needs_human": {"type": "boolean"}})
+SHAPE_CHECK_SCHEMA = obj({"part": STRING, "status": {"type": "string", "enum": ["match", "mismatch", "unclear"]},
+                          "drawing_shows": STRING, "model_shows": STRING})
 CRITIC_SCHEMA = obj({"verdict": {"type": "string", "enum": ["pass", "fail", "inconclusive"]},
-                     "issues": {"type": "array", "items": ISSUE_SCHEMA}})
+                     "issues": {"type": "array", "items": ISSUE_SCHEMA},
+                     "shape_checks": {"type": "array", "items": SHAPE_CHECK_SCHEMA},
+                     "missing_parts": {"type": "array", "items": obj({"what": STRING, "where": STRING})}})
+CAD_SCHEMA = obj({"code": STRING, "envelope_problem": STRING})
 
 
 def json_object(value, expected_type=dict):
@@ -71,7 +76,9 @@ class StagedRepository:
 LABEL_RULES = ("LABELS: a part's label is exactly one READ label_verbatim, copied character for character, "
                "or null; never your own wording, a shortened callout or a label with words added. Every piece "
                "of a split layer carries the same READ label; position words (wall, floor, left, upturn) go in "
-               "id, type or note. Give every READ label with category layer, object or zone a part that carries it. ")
+               "id, type or note. Give every READ label with category layer, object or zone a part that carries it, "
+               "and every entry of the READ's unlabelled list its own part, with label null: never merge a part into "
+               "its neighbour, or leave it out for having no label. ")
 
 # The critic may not undo the world model: an inferred part fills a required
 # slot the drawing cannot show, and only a reviewer decides its fate.
@@ -81,8 +88,9 @@ RETENTION_RULE = ("RETENTION: a part whose provenance is inferred fills a requir
                   "an inferred part. An inferred object is a plain box on purpose, so a box there is not a fidelity "
                   "error. Judge inferred parts only where their placement contradicts what the drawing shows. ")
 
-# Call id prefix for the completion the harness runs by itself (app/agent.py).
+# Call id prefixes for the work the harness runs by itself (app/agent.py).
 AUTO_COMPLETION = "auto-complete-"
+AUTO_CAD = "auto-cad-"
 
 
 def completion_mode():
@@ -91,6 +99,11 @@ def completion_mode():
     tool proposes, the agent applies) or off (the tool is not offered)."""
     mode = os.environ.get("SETOUT_COMPLETION", "on").strip().lower()
     return mode if mode in ("off", "suggest", "on") else "on"
+
+
+def switched_on(name):
+    """A harness step that defaults to on: anything but off, in the environment."""
+    return os.environ.get(name, "on").strip().lower() != "off"
 
 
 def compact_check(check):
@@ -158,7 +171,25 @@ def model_view(name, output):
                and (c.get("reason") or "").startswith("placeholder:")]
     if unbuilt:
         view["next_step"] = "Model these objects before any more patches: " + ", ".join(unbuilt)
+    if name == "critic":
+        wrong = sorted({part for issue in view.get("issues", []) if issue["id"].startswith("shape-mismatch:") for part in issue["parts"]})
+        absent = [issue["reason"] for issue in view.get("issues", []) if issue["id"].startswith("missing-part-")]
+        steps = ([f"Add a part for each of these with patch_program, and the harness models it: {'; '.join(absent)}."] if absent else []) + (
+            ["Call model_component on each of these, with the critic's words in the brief: " + ", ".join(wrong) +
+             ". If the form needs more room, widen its envelope first."] if wrong else [])
+        if steps:
+            view["next_step"] = " ".join(steps)
     return view
+
+
+def auto_cad_view(output, final):
+    """A CAD step the harness ran, for the next turn. The checks of each step would
+    repeat, so only the last of a chain carries them."""
+    view = model_view("model_component", output)
+    if final:
+        return view
+    return {key: view[key] for key in ("version_id", "component_id", "component_checks", "placeholder", "envelope_problem", "error")
+            if view.get(key)}
 
 
 def slot_brief(assembly_class):
@@ -169,6 +200,65 @@ def slot_brief(assembly_class):
     return (f"Assembly class {assembly_class} requires these slots: " + "; ".join(
         f"{s.id} (class {' or '.join(s.classes)}, min {s.min}, {s.section_visibility} in a section)"
         for s in known.required_slots(assembly_class)) + ". ")
+
+
+# How the CAD writer is told to read what it is shown (app/close_up.py).
+CLOSE_UP_HELP = ("The first image is a close-up of this part, cut from the drawing and enlarged. The second is the whole drawing: it shows "
+                 "how the part sits among the others, and where it runs on if the close-up cuts it off. ")
+WHOLE_DRAWING_HELP = "The source drawing is attached: find this part in it. "
+SHAPE_RULES = ("Read the form from the drawing, not from the brief: the brief was written without looking this closely, so "
+               "use it for the part's purpose and never for its form. Count every fin, leg, flange, foot, bend, return, opening and hole, and "
+               "model each one, on the side and in the order the drawing shows them, not a bounding box or a simplified channel. "
+               "A section shows a cut through the part: model exactly that cross-section. Trace its outline point by point as closed polylines "
+               "on Workplane('XZ') and extrude them along the depth, so the part runs unchanged along its length, with no end plates or walls "
+               "closing it. A gap in the section is a gap in the solid: never bridge pieces with a base plate the drawing does not show, and "
+               "pieces that do not touch are separate outlines. A fixing or other round thing cut through its axis is a revolved solid instead: "
+               "the axis of revolve() is in the workplane's own two coordinates, so on Workplane('XZ') a vertical axis runs from (0, 0) to "
+               "(0, p['height']). "
+               "Other parts are modelled on their own: leave out anything that is not this part, even a parameter for it. "
+               "The drawing is not to scale: it gives shape and topology, never a size, so take no measurement from it. "
+               "Every size is a named parameter or a fraction of one. ")
+
+# How the critic reads the shape sheet (close_up.shape_sheet).
+SHEET_RULE = ("The second image is a shape sheet. For each object it sets a close-up of the drawing, on the left, beside the same object "
+              "as built, seen in section, on the right. Compare form and topology only: neither side is to scale, so never compare sizes. "
+              "On each side count the fins, legs, feet, bends, returns and separate pieces, and see what turns up or down, what passes "
+              "through what, and where the section is open. A different count, or solid where the drawing is open, is a mismatch however "
+              "small it looks; a close resemblance is not a match. Fill shape_checks with one entry for every object on the sheet, using "
+              "its id: status match, mismatch, or unclear when the close-up is missing or does not show the part; say in drawing_shows and "
+              "model_shows what you counted on each side. ")
+NO_SHEET_RULE = "Leave shape_checks empty. "
+MISSING_RULE = ("List in missing_parts every distinct part the drawing shows that no part of the program stands for, labelled or not: go "
+                "over the drawing from one end to the other. A plate, a packer and a fixing are different parts even where they touch, and "
+                "a part merged into its neighbour is missing. The evidence lists what the reading found drawn without a label. "
+                "Parts beyond the section cut are not missing. ")
+
+
+def apply_shape_checks(result, objects):
+    """Turn the critic's per-part shape readings into issues the rest of the system
+    reads. `objects`: what was on the sheet shown to it. A mismatch is an error, so
+    the verdict cannot be pass. An object nobody compared means its shape was not
+    judged, so a pass is held to inconclusive."""
+    shapes = result.pop("shape_checks")
+    for item in shapes:
+        if item["status"] == "mismatch" and item["part"] in objects:
+            result["issues"].append({"id": "shape-mismatch:" + item["part"], "parts": [item["part"]], "severity": "error",
+                                     "reason": f"the drawing shows {item['drawing_shows']}; the model shows {item['model_shows']}",
+                                     "views": ["shape-sheet"], "needs_human": False})
+    judged = {item["part"] for item in shapes if item["status"] in ("match", "mismatch")}
+    missing = [part for part in objects if part not in judged]
+    if missing and result["verdict"] == "pass":
+        result["verdict"] = "inconclusive"
+        result["issues"].append({"id": "shape-unjudged", "parts": missing, "severity": "warning", "views": ["shape-sheet"],
+                                 "reason": "no shape comparison was possible for these objects", "needs_human": True})
+
+
+def apply_missing_parts(result):
+    """A part the drawing shows and the program lacks is an error, so no pass."""
+    for i, item in enumerate(result.pop("missing_parts")):
+        result["issues"].append({"id": f"missing-part-{i}", "parts": [], "severity": "error", "views": ["source"],
+                                 "reason": f"the drawing shows {item['what']} ({item['where']}), and no part stands for it",
+                                 "needs_human": False})
 
 
 class Tools:
@@ -242,18 +332,143 @@ class Tools:
         except ValueError:
             return None  # nothing it can place; the slot-missing checks stay for the model to read
 
-    def _cad_code(self, prompt, call_id, figure_id):
-        """CadQuery from the model. Code the gate refuses gets one more try here
-        with the gate's reason: a small call, where going back through the agent
-        costs a large turn and then this call again."""
-        schema, images = obj({"code": STRING}), [self.repo.get(d.figures, figure_id)["artifact_id"]]
-        code = self.gateway.json(prompt, images, schema, "cad", call_id)["code"]
+    def cad_call(self, run, steps):
+        """The next object the harness models by itself, as (call id, arguments), or
+        None. Seen live: the agent spent five turns patching a program before any CAD
+        and then a turn per object, and every number it patched moved again when the
+        solids came in. So CAD comes first, with no model turn. Each object gets one
+        try per contract; a failed try is the agent's to read and repair."""
+        if not switched_on("SETOUT_AUTO_CAD") or not run["working_version_id"]:
+            return None
+        if run["consumed"].get("cad_calls", 0) + run["reserved"].get("cad_calls", 0) >= run["budget"]["cad_calls"]:
+            return None
+        version = self.repo.get(d.versions, run["working_version_id"])
+        if version["format_version"] != "3.0":
+            return None
+        program = NativeProgram.model_validate(version["program"])
+        env = {p.name: p.value for p in program.params}
+        done = {s["call_id"] for s in steps if s["kind"] == "tool"}
+        for part in program.parts:
+            if part.shape != "cad" or not part.param_bindings or version["bindings"].get(part.id, {}).get("build_id"):
+                continue
+            contract = [part.cad_brief, {name: evaluate(expr, env) for name, expr in part.param_bindings.items()},
+                        [evaluate(item.expr, env) for item in part.dims]]
+            key = f"{AUTO_CAD}{part.id}-{sha(contract)[:12]}"
+            if key not in done:
+                return key, {"version_id": version["id"], "part_key": part.id, "brief": part.cad_brief}
+        return None
+
+    def _image(self, data):
+        """A generated image as an artifact a model request can name."""
+        reference = self.repo.artifacts.put(data, "image/png")
+        with d.transaction(self.repo.engine) as con:
+            self.repo.artifact(con, reference)
+        return reference["id"]
+
+    def _reading_image(self, figure, rotation=0):
+        """The figure as large as a model can read it, for reading and authoring: on
+        a real section this is what let the READ say how an unlabelled plate bends."""
+        if not switched_on("SETOUT_CLOSE_UP"):
+            return figure["artifact_id"]
+        return self._image(close_up.enlarged_image(close_up.upright(self.repo.artifacts.read(figure["artifact_id"]), rotation)))
+
+    def _figure_image(self, version):
+        figure = self.repo.get(d.figures, version["figure_id"])
+        read = self.repo.get(d.reads, version["drawing_read_id"])["response"] if version["drawing_read_id"] else {}
+        return close_up.upright(self.repo.artifacts.read(figure["artifact_id"]), read.get("rotation_deg", 0))
+
+    def _part_regions(self, version, program):
+        """{part id: box} for the objects two model calls agree on (app/close_up.py).
+        Checkpointed by the parts they were asked about, so CAD and the critic share
+        them. Anything that goes wrong here costs a close-up, never the part."""
+        parts = [{"id": p.id, "description": p.cad_brief or p.type, "printed_label": p.label}
+                 for p in program.parts if p.shape == "cad"]
+        if not parts or not switched_on("SETOUT_CLOSE_UP"):
+            return {}
+        key = sha([version["figure_id"], parts])[:16]
+        listing = canonical(parts)
         try:
-            cad_components.check_component(code)
+            image = self._figure_image(version)
+            first = close_up.first_boxes(self.gateway.json(close_up.LOCATE_PROMPT + listing, [self._image(close_up.grid_image(image))],
+                                                           close_up.LOCATE_SCHEMA, "locate", "locate-" + key))
+            if not first:
+                return {}
+            checked = self.gateway.json(close_up.CHECK_PROMPT + listing, [self._image(close_up.boxes_image(image, first))],
+                                        close_up.CHECK_SCHEMA, "locate", "locate-check-" + key)
+            return close_up.settle(first, checked)
+        except (BudgetExceeded, ProviderRejected, ValueError, KeyError, OSError):
+            return {}
+
+    def _close_up(self, version, program, part):
+        """The artifact id of an enlarged crop of this part, or None."""
+        box = self._part_regions(version, program).get(part.id)
+        if box is None:
+            return None
+        cropped = close_up.crop(self._figure_image(version), box)
+        return self._image(cropped) if cropped else None
+
+    def _shape_sheet(self, version, program):
+        """Each built object beside its close-up, as one image for the critic, or None."""
+        try:
+            regions = self._part_regions(version, program)
+            image = self._figure_image(version) if regions else None
+            rows = []
+            for part in program.parts:
+                binding = version["bindings"].get(part.id, {})
+                if part.shape != "cad" or not binding.get("build_id"):
+                    continue
+                build = self.repo.get(d.component_builds, binding["build_id"])
+                positions = json.loads(self.repo.artifacts.read(build["artifacts"]["mesh"]))["positions"]
+                rows.append((part.id, close_up.crop(image, regions[part.id]) if part.id in regions else None, positions))
+            return self._image(close_up.shape_sheet(rows)) if rows else None
+        except (ValueError, KeyError, OSError):
+            return None
+
+    def _check_labels(self, read, figure, call_id):
+        """Hold the READ's labels against what the drawing says, as far as that can
+        be checked, and record how (read["label_check"]). A text layer settles it. A
+        drawing with none can only be proofread by a model at a larger size: seen 30
+        Oct, the READ fixed a printed typing error 3 times of 3 even when told not to,
+        and a proofreading pass kept it 3 times of 3, for about 5k tokens."""
+        elements = [e for e in read["elements"] if e.get("label_verbatim")]
+        labels = [e["label_verbatim"] for e in elements]
+        document = self.repo.get(d.documents, figure["document_id"])
+        text = store.page_text(self.repo.artifacts.read(document["artifact_id"]), figure["page"]) if document["artifact_id"] else ""
+        found = generate.labels_in_text(labels, text)
+        if labels and sum(value is not None for value in found.values()) * 2 >= len(labels):
+            printed, method = found, "text_layer"
+        elif labels and switched_on("SETOUT_LABEL_PROOF"):
+            image = close_up.upright(self.repo.artifacts.read(figure["artifact_id"]), read.get("rotation_deg", 0))
+            try:
+                proof = self.gateway.json(generate.PROOF_PROMPT + canonical(labels), [self._image(close_up.enlarged_image(image))],
+                                          generate.PROOF_SCHEMA, "proof", call_id + "-proof")
+            except ValueError:
+                proof = {"labels": []}
+            printed, method = generate.proofread(labels, proof["labels"]), "proofread"
+        else:
+            read["label_check"] = {"method": "none", "corrected": [], "unconfirmed": labels}
+            return
+        corrected = []
+        for element in elements:
+            words = printed.get(element["label_verbatim"])
+            if words and words != element["label_verbatim"]:
+                corrected.append({"read": element["label_verbatim"], "printed": words})
+                element["label_verbatim"] = words
+        read["label_check"] = {"method": method, "corrected": corrected,
+                               "unconfirmed": [label for label in labels if printed.get(label) is None]}
+
+    def _cad_code(self, prompt, call_id, images):
+        """CadQuery from the model, and anything it says the envelope cannot hold.
+        Code the gate refuses gets one more try here with the gate's reason: a small
+        call, where going back through the agent costs a large turn and then this
+        call again."""
+        written = self.gateway.json(prompt, images, CAD_SCHEMA, "cad", call_id)
+        try:
+            cad_components.check_component(written["code"])
         except cad_sandbox.CadCodeError as error:
-            code = self.gateway.json(prompt + "\nThis code was rejected: " + str(error) + "\nRejected code:\n" + code,
-                                     images, schema, "cad", call_id + "-retry")["code"]
-        return code
+            written = self.gateway.json(prompt + "\nThis code was rejected: " + str(error) + "\nRejected code:\n" + written["code"],
+                                        images, CAD_SCHEMA, "cad", call_id + "-retry")
+        return written["code"], (written.get("envelope_problem") or "").strip()
 
     def _stage_successor(self, values, builds=None, components=None):
         ident = uid()
@@ -320,7 +535,7 @@ class Tools:
                 "bare numbers can only be dimensionless coefficients. " + LABEL_RULES +
                 "Brief: " + args["brief"] + "\nActive context (drawing values still require this READ): " + canonical(recalled) + "\nREAD: " + canonical(read) +
                 ("\nExisting program to revise: " + canonical(parent["program"]) if parent else ""),
-                [figure["artifact_id"]], program_schema([e.get("label_verbatim") for e in read.get("elements", [])],
+                [self._reading_image(figure, read.get("rotation_deg", 0))], program_schema([e.get("label_verbatim") for e in read.get("elements", [])],
                     ["drawing", "assumption"] + sorted({q["provenance"] for q in (parent or {}).get("program", {}).get("params", [])}
                                                        & {"user_input", "manufacturer_doc"}),
                     ["drawing", "inferred"] + sorted({p.get("provenance") for p in (parent or {}).get("program", {}).get("parts", [])}
@@ -341,11 +556,12 @@ class Tools:
                     return {"existing_read":existing,"context":context}
             figure_id = (self.working()["figure_id"] if run["working_version_id"] else None) or job["payload"].get("figure_id")
             figure = self.repo.get(d.figures, figure_id)
-            response = self.gateway.json(generate.READ_PROMPT, [figure["artifact_id"]],
+            response = self.gateway.json(generate.READ_PROMPT, [self._reading_image(figure)],
                                           generate.READ_SCHEMA, "read", call_id)
             for key, prefix in (("dimensions", "d"), ("elements", "l")):
                 for i, item in enumerate(response[key]):
                     item["id"] = f"{prefix}{i}"
+            self._check_labels(response, figure, call_id)
             context = self._prepare(call_id+"-context","recall",{"query":response.get("drawing_type","assembly")})["result"]
             return {"figure_id": figure["id"], "read": response,"context":context}
         if name == "recall":
@@ -462,9 +678,14 @@ class Tools:
                 local_bounds = [dims["x0"]-offset["x"],offset["z"]-dims["z1"],dims["y0"]-offset["y"],
                                 dims["x1"]-offset["x"],offset["z"]-dims["z0"],dims["y1"]-offset["y"]]
                 origin = all(abs(value) < 1e-6 for value in local_bounds[:3])
-                code = self._cad_code("Write CadQuery defining build(p) -> cq.Workplane. "
+                images = [self.repo.get(d.figures, version["figure_id"])["artifact_id"]]
+                crop = self._close_up(version, program, part)
+                if crop:
+                    images.insert(0, crop)
+                code, envelope_problem = self._cad_code("Write CadQuery defining build(p) -> cq.Workplane. "
                        "Import only cadquery/math. All physical sizes use p[name], never size literals. "
-                       "The source drawing is attached: find this part in it and model the recognisable manufactured form the brief and drawing describe, not its bounding box: openings, cavities, bowls, flanges, legs and profiles where shown. "
+                       f"This part is {part.id}, a {part.type}, " + (f"labelled {part.label!r} on the drawing. " if part.label else "not labelled on the drawing. ") +
+                       (CLOSE_UP_HELP if crop else WHOLE_DRAWING_HELP) + SHAPE_RULES +
                        "Axes X width, Y depth, Z up. Default FRONT is negative Y (Setout +z toward the viewer): the face a person uses faces negative Y; the back or fixing side is positive Y. Respect any explicit orientation in the brief. No scaling or fitting. Brief: " + args["brief"] +
                        "\nUse only the provided parameter keys. Keep the code concise. Build curved bowls directly with sized profiles/lofts/shells. "
                        "CadQuery workplane(offset) retains the projected origin; center() shifts are relative and accumulate. Do not apply the same XY center offset again to each loft profile; use explicit absolute origins or zero relative shift on subsequent profiles. "
@@ -473,16 +694,20 @@ class Tools:
                        ". These target measurements describe the part's exact declared envelope after undoing rigid placement. "
                        "Reach them through the named parameters and the actual fixture form. Do not clip/intersect with an envelope cage or add slivers just to reach bounds. "
                        "Every number in a size or offset is a fraction of p[...], such as 0.5 * p['width']; any other number except 0 is rejected. "
-                       "build(p) never positions the part: its rigid placement does, so never translate to a world position. " +
+                       "build(p) never positions the part: its rigid placement does, so never translate to a world position. "
+                       "Set envelope_problem to an empty string, unless the envelope above cannot hold the form the drawing shows (say the "
+                       "part turns up at one end and its envelope is as thin as the plate): then say in one sentence what must change, and "
+                       "still write the closest model you can. " +
                        ("The solid's minimum corner is the local origin: start from (0,0,0), for example box(..., centered=False). "
                         "A section that runs along the part: draw it on Workplane('XZ') and extrude(-p['depth']) so it spans Y from 0 to depth. " if origin else "") +
                        (f"\nThe previous attempt failed: {previous_failure}" if previous_failure else "") +
                        ("\nPrevious revision as repair context (fix rejected form, physical literals and axes; do not fit or preserve a rejected block):\n"+previous_code if previous_code else ""),
-                       call_id, version["figure_id"])
+                       call_id, images)
                 component = {"id": uid(), "family_key": part.type, "code": code, "code_sha": sha(code),
                              "param_schema": {key: {"unit": "mm" if bound_units[key] == "zero" else bound_units[key]} for key in params},
                              "feature_schema": [f.model_dump(mode="json") for f in part.features], "brief": args["brief"]}
             else:
+                envelope_problem = ""
                 component = self.repo.get(d.components, args["component_id"])
                 if set(component["param_schema"]) != set(params):
                     raise ValueError("component parameter schema mismatch")
@@ -507,7 +732,7 @@ class Tools:
                     "bindings":bindings, "figure_id":version["figure_id"], "read_id":version["drawing_read_id"],
                     "expected_parent":version["id"], "detail_id":version["detail_id"]}, {build_id:build_row}, {component["id"]:component})
                 return {"version": version, "component": component, "build": result, "refs": refs,
-                        "params": params, "build_id":build_id, "successor":successor}
+                        "params": params, "build_id":build_id, "successor":successor, "envelope_problem":envelope_problem}
             except (BudgetExceeded, LostLease):
                 raise
             except Exception as error:
@@ -516,7 +741,8 @@ class Tools:
                 successor = self._stage_successor({"program":version["program"], "spec":version["spec"],
                     "bindings":bindings,"figure_id":version["figure_id"],"read_id":version["drawing_read_id"],
                     "expected_parent":version["id"],"detail_id":version["detail_id"]})
-                return {"version": version, "component": component, "placeholder":reason, "successor":successor}
+                return {"version": version, "component": component, "placeholder":reason, "successor":successor,
+                        "envelope_problem":envelope_problem}
         if name == "build_and_verify":
             self.working(args["version_id"])
             return stage_verification(self.repo, args["version_id"])
@@ -552,17 +778,26 @@ class Tools:
                     not {"iso", "front", "top"} <= {r["view"] for r in renders if not r["tags"]}):
                 raise ValueError("critic needs matching assembled iso/front/top renders")
             figure = self.repo.get(d.figures, version["figure_id"])
+            program = NativeProgram.model_validate(version["program"])
+            read = self.repo.get(d.reads, version["drawing_read_id"])["response"] if version["drawing_read_id"] else {}
+            sheet = self._shape_sheet(version, program)
             result = self.gateway.json("Independently compare the source installation drawing with the assembled renders. "
                      "Check dimension attribution, missing parts, layer placement/order and visible geometry. "
                      "Reject generic blocks standing in for recognisable objects, even if all dimension checks pass: each object must show the form the source shows (openings, cavities, bowls, flanges, legs, profiles, supports). A solid box standing in for a shaped object is a fidelity error. "
-                     + slot_brief(version["program"].get("assembly_class")) + RETENTION_RULE +
+                     + slot_brief(version["program"].get("assembly_class")) + RETENTION_RULE + (SHEET_RULE if sheet else NO_SHEET_RULE) + MISSING_RULE +
                      "Return fail for errors; inconclusive if evidence is insufficient. Never approve an empty or unreadable render. "
                      "Version/evidence: " + canonical({"program": version["program"], **model_checks(report["checks"]),
+                     "drawn_without_a_label": read.get("unlabelled", []),
                      "views": [{"id": r["id"], "view": r["view"], "tags": r["tags"]} for r in renders]}),
-                     [figure["artifact_id"]] + [r["artifact_id"] for r in renders if not r["tags"] or r["view"] == "iso"],
+                     [figure["artifact_id"]] + ([sheet] if sheet else []) + [r["artifact_id"] for r in renders if not r["tags"] or r["view"] == "iso"],
                      CRITIC_SCHEMA, "critic", call_id)
             if result["verdict"] not in ("pass", "fail", "inconclusive") or not isinstance(result["issues"], list):
                 raise ValueError("invalid critic verdict")
+            if "shape_checks" in result:
+                apply_shape_checks(result, [p.id for p in program.parts if sheet and p.shape == "cad" and
+                                            version["bindings"].get(p.id, {}).get("build_id")])
+            if "missing_parts" in result:
+                apply_missing_parts(result)
             if result["verdict"] == "pass" and any(i.get("severity") == "error" for i in result["issues"]):
                 result["verdict"] = "fail"
             return {"critic": result, "manifest_sha": report["manifest_sha"]}
@@ -670,7 +905,7 @@ class Tools:
                 checks = built["checks"]
             result = self._successor(con, data["successor"])
             return {**result, "component_id": component["id"], "component_checks": checks,
-                    "placeholder": data.get("placeholder")}
+                    "placeholder": data.get("placeholder"), "envelope_problem": data.get("envelope_problem") or None}
         if name == "build_and_verify":
             return self._verification(con, args["version_id"], data)
         if name == "render":

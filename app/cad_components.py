@@ -182,6 +182,9 @@ _step = os.path.join(_directory, "part.step")
 _stl = os.path.join(_directory, "part.stl")
 cq.exporters.export(_shape, _step)
 cq.exporters.export(_shape, _stl, tolerance=0.05, angularTolerance=0.1)
+if not os.path.exists(_stl):
+    raise ValueError("the solid could not be meshed, so it is degenerate or self-intersecting. A revolve is the usual "
+                     "cause: its axis is in the workplane's own coordinates and must lie in the plane of the profile")
 print("RESULT " + json.dumps({"step": base64.b64encode(open(_step,"rb").read()).decode(),
     "stl": base64.b64encode(open(_stl,"rb").read()).decode()}))
 '''

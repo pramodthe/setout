@@ -274,6 +274,27 @@ Cross-file contracts. These are not obvious from any single file:
   needs the exact version's verification with no FAIL or required UNVERIFIED, a
   passing independent critic on that version and manifest, and readable evidence.
   Publishing also needs a named reviewer's acceptance.
+- **A relation's pass mark belongs to the verifier** (`verification_v3.py`,
+  `CONTACT_FLOOR`, `COVER_FLOOR`). Every kind measures the same thing on the same
+  planes, which the verifier picks: the share of the smaller face that touches. A
+  declared `min_coverage` can only ask for more. `covers` must also hide the target's
+  face. A covered layer's obligation adds up the real contact of what lies on it,
+  whatever the kinds, and a part measured against nothing stays open. So neither
+  lowering a number, swapping a kind, nor deleting a relation gets past it. Values
+  come from measured runs; never change them to clear a check.
+- **A drawing is looked at up close, never measured** (`app/close_up.py`). Before an
+  object is modelled, two model calls place it and it is cut from the full-resolution
+  figure; if they disagree the writer gets the whole drawing. The crop is shape and
+  topology only. The critic gets each close-up beside the built section, and a shape
+  mismatch or a part it names as missing cannot pass. The READ lists what is drawn
+  with no label (`unlabelled`), and each entry gets a part.
+- **CAD runs before the agent's next turn** (`Tools.cad_call`), one try per object per
+  contract; `SETOUT_AUTO_CAD`, `SETOUT_CLOSE_UP` and `SETOUT_LABEL_PROOF` (`off`) stop
+  these harness steps. `tests/conftest.py` turns them off, as scripted models do not
+  answer them; the tests about each turn it on.
+- **A label is verbatim only as far as it was checked** (`read["label_check"]`). A
+  text layer settles it; a drawing with none is proofread by a model and stays
+  UNVERIFIED (`label-verbatim`). Never claim otherwise.
 - **Evidence is pinned to `VERIFIER_VERSION`** (a hash of the verifier code).
   Changing the verifier invalidates earlier verifications; they are recomputed.
 - **Guide grounding** (`guide.ungrounded`): every number spoken must be a param

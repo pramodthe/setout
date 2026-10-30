@@ -275,6 +275,8 @@ def check_roles(program, read, human=False):
         if zones & set(part.install_after) or (part.id in zones and part.install_after):
             raise ValueError(f"{part.id}: zones are not installed; leave them out of install_after")
     for relation in program.relations:
+        if relation.source == relation.target:
+            raise ValueError(f"{relation.source}: a relation joins two parts; a part cannot be measured against itself")
         if {relation.source, relation.target} & zones:
             raise ValueError(f"{relation.source}->{relation.target}: a zone is not built, so it has no physical "
                              "relations; describe clearances with features or a note instead")
@@ -285,6 +287,17 @@ def check_roles(program, read, human=False):
         if coverage is not None and not 0 <= coverage <= 1:
             raise ValueError(f"{relation.source}->{relation.target}: min_coverage is a fraction from 0 to 1 "
                              f"(0.9 means 90%), not {coverage:g}")
+
+
+def check_form(program, base=None, human=False):
+    """A shaped object stays shaped. Seen live: a flat plate failed the form check,
+    and the agent cleared it by declaring the part a block. The form is a claim about
+    the drawing, so a solid that misses it is fixed, or settled by a reviewer."""
+    declared = {p["id"]: p.get("form") for p in (base or {}).get("parts", [])}
+    for part in program.parts:
+        if not human and declared.get(part.id) == "shaped" and part.form == "block":
+            raise ValueError(f"{part.id} was declared form=shaped, so the drawing shows form beyond its envelope; a block "
+                             "cannot stand in for it. Keep form=shaped and model that form with model_component.")
 
 
 def _slot_claimed(inferred_by):
@@ -313,6 +326,10 @@ def check_provenance(program, base=None, human=False):
             if part.provenance == "drawing" and before != "drawing":
                 raise ValueError(f"{part.id} was {before}; calling it drawing would claim the drawing shows it. "
                                  "Keep the provenance, or leave the part for a reviewer to confirm")
+            # A ghost is never measured, so this would be a way out of every check on the part.
+            if part.provenance == "inferred" and part.id in previous and before == "drawing":
+                raise ValueError(f"{part.id} is a part the drawing shows; calling it inferred would take it out of "
+                                 "verification. Model and measure it")
         for ident, old in previous.items():
             if old.get("provenance") == "user_input" and not any(
                     p.id == ident and p.provenance == "user_input" for p in program.parts):
@@ -321,6 +338,8 @@ def check_provenance(program, base=None, human=False):
     for part in program.parts:
         if part.provenance == "drawing" and part.inferred_by:
             raise ValueError(f"{part.id}: inferred_by is set but provenance is drawing; a part the drawing shows was not inferred")
+        if part.provenance == "inferred" and part.label:
+            raise ValueError(f"{part.id}: {part.label!r} is printed on the drawing, so the drawing shows this part; it is not inferred")
     inferred = [p for p in program.parts if p.provenance == "inferred"]
     if not inferred:
         return
@@ -425,6 +444,7 @@ def prepare(raw, source, detail_id, read, base=None, human=False, bound=()):
             part["cad_brief"] = original.get("cad_brief") or original.get("type")
     program = NativeProgram.model_validate(gated)
     check_roles(program, read, human)
+    check_form(program, base, human)
     check_provenance(program, base, human)
     compiled_input = program.model_dump(mode="json")
     compiled_input["version"] = "2.0"

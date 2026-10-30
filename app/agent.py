@@ -4,14 +4,14 @@ from __future__ import annotations
 import json
 
 from . import database as d, meta_client
-from .agent_tools import AUTO_COMPLETION, Tools, model_view
+from .agent_tools import AUTO_CAD, AUTO_COMPLETION, Tools, auto_cad_view, model_view
 from .model_gateway import ModelGateway
 from .repository import TERMINAL, BudgetExceeded, canonical, inferred_part_ids, review_due, review_tail, tokens_left
 
 INSTRUCTIONS = """You build faithful construction installation details from a source drawing.
-Use read_drawing first (a revision's request already has the READ), recall relevant
-lessons, then write_program with a concise modelling brief. This tool reliably authors
-complex programs with structured output.
+Use read_drawing first (a revision's request already has the READ). Its result carries the
+relevant lessons, so call recall only to look for something else. Then write_program with a
+concise modelling brief. This tool reliably authors complex programs with structured output.
 Model the section the drawing shows, shape by shape: a step or set-down is real geometry
 (a profile or two boxes at their levels), a bent plate or sheet follows the bends drawn.
 Sizes the drawing does not print are assumptions in the drawing's own proportions.
@@ -22,9 +22,10 @@ Use lowercase snake_case parameter names and part IDs.
 Pass program as a JSON OBJECT, never a quoted or escaped JSON string. The harness
 supplies source, origin, detail_id and optimistic parent identity; do not invent IDs.
 Cover the drawing: every READ label with category layer, object or zone gets a part that
-carries that exact label (usually 8-30 parts). A part's label is a READ label copied
-exactly, or null; pieces of a split layer keep the same label, and position words go
-in the id, type or note. Add or repair parts in successor versions. If write_program
+carries that exact label (usually 8-30 parts), and every entry of the READ's unlabelled list
+gets its own part with label null: never merge a part into its neighbour. A part's label is
+a READ label copied exactly, or null; pieces of a split layer keep the same label, and
+position words go in the id, type or note. Add or repair parts in successor versions. If write_program
 returns a rejected proposal, repair that proposal with patch_program; do not start a
 new program, and never drop or reword a label to clear an error.
 Execute tools rather than returning a program as prose.
@@ -86,23 +87,35 @@ rejected code or substitute a rectangular hollow shell for a curved form.
 Preserve the named dimensions while repairing form.
 Declare extent features on x/y/z with expected_expr matching the envelope spans.
 The independently measured solid, after placement, must match the native envelope.
-Every part declares substrate/covered_layer/finish/object. Define covers/support
-relations and install_after paths. For planar box interfaces constraints name
-axis, source_face and target_face (min/max), min_gap, max_gap (mm) and min_coverage
-(a fraction from 0 to 1: 0.9 means 90%). A relation is measured between faces that really
-touch, so name the parts and faces that meet. min_coverage is of the target's whole face
-for covers and laps_over, of the source's otherwise, and states the contact the drawing
-shows: never lower it or swap a relation's kind to clear a FAIL. Fix the geometry, or
-remove a relation between parts that do not touch.
+Every part declares substrate/covered_layer/finish/object. Define relations and install_after
+paths; every built part needs a measured relation to what holds it, and one measured
+against nothing stays open. A relation between faces names axis, source_face and target_face
+(one min and one max: the two faces that really meet), min_gap and max_gap (mm).
+THE VERIFIER SETS THE PASS MARK, and the same one for every kind: at least half of the smaller
+face must touch, and covers must also hide at least half of the target's face. Nothing you
+declare lowers that, and changing a relation's kind does not change what is measured. Leave
+min_coverage null unless the drawing shows more contact than that. When a relation FAILs, fix
+the geometry, or say what really happens: a part that rests on, stops at or is sealed to
+another is supported_by, terminates_against or sealed_to, and only what hides a face covers it.
+fixed_to is a fixing: lines along it must enter the target, so it must really reach what it
+fixes. hosted_in is a part inside another's envelope. abuts is two parts meeting edge to edge.
+repeated_along cannot be measured and stays open, so give a spacing as a dimension or note.
+Remove a relation only between parts that do not touch.
 Relations on the fillet shape are not measured; a fillet that carries one is a triangular profile.
 Split a layer that turns a corner into separate wall/floor parts so each covering
 face can be measured. Renaming/splitting preserves material, source labels and
-printed feature ownership. Every covered layer needs a real covering relationship:
-covers reads "source lies over target", so a covered layer is the TARGET of a covers or
-terminates_against relation from what lies on it.
-Use model_component or reuse_component for each CAD object, one by one, before polishing
-relations: an unmodelled object FAILs and blocks everything else. Each edit or CAD
-binding creates a successor version; follow its returned version_id. Each mutation
+printed feature ownership. A covered layer must really be hidden: the verifier adds up the
+contact of every part that lies on its broad face, each the SOURCE of a relation with the layer
+as TARGET, whatever the kind, and needs half of that face. If the drawing leaves it exposed,
+the check stays open for a reviewer: never invent a part or a relation to fill it.
+THE HARNESS MODELS EVERY OBJECT BY ITSELF, right after a program is accepted and before your
+next turn, one by one from its cad_brief, with a close-up of the part from the drawing. So write
+each cad_brief as the form the drawing shows, and give each object an envelope that holds all
+of it, bends and legs included. Call model_component yourself only to repair one: when its
+result has an envelope_problem (patch the envelope, then call it), a critic reports a shape
+mismatch, or a build failed. A solid does not follow a changed envelope, so call it again after
+changing one. reuse_component repeats an existing component with this part's bindings. Each
+edit or CAD binding creates a successor version; follow its returned version_id. Each mutation
 already returns its verification_id and checks; inspect those without rebuilding.
 Use patch_program with small JSON-pointer edits, not a full program rewrite.
 Prefer stable named paths, e.g. /parts/@bracket/placement/z or
@@ -210,7 +223,7 @@ class Agent:
                     d.critics.c.created_at <= job["created_at"],order=d.critics.c.created_at)
                 if prior_critics:
                     rejected = {part:base["bindings"][part]["component_id"]
-                        for issue in prior_critics[-1]["issues"] if any(word in issue["id"].lower() for word in ("fidelity","form"))
+                        for issue in prior_critics[-1]["issues"] if any(word in issue["id"].lower() for word in ("fidelity","form","shape"))
                         for part in issue.get("parts",[]) if base["bindings"].get(part,{}).get("component_id")}
                     initial[0]["content"].append({"type":"input_text","text":"Prior independent critic: "+canonical({
                         "verdict":prior_critics[-1]["verdict"],"issues":prior_critics[-1]["issues"],"rejected_component_revisions":rejected})})
@@ -237,11 +250,25 @@ class Agent:
                     view["gate_notes"] = [note for note in view["gate_notes"] if note not in told]
                     told.update(view["gate_notes"])
                 return view
+            # Only the last CAD step of a chain carries its checks: the others repeat them.
+            chain_ends, chain = set(), None
+            for turn in steps:
+                if turn["kind"] == "tool" and turn["call_id"].startswith(AUTO_CAD):
+                    chain = turn["id"]
+                elif chain and (turn["id"] in turn_ids or turn["kind"] == "tool"):
+                    chain_ends.add(chain)
+                    chain = None
+            chain_ends.add(chain)
             for turn in steps:
                 if turn["kind"] == "tool" and turn["call_id"].startswith(AUTO_COMPLETION):
                     conversation.append({"role": "user", "content": [{"type": "input_text", "text":
                         "complete_assembly ran by itself on the latest accepted version: " +
                         canonical(shown("complete_assembly", turn["output"]))}]})
+                    continue
+                if turn["kind"] == "tool" and turn["call_id"].startswith(AUTO_CAD):
+                    conversation.append({"role": "user", "content": [{"type": "input_text", "text":
+                        f"model_component ran by itself on {turn['arguments']['part_key']}: " +
+                        canonical(auto_cad_view(turn["output"], turn["id"] in chain_ends))}]})
                     continue
                 if turn["id"] not in turn_ids:
                     continue
@@ -291,6 +318,15 @@ class Agent:
                 self.tools.stop_reason = "budget_floor"
                 self.final_review(run)
                 return
+            cad_call = self.tools.cad_call(run, steps)
+            if cad_call:
+                # No model turn: objects are modelled before anything is patched.
+                try:
+                    self.tools.run(cad_call[0], "model_component", cad_call[1])
+                except BudgetExceeded as error:
+                    self.stop_on_budget(error)
+                    return
+                continue
             if agent_turns and not any(o.get("type") == "function_call" for o in agent_turns[-1]["response"]["output"]):
                 response = agent_turns[-1]["response"]
                 reason, stop = (("provider_output_limit", "output_limit") if response.get("status") == "incomplete"

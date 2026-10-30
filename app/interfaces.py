@@ -30,14 +30,14 @@ def clip(subject, boundary):
     return result
 
 
-def surfaces(mesh, axis, side, extremal=False):
+def surfaces(mesh, axis, side, level=None):
+    """The triangles of a part's face along `axis`: what shows from that side, or
+    only those on the plane at `level`."""
     projection = [i for i in range(3) if i != axis]
     triangles = []
-    bounds = mesh.bounds()
-    extreme = bounds[axis+(3 if side == "max" else 0)] if bounds else None
     for offset in range(0,len(mesh.positions),9):
         points = [mesh.positions[offset+i:offset+i+3] for i in (0,3,6)]
-        if extremal and not all(abs(point[axis]-extreme) <= .0001 for point in points):
+        if level is not None and not all(abs(point[axis]-level) <= .0001 for point in points):
             continue
         uv = [[p[i] for i in projection] for p in points]
         denominator = cross(*uv)
@@ -49,9 +49,9 @@ def surfaces(mesh, axis, side, extremal=False):
                        cross(uv[0],uv[1],point)/denominator]
             return sum(weight*p[axis] for weight,p in zip(weights,points))
         triangles.append((uv,plane))
-    if len(triangles) > (8192 if extremal else 256):
+    if len(triangles) > (256 if level is None else 8192):
         raise ValueError("interface is too complex for the planar primitive verifier")
-    if extremal:
+    if level is not None:
         return triangles
     selected = []
     for uv,plane in triangles:
@@ -66,9 +66,13 @@ def surfaces(mesh, axis, side, extremal=False):
     return selected
 
 
-def measure_interface(source, target, axis, source_side, target_side, covers=True, source_extremal=False, target_extremal=False):
-    a,b = surfaces(source,axis,source_side,source_extremal),surfaces(target,axis,target_side,target_extremal)
-    total = sum(area(uv) for uv,_ in (b if covers else a))
+def measure_interface(source, target, axis, source_side, target_side, covers=True, source_level=None, target_level=None):
+    """How two faces meet: `coverage` of the target's face (covers) or the source's,
+    `contact` of the smaller face whichever way round they are named, `overlap` in
+    mm2, and the gap band. Which face is smaller does not depend on the relation."""
+    a,b = surfaces(source,axis,source_side,source_level),surfaces(target,axis,target_side,target_level)
+    source_area,target_area = sum(area(uv) for uv,_ in a),sum(area(uv) for uv,_ in b)
+    total = target_area if covers else source_area
     covered, gaps = 0.,[]
     direction = 1 if source_side == "min" else -1
     for uv,plane in a:
@@ -80,22 +84,6 @@ def measure_interface(source, target, axis, source_side, target_side, covers=Tru
             covered += size
             gaps += [(plane(point)-other_plane(point))*direction for point in overlap]
     if not total or not gaps or not all(isfinite(value) for value in gaps):
-        return {"coverage":0., "min_gap":None,"max_gap":None}
-    return {"coverage":min(1.,covered/total),"min_gap":min(gaps),"max_gap":max(gaps)}
-
-
-def matches_brep_planes(mesh, axis, side, planes, extremal=False):
-    projection = [i for i in range(3) if i != axis]
-    selected = surfaces(mesh,axis,side,extremal)
-    for uv,plane in selected:
-        points = []
-        for point in uv:
-            xyz = [0.,0.,0.]
-            xyz[axis] = plane(point)
-            for i,j in enumerate(projection):
-                xyz[j] = point[i]
-            points.append(xyz)
-        if not any(all(abs(sum(normal[i]*(point[i]-center[i]) for i in range(3))) <= .001
-                           for point in points) for normal,center in planes):
-            return False
-    return bool(selected)
+        return {"coverage":0., "contact":0., "overlap":0., "min_gap":None,"max_gap":None}
+    return {"coverage":min(1.,covered/total),"contact":min(1.,covered/min(source_area,target_area)),"overlap":covered,
+            "min_gap":min(gaps),"max_gap":max(gaps)}

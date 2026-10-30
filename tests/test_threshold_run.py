@@ -674,7 +674,7 @@ def test_a_slot_the_completion_cannot_read_does_not_kill_the_run(source_repo, mo
 def test_the_instructions_put_completion_before_cad():
     assert "before any CAD work" in INSTRUCTIONS and "Once the drawn parts verify" not in INSTRUCTIONS
     assert "provenance=drawing, inferred_by=null, label=null" in INSTRUCTIONS  # drawn but unlabelled is not inferred
-    assert "never lower it or swap a relation's kind to clear a FAIL" in INSTRUCTIONS
+    assert "THE VERIFIER SETS THE PASS MARK" in INSTRUCTIONS and "min_coverage is of the target" not in INSTRUCTIONS
 
 
 # ------------------------------------------------------- F. inferred objects are boxes

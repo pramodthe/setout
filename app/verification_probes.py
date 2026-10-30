@@ -10,7 +10,7 @@ from __future__ import annotations
 
 AXES = {"x": 0, "y": 1, "z": 2}
 # Relation kinds that put two parts in contact across an interface.
-CONTACT_KINDS = ("covers", "supported_by", "bonded_to", "sealed_to", "terminates_against", "laps_over")
+CONTACT_KINDS = ("covers", "supported_by", "bonded_to", "sealed_to", "terminates_against", "laps_over", "abuts")
 # Sample positions across each side of an overlap, clear of its edges.
 FRACTIONS = (0.15, 0.5, 0.85)
 

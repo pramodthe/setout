@@ -1,8 +1,8 @@
 # Relation kinds a program may declare between two parts (NativeRelation.kind),
 # each defined in our own words. `check` says what the verifier does with the
-# kind today: `geometric` kinds are measured on the built meshes when the
-# relation carries explicit interface constraints; `unverified` kinds are
-# recorded and reported UNVERIFIED until a measurement exists for them.
+# kind today: `geometric` kinds are measured on the built meshes against a pass
+# mark the verifier owns; `unverified` kinds cannot be measured, and stay open
+# as a required UNVERIFIED, so they cannot stand in for a measurement.
 status: draft
 relations:
   - id: supported_by
@@ -28,13 +28,13 @@ relations:
     check: geometric
   - id: hosted_in
     definition: The source part sits inside an opening the target forms and is held by it, as a leaf sits in its frame.
-    check: unverified
+    check: geometric
   - id: fixed_to
     definition: The source part is mechanically fastened to the target.
-    check: unverified
+    check: geometric
   - id: abuts
     definition: The source part meets the target edge to edge with no overlap.
-    check: unverified
+    check: geometric
   - id: repeated_along
     definition: The source part recurs at a spacing along the target's run.
     check: unverified

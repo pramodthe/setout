@@ -8,12 +8,12 @@ from . import database as d
 from .cad_components import measure_features, check_component
 from .generate import _norm
 from .geometry import Mesh, build_assembly, export_scene_json
-from .interfaces import measure_interface, matches_brep_planes
+from .interfaces import measure_interface
 from .native_program import READ_ROLES, NativeProgram
 from .program import evaluate, expr_names
 from .repository import VERIFIER_VERSION, canonical, inferred_part_ids, outcome_tier, sha
 from .spec import DetailSpec
-from .verification_probes import CONTACT_KINDS, layer_order_probes
+from .verification_probes import AXES, CONTACT_KINDS, layer_order_probes, line_hits, probe_points
 from .verify import CONTACT_TOL_MM, verify_all
 from .versioning import archive_scene
 
@@ -21,6 +21,20 @@ from .versioning import archive_scene
 def check(ident, status, reason=None, required=True, **values):
     return dict(id=ident, stage="C" if ident.startswith("source-") else "B", description=reason or ident,
                 status=status, reason=reason, required=required, **values)
+
+
+# The pass marks of a relation. They belong to the verifier: a relation may
+# declare a stricter min_coverage, and nothing it declares lowers these. Measured
+# 30 Oct on all 32 versions of a real run and on both seeds:
+# - Contact, as a share of the SMALLER of the two faces, so it reads the same
+#   whichever part is the source and whichever kind is named. True contacts were
+#   0.60 or more; the false ones an agent had to lower its mark for were 0.18 or less.
+#   Either single face fails true contacts: a wide plate on a small nut is 0.09 of
+#   the plate, and a small object on a slab is 0.04 of the slab.
+# - Covers, as a share of the target's face, because the claim is that the target's
+#   face is hidden. True covers were 0.96 or more; the lowered ones 0.04 to 0.18.
+CONTACT_FLOOR = 0.5
+COVER_FLOOR = 0.5
 
 
 # Words that say where a piece of a layer sits, not what it is made of.
@@ -48,6 +62,21 @@ def label_coverage(program, read):
     return check("label-coverage", "UNVERIFIED" if missing else "PASS",
                  "Every drawing label for a layer, object or zone is carried by a part", required=False,
                  missing=missing)
+
+
+def label_check(read):
+    """What is known about the READ's labels being verbatim. PASS only when the
+    drawing's own text was checked; otherwise it says what they rest on."""
+    if not read.get("elements"):
+        return None
+    record = read.get("label_check") or {"method": "none", "corrected": [], "unconfirmed": []}
+    confirmed = record["method"] == "text_layer" and not record["unconfirmed"]
+    reasons = {"text_layer": "some labels were not found in the drawing's text layer",
+               "proofread": "this drawing has no text layer, so its labels are a model's reading, proofread once "
+                            "at a larger size: they are not confirmed verbatim",
+               "none": "these labels were not checked against the drawing's text, so they are not confirmed verbatim"}
+    return check("label-verbatim", "PASS" if confirmed else "UNVERIFIED", None if confirmed else reasons[record["method"]],
+                 required=False, method=record["method"], corrected=record["corrected"], unconfirmed=record["unconfirmed"])
 
 
 def object_form_check(part, measured):
@@ -224,8 +253,126 @@ def _dependencies(program, before, after):
     return visit(after)
 
 
-def spatial_checks(program, meshes, exposed=None, cad_planes=None):
-    output = []
+def is_lap(a, b, axis):
+    """Whether two parts' bounding boxes form a real lap across `axis`: along one
+    side of the interface each runs past the other's end, and along the other side
+    the overlap spans at least the floor's share of the narrower part. A part lying
+    wholly on another is contact, not a lap, so this never excuses a small contact."""
+    i, j = [k for k in range(3) if k != axis]
+    def offset(k):
+        return (a[k] < b[k] - 1e-6 and a[k + 3] < b[k + 3] - 1e-6) or (a[k] > b[k] + 1e-6 and a[k + 3] > b[k + 3] + 1e-6)
+    def spans(k):
+        narrower = min(a[k + 3] - a[k], b[k + 3] - b[k])
+        return narrower > 0 and (min(a[k + 3], b[k + 3]) - max(a[k], b[k])) / narrower >= CONTACT_FLOOR
+    return any(min(a[k + 3], b[k + 3]) > max(a[k], b[k]) and offset(k) and spans(m) for k, m in ((i, j), (j, i)))
+
+
+def relation_problem(relation, measured, low, high, declared, ordering, lap):
+    """Why a measured relation does not pass, or None."""
+    minimum, maximum = measured.get("min_gap", measured.get("gap")), measured.get("max_gap", measured.get("gap"))
+    if minimum is None or maximum is None:
+        return "the two faces do not face each other anywhere: name the faces that really meet"
+    if minimum < low - 1e-6 or maximum > high + 1e-6:
+        return f"the faces are {minimum:.4g} to {maximum:.4g} mm apart; the accepted gap is {low:g} to {high:g} mm"
+    if measured["contact"] + 1e-6 < CONTACT_FLOOR and not lap:
+        return (f"only {measured['contact']:.0%} of the smaller face touches; the verifier requires {CONTACT_FLOOR:.0%} for every "
+                "kind, and no declared value lowers it. Fix the geometry, or name the faces that really meet")
+    if relation.kind == "covers" and measured["coverage"] + 1e-6 < COVER_FLOOR:
+        return (f"covers hides only {measured['coverage']:.1%} of the target's face; the verifier requires {COVER_FLOOR:.0%}, and "
+                "no declared value lowers it. A part that rests on, stops at or is sealed to another is supported_by, "
+                "terminates_against or sealed_to; only what really hides a face covers it")
+    if measured["coverage"] + 1e-6 < declared:
+        return f"coverage {measured['coverage']:.0%} is under the {declared:.0%} this relation declares"
+    if not ordering and relation.kind != "abuts":
+        return f"{relation.target} must be installed before {relation.source}"
+    return None
+
+
+def solid_relation(ident, relation, a, b, target, tolerance, ordering):
+    """fixed_to and hosted_in join solids, so they have no pair of faces to measure.
+    fixed_to: lines through the fixing, along its own length or the declared axis,
+    must meet the target within the fixing's span. hosted_in: the source must lie
+    inside the target's envelope. `contact` is the measured share either way."""
+    if relation.kind == "fixed_to":
+        spans = [a[k + 3] - a[k] for k in range(3)]
+        axis = AXES.get(relation.constraints.get("axis"), spans.index(max(spans)))
+        points = probe_points(a, b, axis)
+        hits = line_hits(target, axis, points) if points else []
+        entered = sum(any(a[axis] - tolerance <= hit <= a[axis + 3] + tolerance for hit in line) for line in hits)
+        contact, reason = entered / len(points) if points else 0., "the fixing does not reach into the part it fixes"
+    else:
+        inside, volume = 1., 1.
+        for k in range(3):
+            inside *= max(0, min(a[k + 3], b[k + 3]) - max(a[k], b[k]))
+            volume *= max(0, a[k + 3] - a[k])
+        contact, reason = inside / volume if volume else 0., "the source does not sit inside the target's envelope"
+    ok = contact + 1e-6 >= CONTACT_FLOOR and ordering
+    if ok:
+        reason = None
+    elif contact + 1e-6 >= CONTACT_FLOOR:
+        reason = f"{relation.target} must be installed before {relation.source}"
+    else:
+        reason = f"{reason}: {contact:.0%} measured, {CONTACT_FLOOR:.0%} required"
+    return check(ident, "PASS" if ok else "FAIL", reason, contact=contact, order_valid=ordering)
+
+
+def facing_levels(part, mesh, planes, axis, side):
+    """Where along `axis` a part can meet another on `side`: a measured solid's flat
+    faces looking that way, or an exact primitive's outer face."""
+    if part.shape != "cad":
+        bounds = mesh.bounds()
+        return [bounds[axis + (3 if side == "max" else 0)]] if bounds else []
+    sign = 1 if side == "max" else -1
+    levels = sorted({center[axis] for normal, center in planes if normal[axis] * sign > 0.999999})
+    if not levels:
+        raise ValueError("selected CAD interface is not an independently measured B-Rep plane")
+    return levels
+
+
+def meeting_interface(relation, parts, meshes, cad_planes, axis, settings, tolerance):
+    """Measure two parts where they really meet. A bent plate does not rest on its
+    lowest point, so a shaped object's interface is not its outermost plane: of the
+    flat faces the two turn to each other, it is the pair within the contact tolerance
+    with the most contact, or else the nearest pair, whose gap will show. The verifier
+    picks the planes: the author names the sides, and the kind plays no part in it."""
+    source, target = parts[relation.source], parts[relation.target]
+    planes = cad_planes or {}
+    below = facing_levels(source, meshes[source.id], planes.get(source.id, []), axis, settings["source_face"])
+    above = facing_levels(target, meshes[target.id], planes.get(target.id, []), axis, settings["target_face"])
+    pairs = sorted(((abs(a - b), a, b) for a in below for b in above), key=lambda pair: pair[0])
+    close = [pair for pair in pairs if pair[0] <= tolerance + 1e-6] or pairs[:1]
+    def measured(pair):
+        return measure_interface(meshes[source.id], meshes[target.id], axis, settings["source_face"], settings["target_face"],
+                                 relation.kind in ("covers", "laps_over"),
+                                 source_level=pair[1] if source.shape == "cad" else None,
+                                 target_level=pair[2] if target.shape == "cad" else None)
+    return max((measured(pair) for pair in close), key=lambda result: result["contact"])
+
+
+def largest_face(mesh):
+    """The area of a part's broadest bounding face: the one a layer is covered on."""
+    bounds = mesh.bounds() if mesh else None
+    if not bounds:
+        return 0.
+    spans = sorted(bounds[k + 3] - bounds[k] for k in range(3))
+    return spans[1] * spans[2]
+
+
+def first_draft_layers(program):
+    """Parts a first draft declared covered layers, which a later draft cannot rename
+    out of their obligation. A role its own class contradicts was never a claim about
+    the drawing: seen live, a sealant was covered_layer for one draft by mistake."""
+    known, _ = ontology_or_error()
+    def agrees(part):
+        component = known.component(part["class_id"]) if known and part.get("class_id") else None
+        return component is None or component.role == "covered_layer"
+    return {part["id"] for part in program.get("parts", []) if part.get("role") == "covered_layer" and agrees(part)}
+
+
+def spatial_checks(program, meshes, exposed=None, cad_planes=None, covered_before=()):
+    """`covered_before`: parts the first draft declared covered layers, which owe the
+    same evidence whatever role they carry now."""
+    output, covering, anchored = [], {}, set()
     by_id = {p.id: p for p in program.parts}
     for i, relation in enumerate(program.relations):
         ident = f"assembly-{i}-{relation.kind}"
@@ -239,14 +386,24 @@ def spatial_checks(program, meshes, exposed=None, cad_planes=None):
             output.append(check(ident, "UNVERIFIED", "an inferred part's interface is a placeholder: not measured "
                                 "until a reviewer confirms the part", required=False))
             continue
+        if relation.kind == "repeated_along":
+            # Not a way out of a measurement: it stays open, so it cannot stand in for one.
+            output.append(check(ident, "UNVERIFIED", "repeated_along cannot be measured from one modelled instance; give the "
+                                "spacing as a printed dimension or a note, and measure how the part meets its host"))
+            continue
+        ordering = _dependencies(program, relation.target, relation.source)
         if relation.kind not in CONTACT_KINDS:
-            # hosted_in, fixed_to, abuts, repeated_along (ontology/relations.yaml):
-            # stored, shown, not yet measured. Informational until they are.
-            output.append(check(ident, "UNVERIFIED", "unsupported spatial interface: no geometric check for "
-                                f"{relation.kind} yet", required=False))
+            built = [k for k in (relation.source, relation.target) if by_id[k].shape != "cad" or k in (cad_planes or {})]
+            a, b = meshes[relation.source].bounds(), meshes[relation.target].bounds()
+            if len(built) < 2 or a is None or b is None:
+                output.append(check(ident, "UNVERIFIED", f"{relation.kind} is measured once both parts are built"))
+                continue
+            tolerance = pair_tolerance(program, meshes, relation.source, relation.target, 0)
+            output.append(solid_relation(ident, relation, a, b, meshes[relation.target], tolerance, ordering))
+            anchored |= {relation.source, relation.target}
             continue
         settings = relation.constraints
-        required_fields = {"axis", "source_face", "target_face", "min_gap", "max_gap", "min_coverage"}
+        required_fields = {"axis", "source_face", "target_face", "min_gap", "max_gap"}
         if not required_fields <= settings.keys():
             output.append(check(ident, "UNVERIFIED", "missing explicit interface constraints"))
             continue
@@ -254,59 +411,79 @@ def spatial_checks(program, meshes, exposed=None, cad_planes=None):
         if axis is None or settings["source_face"] not in ("min", "max") or settings["target_face"] not in ("min", "max"):
             output.append(check(ident, "FAIL", "invalid interface selector"))
             continue
+        if settings["source_face"] == settings["target_face"]:
+            # Two faces looking the same way are flush, not touching: every end of an
+            # extruded section is coplanar, so this would measure nothing at all.
+            output.append(check(ident, "FAIL", f"both faces are {settings['source_face']} faces along {settings['axis']}, so they "
+                                "look the same way and cannot meet: a contact joins a max face to a min face"))
+            continue
         # The declared gap band may be no wider than the pair's contact tolerance.
         tolerance = pair_tolerance(program, meshes, relation.source, relation.target, axis)
         min_gap, max_gap = max(settings["min_gap"], -tolerance), min(settings["max_gap"], tolerance)
         band = dict(contact_tolerance=tolerance, gap_band=[min_gap, max_gap])
+        declared = settings.get("min_coverage") or 0
+        a, b = meshes[relation.source].bounds(), meshes[relation.target].bounds()
         if any(by_id[k].shape != "box" for k in (relation.source, relation.target)):
             if any(by_id[k].shape not in ("box","wedge","sheet","profile","cad") for k in (relation.source,relation.target)):
                 output.append(check(ident,"UNVERIFIED","interface requires supported planar primitives"))
                 continue
             try:
-                source_extremal = by_id[relation.source].shape == "cad" and relation.kind == "supported_by"
-                target_extremal = by_id[relation.target].shape == "cad" and relation.kind == "supported_by"
-                for key,side in ((relation.source,settings["source_face"]),(relation.target,settings["target_face"])):
-                    extremal = source_extremal if key == relation.source else target_extremal
-                    if by_id[key].shape == "cad" and not matches_brep_planes(meshes[key],axis,side,(cad_planes or {}).get(key,[]),extremal):
-                        raise ValueError("selected CAD interface is not an independently measured B-Rep plane")
-                measurement = measure_interface(meshes[relation.source],meshes[relation.target],axis,
-                              settings["source_face"],settings["target_face"],relation.kind in ("covers","laps_over"),source_extremal,target_extremal)
+                measurement = meeting_interface(relation, by_id, meshes, cad_planes, axis, settings, tolerance)
             except ValueError as error:
                 output.append(check(ident,"UNVERIFIED",str(error)))
                 continue
-            ordering = _dependencies(program,relation.target,relation.source)
-            ok = (measurement["min_gap"] is not None and min_gap <= measurement["min_gap"] + 1e-6
-                  and measurement["max_gap"] <= max_gap + 1e-6
-                  and measurement["coverage"] + 1e-6 >= settings["min_coverage"] and ordering)
-            output.append(check(ident,"PASS" if ok else "FAIL",**measurement,order_valid=ordering,**band))
-            continue
-        a, b = meshes[relation.source].bounds(), meshes[relation.target].bounds()
-        if a is None or b is None:
-            output.append(check(ident, "FAIL", "missing interface geometry"))
-            continue
-        af = a[axis + (3 if settings["source_face"] == "max" else 0)]
-        bf = b[axis + (3 if settings["target_face"] == "max" else 0)]
-        direction = 1 if settings["source_face"] == "min" else -1
-        gap = (af - bf) * direction
-        projection = [j for j in range(3) if j != axis]
-        area = 1.0
-        overlap = 1.0
-        for j in projection:
-            base = b if relation.kind in ("covers","laps_over") else a
-            area *= max(0, base[j + 3] - base[j])
-            overlap *= max(0, min(a[j + 3], b[j + 3]) - max(a[j], b[j]))
-        coverage = overlap / area if area else 0
-        spatial = min_gap <= gap <= max_gap and coverage >= settings["min_coverage"]
-        ordering = (_dependencies(program, relation.target, relation.source) if relation.kind == "covers" else
-                    _dependencies(program, relation.target, relation.source))
-        output.append(check(ident, "PASS" if spatial and ordering else "FAIL", gap=gap,
-                            coverage=coverage, order_valid=ordering, **band))
+        else:
+            if a is None or b is None:
+                output.append(check(ident, "FAIL", "missing interface geometry"))
+                continue
+            af = a[axis + (3 if settings["source_face"] == "max" else 0)]
+            bf = b[axis + (3 if settings["target_face"] == "max" else 0)]
+            direction = 1 if settings["source_face"] == "min" else -1
+            overlap, source_area, target_area = 1.0, 1.0, 1.0
+            for j in [j for j in range(3) if j != axis]:
+                source_area *= max(0, a[j + 3] - a[j])
+                target_area *= max(0, b[j + 3] - b[j])
+                overlap *= max(0, min(a[j + 3], b[j + 3]) - max(a[j], b[j]))
+            base = target_area if relation.kind in ("covers", "laps_over") else source_area
+            smaller = min(source_area, target_area)
+            measurement = {"gap": (af - bf) * direction, "coverage": overlap / base if base else 0,
+                           "contact": overlap / smaller if smaller else 0, "overlap": overlap}
+        lap = relation.kind == "laps_over" and bool(a and b) and is_lap(a, b, axis)
+        problem = relation_problem(relation, measurement, min_gap, max_gap, declared, ordering, lap)
+        result = check(ident, "FAIL" if problem else "PASS", problem, **measurement, order_valid=ordering, **band)
+        output.append(result)
+        anchored |= {relation.source, relation.target}
+        if not problem:
+            lying = covering.setdefault((relation.target, axis, settings["target_face"]), {})
+            lying[relation.source] = max(lying.get(relation.source, 0), measurement["overlap"])
+    # What hides a layer is whatever really touches its face from outside, added up
+    # part by part. The kinds named play no part in it, so renaming a relation
+    # cannot cover a layer, and neither can a sliver that touches it.
     for part in program.parts:
-        if part.role == "covered_layer" and not any(r.target == part.id and r.kind in
-                ("covers", "terminates_against") for r in program.relations):
-            accepted = part.id in (exposed or set())
-            output.append(check(f"coverage-{part.id}", "N/A" if accepted else "UNVERIFIED",
-                          "reviewer accepted an exposed layer" if accepted else "covered layer has no covering relationship", required=not accepted))
+        if part.role != "covered_layer" and part.id not in covered_before:
+            continue
+        faces = [sum(lying.values()) for key, lying in covering.items() if key[0] == part.id]
+        broadest = largest_face(meshes.get(part.id))
+        share = min(max(faces, default=0) / broadest, 1) if broadest else 0
+        related = any(r.target == part.id and r.kind in CONTACT_KINDS for r in program.relations)
+        if part.id in (exposed or set()):
+            output.append(check(f"coverage-{part.id}", "N/A", "reviewer accepted an exposed layer", required=False))
+        elif share + 1e-6 >= COVER_FLOOR:
+            output.append(check(f"coverage-{part.id}", "PASS", covered_share=share))
+        elif related:
+            output.append(check(f"coverage-{part.id}", "UNVERIFIED", f"what lies on this layer hides {share:.1%} of its broad "
+                                f"face; the verifier requires {COVER_FLOOR:.0%} before it counts as covered", covered_share=share))
+        else:
+            output.append(check(f"coverage-{part.id}", "UNVERIFIED", "covered layer has no covering relationship"))
+    # A relation that clears a FAIL by going away leaves its part measured against
+    # nothing: that stays open, so removing a relation is no way past its pass mark.
+    physical = [p for p in program.parts if p.role != "zone" and p.shape != "annotation"
+                and getattr(p, "provenance", "drawing") != "inferred"]
+    if len(physical) > 1:
+        for part in physical:
+            if part.id not in anchored:
+                output.append(check(f"anchored-{part.id}", "UNVERIFIED", f"{part.id} is measured against no other part: "
+                                    "give it a relation to what holds it, on the faces that really meet"))
     return output
 
 
@@ -390,6 +567,9 @@ def prepare_verification(repo, version_id, candidate=None):
     coverage = label_coverage(program, read)
     if coverage:
         checks.append(coverage)
+    verbatim = label_check(read)
+    if verbatim:
+        checks.append(verbatim)
     for result in results:
         if result.id.startswith("C-cad-"):
             continue  # v2's illustrative-only policy does not describe v3 CAD.
@@ -397,6 +577,9 @@ def prepare_verification(repo, version_id, candidate=None):
         entry = {**result.model_dump(mode="json"), "required": required}
         if result.id == "C-labels" and not read.get("elements"):
             entry.update(status="N/A", required=False)
+        elif result.id == "C-labels" and verbatim["status"] != "PASS":
+            entry.update(status="UNVERIFIED", description=result.description.replace("exact drawing labels", "labels as read from the drawing"),
+                         evidence="see label-verbatim: these labels are not confirmed from the drawing's text")
         checks.append(entry)
     env = {p.name: p.value for p in program.params}
     resolutions = repo.list(d.reviews, d.reviews.c.version_id == version_id, d.reviews.c.action == "resolve")
@@ -574,7 +757,8 @@ def prepare_verification(repo, version_id, candidate=None):
             cad_planes[part.id] = [([face["normal"][0],face["normal"][2],-face["normal"][1]],
                 [face["center"][0]+offset[0],face["center"][2]+offset[1],-face["center"][1]+offset[2]])
                 for face in build["measured"].get("faces",[]) if face["kind"] == "PLANE"]
-    checks += spatial_checks(program, meshes, exposed, cad_planes)
+    covered_before = first_draft_layers(ancestors[-1]["program"] if ancestors else {}) & {p.id for p in program.parts}
+    checks += spatial_checks(program, meshes, exposed, cad_planes, covered_before)
     for probe in layer_order_probes(program, meshes):
         checks.append(check(probe.pop("id"), probe.pop("status"), probe.pop("reason", None), **probe))
     checks += slot_checks(program, read)
