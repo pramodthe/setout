@@ -33,7 +33,7 @@ FUNCTIONS = ("water_barrier", "drainage", "air_seal", "vapour_control", "thermal
 # `hosted_in_frame` members from an anchor slot; the others are suggested only.
 PLACEMENTS = ("extrude_along_run", "follow_layer", "repeat_at_spacing", "fill_opening",
               "hosted_in_frame", "posed_object", "fillet_at_corner")
-POSITIONS = ("side", "top", "infill")  # a member's place within its opening
+POSITIONS = ("side", "top", "infill", "under")  # a member's place within its opening, or beneath its anchor
 _ID = re.compile(r"^[a-z][a-z0-9_]{0,47}$")
 _URL = re.compile(r"^https?://[^\s]+$")
 

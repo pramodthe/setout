@@ -38,8 +38,10 @@ MAX_COORDINATE = 110
 # The dimension slots each placement reads from the part's class.
 NEEDS = {("fill_opening", "side"): ("width", "depth", "height"),
          ("fill_opening", "top"): ("height", "depth"),
-         ("hosted_in_frame", "infill"): ("thickness",)}
-ORDER = {None: 0, "side": 1, "top": 2, "infill": 3}  # anchors are placed before what rests on them
+         ("hosted_in_frame", "infill"): ("thickness",),
+         ("extrude_along_run", "under"): ("thickness",)}
+ORDER = {None: 0, "under": 1, "side": 2, "top": 3, "infill": 4}  # anchors are placed before what rests on them
+LAYER_ROLES = ("covered_layer", "finish")
 BEARING = {"axis": "y", "source_face": "min", "target_face": "max", "min_gap": 0, "max_gap": 0, "min_coverage": 1.0}
 _SIMPLE = re.compile(r"^[a-z_][a-z0-9_]*$|^\d+(\.\d+)?$")
 
@@ -105,6 +107,18 @@ def _envelope(part):
         return {"x0": _extreme("min", xs), "x1": _extreme("max", xs), "y0": _extreme("min", ys), "y1": _extreme("max", ys),
                 "z0": dims["z0"], "z1": dims["z1"]}
     return None
+
+
+def _runs(part, env):
+    """A layer's flat undersides as (left, right, level), read from its section."""
+    if part.shape == "sheet" and len(part.path) >= 2:
+        half = _value(part.dim("thickness"), env) / 2
+        points = [(_value(p.x or "0", env), _value(p.y or "0", env)) for p in part.path]
+        return [(min(a[0], b[0]), max(a[0], b[0]), a[1] - half) for a, b in zip(points, points[1:]) if abs(a[1] - b[1]) < 1e-6]
+    envelope = _envelope(part)
+    if not envelope:
+        return []
+    return [(_value(envelope["x0"], env), _value(envelope["x1"], env), _value(envelope["y0"], env))]
 
 
 def _measure(envelope, measure):
@@ -238,10 +252,34 @@ class _Filler:
             found[name] = expression
         return found, None
 
+    def level_under(self, anchor):
+        """Where the part under the anchor starts: below the lowest layer that runs under
+        most of the anchor, or the anchor itself if none does. Most of it, because a
+        membrane down a step also runs past the anchor's end at the lower level."""
+        left, right = _value(anchor["x0"], self.env), _value(anchor["x1"], self.env)
+        bottom = _value(anchor["y0"], self.env)
+        levels = [level for part in self.program.parts if part.role in LAYER_ROLES
+                  for x0, x1, level in _runs(part, self.env)
+                  if level <= bottom and (min(x1, right) - max(x0, left)) * 2 >= right - left]
+        return min(levels, default=bottom)
+
+    def named(self, ident, name, value, anchor_part):
+        """A placeholder position that is a number, so it is a named assumption."""
+        param = NativeParam(name=self.unique_name(f"{ident}_{name}"), value=round(value, 3), unit="mm", provenance="assumption",
+                            kind="exact", note=f"no source on this drawing: placeholder position of {ident} ({name}), "
+                            f"read from {anchor_part.id} when the slot was filled; it does not follow later changes")
+        self.result.params.append(param)
+        self.env[param.name] = param.value
+        return param.name
+
     def envelopes(self, slot, anchor, sizes, need):
         """The new parts' envelopes for the slot's placement, with the parts
         each one rests on or sits between."""
         position = slot.position
+        if position == "under":
+            top = self.named(slot.id, "y1", self.level_under(anchor), self.anchor(slot.anchor)[0])
+            return [({"x0": anchor["x0"], "x1": anchor["x1"], "y0": _sub(top, sizes["thickness"]), "y1": top,
+                      "z0": anchor["z0"], "z1": anchor["z1"]}, [])], None
         # A depth taken from the anchor's own depth ends on the anchor's face.
         x1 = anchor["x1"] if sizes.get("depth") == _measure(anchor, "depth") else _add(anchor["x0"], sizes.get("depth", "0"))
         if position == "side":
@@ -318,7 +356,7 @@ class _Filler:
             id=ident, type=cls.id, label=None, class_id=cls.id, shape="box", role=cls.role,
             form=(cls.form or "shaped") if is_object else None,
             dims=[{"name": k, "expr": v} for k, v in envelope.items()],
-            install_after=[anchor_part.id] + [p.id for p in rests_on if p.id != anchor_part.id],
+            install_after=[] if slot.position == "under" else [anchor_part.id] + [p.id for p in rests_on if p.id != anchor_part.id],
             note=note, provenance="inferred", confidence=None, inferred_by=tag)
         self.parts.append(part)
         self.result.parts.append(part)

@@ -532,6 +532,29 @@ def spatial_checks(program, meshes, exposed=None, cad_planes=None, covered_befor
     return output
 
 
+def sheet_thickness_claim(part, mesh, feature, measured, env):
+    """An extent reads a part's whole span, so on a bent sheet it reads the bends: seen
+    live, 18.8 mm against a 2 mm membrane. A claim of the sheet's own thickness is measured
+    through the sheet instead, across a straight run. Any other extent stands as it is."""
+    axis = {"x": 0, "y": 1}.get(feature.selector.get("axis"))
+    thickness = evaluate(part.dim("thickness"), env)
+    if feature.kind != "extent" or axis is None or abs(measured["expected"] - thickness) > 1e-6:
+        return measured
+    along = 1 - axis
+    points = [[evaluate(point.x or "0", env), evaluate(point.y or "0", env)] for point in part.path]
+    runs = [(a, b) for a, b in zip(points, points[1:]) if abs(a[axis] - b[axis]) < 1e-6 and abs(a[along] - b[along]) > 1e-6]
+    bounds = mesh.bounds()
+    if not runs or not bounds:
+        return {**measured, "status": "UNVERIFIED", "actual": None, "reason": "this sheet has no straight run across that axis to measure through"}
+    start, end = max(runs, key=lambda run: abs(run[0][along] - run[1][along]))
+    spans = solid_spans(line_hits(mesh, axis, [((start[along] + end[along]) / 2, (bounds[2] + bounds[5]) / 2)])[0])
+    through = [high - low for low, high in spans if low - 1e-6 <= start[axis] <= high + 1e-6]
+    if not through:
+        return {**measured, "status": "UNVERIFIED", "actual": None, "reason": "no line through this sheet's straight run met it"}
+    return {**measured, "actual": through[0], "reason": None,
+            "status": "PASS" if abs(through[0] - measured["expected"]) <= measured["tolerance"] else "FAIL"}
+
+
 def plane_coordinate(repo, version, part, mesh, axis, side, env):
     bounds = mesh.bounds()
     if bounds is None or side not in ("min", "max"):
@@ -666,6 +689,9 @@ def prepare_verification(repo, version_id, candidate=None):
                 native = [bounds[0], -bounds[5], bounds[1], bounds[3], -bounds[2], bounds[4]]
                 _, measured = measure_features({"bounds": native, "faces": []},
                                  [f.model_dump(mode="json") for f in part.features], env)
+                if part.shape == "sheet":
+                    measured = [sheet_thickness_claim(part, meshes[part.id], feature, result, env)
+                                for feature, result in zip(part.features, measured)]
         cross_features = {f.id: f for f in part.features if f.selector.get("other_part")}
         measured = [m for m in measured if m["id"] not in cross_features]
         measured += [cross_part_feature(repo, version, program, meshes, part, f, env) for f in cross_features.values()]

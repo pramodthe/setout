@@ -147,7 +147,9 @@ slot-missing check means a required slot is empty, not that a part should go.
 Never remove source evidence to clear checks. Call finish(done) only with the
 matching passing verification and critic IDs, naming every inferred part in
 open_issues. Otherwise finish(needs_review)
-with a useful summary and unresolved issues. Do not publish or claim compliance.
+with a useful summary and unresolved issues. A finish is sent back while budget remains and
+the critic or the checks name what you can still fix, so fix those first, then render and call
+critic again. Do not publish or claim compliance.
 """
 
 

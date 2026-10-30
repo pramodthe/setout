@@ -34,8 +34,11 @@ MIN_MARGIN = 0.025      # of the figure's longer side: a tiny part keeps its nei
 MIN_AGREEMENT = 0.5     # share of the smaller box inside the larger, for a corrected box to count as the same spot
 MAX_CROP_SHARE = 0.6    # a crop this much of the figure is the figure: it gains nothing
 PROOF_ENLARGE = 3.0     # labels read better larger, and the figure needs no more than this
-SHEET_ROWS = 12         # objects on one shape sheet, which stays under MAX_PIXELS
-SHEET_CELL = (400, 290)
+# The critic's picture of one object: its close-up beside its section, about a megapixel
+# and so about 1.3k tokens. Seen on a real run: seven objects on one sheet shrank each crop
+# below the figure's own resolution, and a critic could not see a thin turn-up in that.
+PAIR_SIDE = 760
+MOST_PAIRS = 12
 BOX_COLOURS = [(0, 130, 0), (160, 0, 160), (0, 120, 160), (200, 100, 0), (120, 80, 0), (0, 0, 0), (220, 0, 90), (0, 90, 90), (90, 0, 200)]
 
 _BOX = {name: {"type": "integer"} for name in ("x0", "y0", "x1", "y1")}
@@ -167,18 +170,24 @@ def settle(first: dict, checked: dict) -> dict:
     return settled
 
 
-def crop(image: Image.Image, box) -> bytes | None:
+def crop(image: Image.Image, box, margin=MARGIN, mark=False) -> bytes | None:
     """A box of the figure, with a margin, enlarged. None when it would show so much
-    of the figure that the close-up gains nothing."""
+    of the figure that the close-up gains nothing. `mark` outlines the box itself, so
+    a reader can tell the part from its neighbours."""
     width, height = image.size
     x0, y0, x1, y1 = box[0] * width / 1000, box[1] * height / 1000, box[2] * width / 1000, box[3] * height / 1000
-    margin = max(MARGIN * max(x1 - x0, y1 - y0), MIN_MARGIN * max(width, height))
-    left, top, right, bottom = (round(max(0, x0 - margin)), round(max(0, y0 - margin)),
-                                round(min(width, x1 + margin)), round(min(height, y1 + margin)))
+    room = max(margin * max(x1 - x0, y1 - y0), MIN_MARGIN * max(width, height))
+    left, top, right, bottom = (round(max(0, x0 - room)), round(max(0, y0 - room)),
+                                round(min(width, x1 + room)), round(min(height, y1 + room)))
     if right <= left or bottom <= top or (right - left) * (bottom - top) > MAX_CROP_SHARE * width * height:
         return None
     region = image.crop((left, top, right, bottom))
-    return _png(_sized(region, min(MAX_ENLARGE, (MAX_PIXELS / (region.width * region.height)) ** 0.5)))
+    scale = min(MAX_ENLARGE, (MAX_PIXELS / (region.width * region.height)) ** 0.5)
+    region = _sized(region, scale)
+    if mark:
+        ImageDraw.Draw(region).rectangle([(x0 - left) * scale, (y0 - top) * scale, (x1 - left) * scale, (y1 - top) * scale],
+                                         outline=(220, 0, 90), width=2)
+    return _png(region)
 
 
 def silhouette(positions: list[float], size: tuple[int, int]) -> Image.Image:
@@ -197,28 +206,21 @@ def silhouette(positions: list[float], size: tuple[int, int]) -> Image.Image:
     return image
 
 
-def shape_sheet(rows: list[tuple]) -> bytes:
-    """One image for the critic: (part id, close-up PNG or None, built positions).
-    Each object's close-up sits beside its section as built, so a form that differs
-    shows at a size a whole-assembly render cannot give it."""
-    width, height = SHEET_CELL
-    title = 24
-    columns = 2
-    shown = rows[:SHEET_ROWS]
-    lines = (len(shown) + 1) // columns
-    sheet = Image.new("RGB", (columns * (2 * width + 12), lines * (height + title + 8)), (235, 235, 235))
-    draw, font = ImageDraw.Draw(sheet), ImageFont.load_default(size=15)
-    for i, (ident, close_up, positions) in enumerate(shown):
-        left, top = (i % columns) * (2 * width + 12), (i // columns) * (height + title + 8)
-        draw.text((left + 4, top + 4), f"{ident}: drawing | as built", fill=(0, 0, 0), font=font)
-        cell = Image.new("RGB", (width, height), "white")
-        if close_up:
-            with Image.open(io.BytesIO(close_up)) as source:
-                drawn = source.convert("RGB")
-            fitted = _sized(drawn, min(width / drawn.width, height / drawn.height))
-            cell.paste(fitted, ((width - fitted.width) // 2, (height - fitted.height) // 2))
-        else:
-            ImageDraw.Draw(cell).text((12, 12), "no reliable close-up: use the whole drawing", fill=(120, 0, 0), font=font)
-        sheet.paste(cell, (left, top + title))
-        sheet.paste(silhouette(positions, (width, height)), (left + width + 2, top + title))
-    return _png(sheet)
+def shape_pair(ident: str, close_up: bytes | None, positions: list[float]) -> bytes:
+    """One object for the critic: its close-up with the part outlined, beside its
+    section as built, each as large as the pair allows."""
+    side, title = PAIR_SIDE, 26
+    pair = Image.new("RGB", (2 * side + 12, side + title), (235, 235, 235))
+    draw, font = ImageDraw.Draw(pair), ImageFont.load_default(size=16)
+    draw.text((6, 4), f"{ident}: left, the drawing, the part outlined | right, as built", fill=(0, 0, 0), font=font)
+    cell = Image.new("RGB", (side, side), "white")
+    if close_up:
+        with Image.open(io.BytesIO(close_up)) as source:
+            drawn = source.convert("RGB")
+        fitted = _sized(drawn, min(side / drawn.width, side / drawn.height))
+        cell.paste(fitted, ((side - fitted.width) // 2, (side - fitted.height) // 2))
+    else:
+        ImageDraw.Draw(cell).text((12, 12), "no reliable close-up: use the whole drawing", fill=(120, 0, 0), font=font)
+    pair.paste(cell, (0, title))
+    pair.paste(silhouette(positions, (side, side)), (side + 12, title))
+    return _png(pair)

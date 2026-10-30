@@ -6,6 +6,9 @@ drawing did is in app/close_up.py; here each rule is pinned on its own.
 import base64
 import io
 import json
+import sys
+import types
+from pathlib import Path
 
 import pytest
 from PIL import Image, ImageDraw
@@ -136,8 +139,9 @@ def test_the_prompts_never_ask_for_a_size():
 
 class Located:
     """A model that places the two objects, then writes their CAD."""
-    def __init__(self, check=None, located=None, fail=None):
-        self.check, self.located, self.fail = check, located, fail
+    def __init__(self, check=None, located=None, fail=None, reading=None, missing=()):
+        self.check, self.located, self.fail, self.missing = check, located, fail, list(missing)
+        self.reading = reading or (lambda prompt: _shape("match"))
         self.calls, self.payloads = [], {}
 
     def __call__(self, payload):
@@ -159,10 +163,14 @@ class Located:
             self.calls.append("cad")
             self.payloads.setdefault("cad", []).append(payload)
             return response_json({"code": LOCAL, "envelope_problem": ""})
+        if purpose == "shape":
+            self.calls.append("shape")
+            self.payloads.setdefault("shape", []).append(payload)
+            return response_json(self.reading(_text(payload)))
         if purpose == "critic":
             self.calls.append("critic")
             self.payloads.setdefault("critic", []).append(payload)
-            return response_json({"verdict": "pass", "issues": [], "shape_checks": []})
+            return response_json({"verdict": "pass", "issues": [], "missing_parts": self.missing})
         pytest.fail(f"unexpected {purpose}")
 
 
@@ -281,23 +289,57 @@ def test_a_revolve_is_told_which_coordinates_its_axis_is_in():
     assert "workplane's own two coordinates" in agent_tools.SHAPE_RULES
 
 
-def test_a_solid_that_cannot_be_meshed_says_why():
-    """Seen live, as FileNotFoundError: part.stl, which tells a writer nothing."""
+def test_a_solid_that_cannot_be_meshed_says_why(monkeypatch):
+    """Seen live, as FileNotFoundError: part.stl, which tells a writer nothing. The real
+    export script runs here against a stand-in for CadQuery that writes no mesh."""
     from app import cad_components
+    class Shape:
+        pass
+    class Workplane:
+        def __init__(self, *args):
+            pass
+        def box(self, *args, **kwargs):
+            return self
+        def vals(self):
+            return [Shape()]
+    def export(shape, target, **options):
+        if target.endswith(".step"):
+            Path(target).write_bytes(b"step")
+    stand_in = types.ModuleType("cadquery")
+    stand_in.Workplane, stand_in.Shape, stand_in.exporters = Workplane, Shape, types.SimpleNamespace(export=export)
+    monkeypatch.setitem(sys.modules, "cadquery", stand_in)
     scripts = []
     def runner(script):
         scripts.append(script)
         raise cad_components.cad_sandbox.CadCodeError("stop here")
     with pytest.raises(cad_components.cad_sandbox.CadCodeError):
         cad_components.build(LOCAL, {"width": 1, "depth": 1, "height": 1}, [], runner=runner)
-    assert "could not be meshed" in scripts[0] and "axis" in scripts[0]
+    with pytest.raises(ValueError, match="could not be meshed.*axis"):
+        exec(scripts[0], {})
 
 
-def test_the_shape_sheet_stays_under_what_the_model_can_read():
-    crop = close_up.crop(_image(1000, 1000), [100, 100, 300, 300])
-    rows = [(f"part_{i}", crop if i % 2 else None, [0, 0, 0, 10, 0, 0, 10, 10, 0]) for i in range(30)]
-    sheet = _open(close_up.shape_sheet(rows))
-    assert sheet.width * sheet.height <= close_up.MAX_PIXELS
+def test_a_critic_sees_a_part_no_smaller_than_the_figure_shows_it():
+    """Seen live: seven objects on one sheet shrank each crop below the figure's own
+    resolution, and a thin turn-up could not be seen. Each object now has an image."""
+    figure = _image(1000, 1000)
+    ImageDraw.Draw(figure).rectangle([300, 500, 700, 503], fill="black")
+    drawn = close_up.crop(figure, [290, 490, 710, 510], mark=True)
+    pair = _open(close_up.shape_pair("part", drawn, [0, 0, 0, 10, 0, 0, 10, 10, 0]))
+    assert pair.width * pair.height <= close_up.MAX_PIXELS / 2  # a megapixel or so: about 1.3k tokens each
+    tall = sum(1 for y in range(pair.height) if pair.convert("L").getpixel((close_up.PAIR_SIDE // 2, y)) < 128)
+    assert tall >= 4  # the 4 px plate is at least its full height across the part
+
+
+def test_the_critics_close_up_outlines_the_part_and_the_writers_does_not():
+    figure = _image(1000, 1000)
+    plain, marked = close_up.crop(figure, [400, 400, 600, 600]), close_up.crop(figure, [400, 400, 600, 600], mark=True)
+    colours = {colour for _, colour in _open(marked).convert("RGB").getcolors(maxcolors=100000)}
+    assert (220, 0, 90) in colours and {colour for _, colour in _open(plain).convert("RGB").getcolors(maxcolors=100000)} == {(255, 255, 255)}
+
+
+def test_an_object_with_no_close_up_still_shows_as_built():
+    pair = _open(close_up.shape_pair("part", None, [0, 0, 0, 10, 0, 0, 10, 10, 0]))
+    assert pair.convert("L").getpixel((close_up.PAIR_SIDE + 40, pair.height - 20)) < 128
 
 
 def _built(repo, model):
@@ -308,43 +350,123 @@ def _built(repo, model):
     return tools, second, rendered
 
 
-def test_the_critic_is_shown_each_object_beside_its_close_up(source_repo, close_ups):
+def test_each_object_is_read_in_a_call_of_its_own(source_repo, close_ups):
+    """Measured on a real run: a shared call named a part's extra base 1 time of 3 and a
+    call of its own 5 of 5, at low effort."""
     model = Located()
     tools, _, rendered = _built(source_repo, model)
     tools.run("c", "critic", rendered["critic_args"])
-    payload = model.payloads["critic"][0]
-    assert len(_images(payload)) == 6  # the figure, the sheet, the three plain views and the tagged iso
-    text = _text(payload)
-    assert "shape sheet" in text and "never compare sizes" in text
-    assert model.calls.count("locate") == 1  # the critic reuses what CAD found
+    assert model.calls.count("shape") == 2 and model.calls.count("locate") == 1  # the critic reuses what CAD found
+    reading = model.payloads["shape"][0]
+    assert len(_images(reading)) == 2  # the whole drawing, then the object's pair
+    assert reading["reasoning"]["effort"] == "low"
+    text = _text(reading)
+    assert "The object is track." in text and "bottom_tray" in text and "never compare overall sizes" in text
+    assert len(_images(model.payloads["critic"][0])) == 5  # the figure, three plain views and the tagged iso
 
 
-def _shape_result(*checks):
-    return {"verdict": "pass", "issues": [], "shape_checks": list(checks)}
+def test_the_reader_is_shown_the_part_outlined(source_repo, close_ups):
+    model = Located()
+    tools, _, rendered = _built(source_repo, model)
+    tools.run("c", "critic", rendered["critic_args"])
+    pair = _open(base64.b64decode(_images(model.payloads["shape"][0])[1]["image_url"].split(",", 1)[1])).convert("RGB")
+    assert any(r - g > 60 for _, (r, g, b) in pair.getcolors(maxcolors=1 << 20))  # resizing blends it, so not the exact colour
 
 
-def _shape(part, status):
-    return {"part": part, "status": status, "drawing_shows": "three fins on a base", "model_shows": "a hollow channel"}
+def test_a_solid_is_read_once_however_many_critics_follow(source_repo, close_ups):
+    model = Located()
+    tools, _, rendered = _built(source_repo, model)
+    tools.run("c1", "critic", rendered["critic_args"])
+    tools.run("c2", "critic", rendered["critic_args"])
+    assert model.calls.count("shape") == 2 and model.calls.count("critic") == 2
 
 
-def test_a_shape_mismatch_is_an_issue_about_that_part():
-    result = _shape_result(_shape("track", "mismatch"), _shape("tray", "match"))
-    apply_shape_checks(result, ["track", "tray"])
-    issue = result["issues"][0]
-    assert issue["id"] == "shape-mismatch:track" and issue["parts"] == ["track"] and issue["severity"] == "error"
-    assert "three fins" in issue["reason"] and "hollow channel" in issue["reason"]
-    assert "shape_checks" not in result
+def test_a_new_solid_is_read_again(source_repo, close_ups):
+    model = Located()
+    tools, second, rendered = _built(source_repo, model)
+    tools.run("c1", "critic", rendered["critic_args"])
+    again = tools.run("m3", "model_component", {"version_id": second["version_id"], "part_key": "track", "brief": "again"})
+    rendered = tools.run("r2", "render", {"version_id": again["version_id"]})
+    tools.run("c2", "critic", rendered["critic_args"])
+    assert model.calls.count("shape") == 3
 
 
-def test_a_shape_mismatch_means_the_critic_cannot_pass(source_repo, close_ups):
+def test_a_reading_that_comes_back_empty_leaves_the_object_unjudged(source_repo, close_ups):
     model = Located()
     tools, _, rendered = _built(source_repo, model)
     real = model.__call__
-    def mismatched(payload):
-        if payload["text"]["format"]["name"] == "critic":
-            return response_json(_shape_result(_shape("track", "mismatch"), _shape("bottom_tray", "match")))
+    def fails(payload):
+        if payload["text"]["format"]["name"] == "shape":
+            return {"output": [], "status": "incomplete", "usage": {"input_tokens": 1, "output_tokens": 1}}
         return real(payload)
-    tools.gateway.responder = mismatched
+    tools.gateway.responder = fails
+    result = tools.run("c", "critic", rendered["critic_args"])
+    assert result["verdict"] == "inconclusive" and result["issues"][-1]["id"] == "shape-unjudged"
+    assert result["issues"][-1]["parts"] == ["track", "bottom_tray"]
+
+
+def _shape(status):
+    """A reading of a part, by what its feature list comes to."""
+    features = [{"feature": "three fins on a base", "built": status != "mismatch"}]
+    return {"close_up_shows_part": status != "unclear", "built_features": [],
+            "drawing_features": [] if status == "unclear" else features}
+
+
+def _critic(verdict="pass"):
+    return {"verdict": verdict, "issues": []}
+
+
+def test_a_shape_mismatch_is_an_issue_about_that_part():
+    result = _critic()
+    apply_shape_checks(result, {"track": _shape("mismatch"), "tray": _shape("match")})
+    issue = result["issues"][0]
+    assert issue["id"] == "shape-mismatch:track" and issue["parts"] == ["track"] and issue["severity"] == "error"
+    assert "three fins on a base" in issue["reason"] and "does not" in issue["reason"] and len(result["issues"]) == 1
+
+
+def test_something_the_drawing_does_not_show_is_a_mismatch_even_if_every_feature_is_ticked():
+    """Seen live: the critic noted an extra base and still answered match."""
+    item = _shape("match")
+    item["built_features"] = [{"feature": "a solid base plate across the bottom", "drawn": False},
+                              {"feature": "a fin on the left", "drawn": True}]
+    result = _critic()
+    apply_shape_checks(result, {"track": item})
+    issue = result["issues"][0]
+    assert issue["id"] == "shape-mismatch:track" and "solid base plate" in issue["reason"] and "fin on the left" not in issue["reason"]
+
+
+def test_a_reader_cannot_say_match_for_itself():
+    """The tally decides: there is no field for it to say so in."""
+    assert list(agent_tools.SHAPE_CHECK_SCHEMA["properties"]) == ["close_up_shows_part", "drawing_features", "built_features"]
+
+
+def test_a_close_up_that_does_not_show_the_part_judges_nothing():
+    assert agent_tools.shape_differences(_shape("unclear")) is None
+    item = _shape("match")
+    item["drawing_features"] = []
+    assert agent_tools.shape_differences(item) is None
+
+
+def test_the_critic_reads_no_word_the_author_wrote_about_the_form(source_repo, close_ups):
+    """It must stay independent of the writer, or it reads the brief back."""
+    model = Located()
+    tools, version, rendered = _built(source_repo, model)
+    tools.run("c", "critic", rendered["critic_args"])
+    for text in (_text(model.payloads["critic"][0]), _text(model.payloads["shape"][0])):
+        assert "extruded door track with fins" not in text and "bent tray under the track" not in text
+        assert '"cad_brief"' not in text and '"note"' not in text
+    assert '"id":"track"' in _text(model.payloads["critic"][0])  # the critic still reads the program
+
+
+def test_the_order_of_the_steps_is_the_drawing_first():
+    rule = agent_tools.SHAPE_RULE
+    assert rule.index("drawing_features") < rule.index("built_features")
+    assert "before you look at the right" in rule and "A close resemblance is not a match" in rule
+
+
+def test_a_shape_mismatch_means_the_critic_cannot_pass(source_repo, close_ups):
+    model = Located(reading=lambda prompt: _shape("mismatch" if "The object is track." in prompt else "match"))
+    tools, _, rendered = _built(source_repo, model)
     result = tools.run("c", "critic", rendered["critic_args"])
     assert result["verdict"] == "fail" and result["issues"][0]["id"] == "shape-mismatch:track"
     stored = source_repo.get(d.critics, result["critic_verdict_id"])
@@ -353,30 +475,23 @@ def test_a_shape_mismatch_means_the_critic_cannot_pass(source_repo, close_ups):
     assert "model_component" in view["next_step"] and "track" in view["next_step"]
 
 
-def test_an_object_the_critic_could_not_judge_holds_a_pass_back():
-    result = _shape_result(_shape("track", "match"), _shape("tray", "unclear"))
-    apply_shape_checks(result, ["track", "tray", "screw"])
+def test_an_object_that_could_not_be_compared_holds_a_pass_back():
+    result = _critic()
+    apply_shape_checks(result, {"track": _shape("match"), "tray": _shape("unclear"), "screw": None})
     assert result["verdict"] == "inconclusive"
     assert result["issues"][0]["parts"] == ["tray", "screw"] and result["issues"][0]["needs_human"]
 
 
-def test_a_critic_that_was_shown_objects_and_said_nothing_about_them_has_not_passed_them():
-    result = {"verdict": "pass", "issues": [], "shape_checks": []}
-    apply_shape_checks(result, ["track"])
-    assert result["verdict"] == "inconclusive" and result["issues"][0]["parts"] == ["track"]
+def test_with_no_objects_to_compare_nothing_is_held_back():
+    result = _critic()
+    apply_shape_checks(result, {})
+    assert result["verdict"] == "pass" and result["issues"] == []
 
 
 def test_a_part_the_program_lacks_means_the_critic_cannot_pass(source_repo, close_ups):
     """Seen live: a critic passed a version with no part for a bent plate it could see."""
-    model = Located()
+    model = Located(missing=[{"what": "a bent plate under the track", "where": "below the track"}])
     tools, _, rendered = _built(source_repo, model)
-    real = model.__call__
-    def lacking(payload):
-        if payload["text"]["format"]["name"] == "critic":
-            return response_json({"verdict": "pass", "issues": [], "shape_checks": [_shape("track", "match"), _shape("bottom_tray", "match")],
-                                  "missing_parts": [{"what": "a bent plate under the track", "where": "below the track"}]})
-        return real(payload)
-    tools.gateway.responder = lacking
     result = tools.run("c", "critic", rendered["critic_args"])
     assert result["verdict"] == "fail" and result["issues"][0]["id"] == "missing-part-0"
     assert "a bent plate under the track" in result["issues"][0]["reason"]
@@ -384,13 +499,12 @@ def test_a_part_the_program_lacks_means_the_critic_cannot_pass(source_repo, clos
     assert "patch_program" in next_step and "a bent plate" in next_step
 
 
-def test_the_critic_is_asked_to_count_and_to_look_for_what_is_not_there(source_repo, close_ups):
+def test_the_critic_is_asked_to_look_for_what_is_not_there(source_repo, close_ups):
     model = Located()
     tools, _, rendered = _built(source_repo, model)
     tools.run("c", "critic", rendered["critic_args"])
     text = _text(model.payloads["critic"][0])
-    assert "a close resemblance is not a match" in text and "missing_parts" in text
-    assert '"drawn_without_a_label":' in text
+    assert "missing_parts" in text and '"drawn_without_a_label":' in text
     assert "missing_parts" in CRITIC_SCHEMA["required"]
 
 
@@ -413,20 +527,9 @@ def test_the_read_and_the_author_see_the_figure_as_large_as_it_can_be_read(sourc
     assert sizes["read"] == sizes["program"] == (figure["width"] * 3, figure["height"] * 3)
 
 
-def test_a_critic_with_no_sheet_is_not_held_to_one():
-    result = {"verdict": "pass", "issues": [], "shape_checks": []}
-    apply_shape_checks(result, [])
-    assert result["verdict"] == "pass"
-
-
-def test_the_critic_schema_asks_for_a_reading_per_part():
-    assert "shape_checks" in CRITIC_SCHEMA["required"]
-    assert agent_tools.SHAPE_CHECK_SCHEMA["properties"]["status"]["enum"] == ["match", "mismatch", "unclear"]
-
-
-def test_a_broken_figure_costs_the_sheet_not_the_critic(source_repo, close_ups, monkeypatch):
+def test_a_broken_figure_costs_the_pictures_not_the_critic(source_repo, close_ups, monkeypatch):
     model = Located()
     tools, _, rendered = _built(source_repo, model)
-    monkeypatch.setattr(close_up, "shape_sheet", lambda rows: (_ for _ in ()).throw(ValueError("no")))
+    monkeypatch.setattr(close_up, "shape_pair", lambda *args: (_ for _ in ()).throw(ValueError("no")))
     result = tools.run("c", "critic", rendered["critic_args"])
-    assert result.get("critic_verdict_id") and "Leave shape_checks empty" in _text(model.payloads["critic"][0])
+    assert result.get("critic_verdict_id") and "shape" not in model.calls

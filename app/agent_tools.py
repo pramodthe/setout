@@ -16,7 +16,8 @@ from .native_program import kept_bindings, NativeProgram, prepare, expression_un
 from .program import evaluate, expr_names
 from .program_edits import apply_edits
 from .program_schema import program_schema, from_wire
-from .repository import BudgetExceeded, Conflict, LostLease, VERIFIER_VERSION, canonical, row, sha, uid, version_content
+from .repository import (REPAIR_REFUSALS, BudgetExceeded, Conflict, LostLease, VERIFIER_VERSION, canonical, repair_room,
+                         row, sha, uid, version_content)
 from .verification_v3 import ontology_or_error, stage_verification
 
 
@@ -30,11 +31,11 @@ VERSION = {"version_id": STRING}
 ISSUE_SCHEMA = obj({"id": STRING, "parts": {"type": "array", "items": STRING}, "reason": STRING,
                     "severity": {"type": "string", "enum": ["error", "warning"]},
                     "views": {"type": "array", "items": STRING}, "needs_human": {"type": "boolean"}})
-SHAPE_CHECK_SCHEMA = obj({"part": STRING, "status": {"type": "string", "enum": ["match", "mismatch", "unclear"]},
-                          "drawing_shows": STRING, "model_shows": STRING})
+SHAPE_CHECK_SCHEMA = obj({"close_up_shows_part": {"type": "boolean"},
+                          "drawing_features": {"type": "array", "items": obj({"feature": STRING, "built": {"type": "boolean"}})},
+                          "built_features": {"type": "array", "items": obj({"feature": STRING, "drawn": {"type": "boolean"}})}})
 CRITIC_SCHEMA = obj({"verdict": {"type": "string", "enum": ["pass", "fail", "inconclusive"]},
                      "issues": {"type": "array", "items": ISSUE_SCHEMA},
-                     "shape_checks": {"type": "array", "items": SHAPE_CHECK_SCHEMA},
                      "missing_parts": {"type": "array", "items": obj({"what": STRING, "where": STRING})}})
 CAD_SCHEMA = obj({"code": STRING, "envelope_problem": STRING})
 
@@ -219,38 +220,66 @@ SHAPE_RULES = ("Read the form from the drawing, not from the brief: the brief wa
                "The drawing is not to scale: it gives shape and topology, never a size, so take no measurement from it. "
                "Every size is a named parameter or a fraction of one. ")
 
-# How the critic reads the shape sheet (close_up.shape_sheet).
-SHEET_RULE = ("The second image is a shape sheet. For each object it sets a close-up of the drawing, on the left, beside the same object "
-              "as built, seen in section, on the right. Compare form and topology only: neither side is to scale, so never compare sizes. "
-              "On each side count the fins, legs, feet, bends, returns and separate pieces, and see what turns up or down, what passes "
-              "through what, and where the section is open. A different count, or solid where the drawing is open, is a mismatch however "
-              "small it looks; a close resemblance is not a match. Fill shape_checks with one entry for every object on the sheet, using "
-              "its id: status match, mismatch, or unclear when the close-up is missing or does not show the part; say in drawing_shows and "
-              "model_shows what you counted on each side. ")
-NO_SHEET_RULE = "Leave shape_checks empty. "
+# How the critic reads the images of each object (close_up.shape_pair).
+SHAPE_RULE = ("Compare one object of a construction detail with the drawing it was modelled from. The first image is the whole drawing. In the "
+              "second, the left side is a close-up of the drawing with the part outlined, and the right side is the same object as built, seen "
+              "in section. The outline only says where the part was found and often cuts it short: follow the part's lines past it, to each of "
+              "its ends, using the whole drawing where the close-up stops. Compare form and topology. Neither side is to scale, so never compare "
+              "overall sizes. Proportion within one part counts, so a thin plate is not a thick block; but the left side is line work and the "
+              "right side is filled in, so a plate drawn as two close lines is the same thing as a solid band of that proportion. A gap or "
+              "opening made by another object passing through this part is not a feature of it. Work in three steps. First, from the left side "
+              "alone and before you look at the right, list in drawing_features everything the drawing shows of this part: each fin, leg, foot, "
+              "bend, turn-up, downturn, drip, return, opening and separate piece, one entry each, saying which end or side it is on. Do not list "
+              "what the part is called. Second, tick each one against the right side: built is true only if that feature is there, on that side. "
+              "Third, list in built_features every member of the right side the same way: each leg, bar, plate, wall and end, and any slope or "
+              "taper, and tick each against the drawing. drawn is true only if this part has that member in the drawing: a bar or plate drawn "
+              "there that belongs to another object does not count, and a solid bar joining pieces the drawing leaves apart is not drawn. A close "
+              "resemblance is not a match. Set close_up_shows_part false, with no features, if the left side does not show this part. ")
 MISSING_RULE = ("List in missing_parts every distinct part the drawing shows that no part of the program stands for, labelled or not: go "
                 "over the drawing from one end to the other. A plate, a packer and a fixing are different parts even where they touch, and "
                 "a part merged into its neighbour is missing. The evidence lists what the reading found drawn without a label. "
                 "Parts beyond the section cut are not missing. ")
 
 
-def apply_shape_checks(result, objects):
-    """Turn the critic's per-part shape readings into issues the rest of the system
-    reads. `objects`: what was on the sheet shown to it. A mismatch is an error, so
-    the verdict cannot be pass. An object nobody compared means its shape was not
-    judged, so a pass is held to inconclusive."""
-    shapes = result.pop("shape_checks")
-    for item in shapes:
-        if item["status"] == "mismatch" and item["part"] in objects:
-            result["issues"].append({"id": "shape-mismatch:" + item["part"], "parts": [item["part"]], "severity": "error",
-                                     "reason": f"the drawing shows {item['drawing_shows']}; the model shows {item['model_shows']}",
-                                     "views": ["shape-sheet"], "needs_human": False})
-    judged = {item["part"] for item in shapes if item["status"] in ("match", "mismatch")}
-    missing = [part for part in objects if part not in judged]
-    if missing and result["verdict"] == "pass":
+def shape_differences(item):
+    """What a critic's feature list says differs, in its own words. The tally decides
+    and the critic does not: seen live, one wrote "on solid base" of a section with no
+    base and still called it a match. None when the close-up gave it nothing to judge."""
+    if not item["close_up_shows_part"] or not item["drawing_features"]:
+        return None
+    absent = [feature["feature"] for feature in item["drawing_features"] if not feature["built"]]
+    extras = [feature["feature"] for feature in item["built_features"] if not feature["drawn"]]
+    return ([f"the drawing shows {'; '.join(absent)}, and the built part does not"] if absent else []) + (
+        [f"the built part has {'; '.join(extras)}, which the drawing does not show"] if extras else [])
+
+
+def apply_shape_checks(result, shapes):
+    """Turn the per-object shape readings into issues the rest of the system reads.
+    `shapes`: {part id: a reading, or None if there is none}. A difference is an error,
+    so the verdict cannot be pass. An object nobody could compare has not been judged,
+    so a pass is held to inconclusive."""
+    unjudged = []
+    for part, item in shapes.items():
+        differences = shape_differences(item) if item else None
+        if differences is None:
+            unjudged.append(part)
+        elif differences:
+            result["issues"].append({"id": "shape-mismatch:" + part, "parts": [part], "severity": "error",
+                                     "reason": "; ".join(differences), "views": ["shape-pair"], "needs_human": False})
+    if unjudged and result["verdict"] == "pass":
         result["verdict"] = "inconclusive"
-        result["issues"].append({"id": "shape-unjudged", "parts": missing, "severity": "warning", "views": ["shape-sheet"],
+        result["issues"].append({"id": "shape-unjudged", "parts": unjudged, "severity": "warning", "views": ["shape-pair"],
                                  "reason": "no shape comparison was possible for these objects", "needs_human": True})
+
+
+def critic_evidence(program):
+    """The program as an independent critic reads it: geometry and claims, with none of
+    the words its author wrote about the form. Seen live: a critic given the brief read
+    the brief back as what the drawing shows, and missed what the brief had missed."""
+    def plain(item):
+        return {key: value for key, value in item.items() if key not in ("cad_brief", "note")}
+    return {**program, "parts": [plain(part) for part in program.get("parts", [])],
+            "params": [plain(param) for param in program.get("params", [])]}
 
 
 def apply_missing_parts(result):
@@ -407,22 +436,40 @@ class Tools:
         cropped = close_up.crop(self._figure_image(version), box)
         return self._image(cropped) if cropped else None
 
-    def _shape_sheet(self, version, program):
-        """Each built object beside its close-up, as one image for the critic, or None."""
+    def _shape_pairs(self, version, program):
+        """{part id: image of its close-up beside its section}, for the critic. Any
+        trouble costs the pictures, never the critic."""
         try:
             regions = self._part_regions(version, program)
             image = self._figure_image(version) if regions else None
-            rows = []
+            pairs = {}
             for part in program.parts:
                 binding = version["bindings"].get(part.id, {})
-                if part.shape != "cad" or not binding.get("build_id"):
+                if part.shape != "cad" or not binding.get("build_id") or len(pairs) >= close_up.MOST_PAIRS:
                     continue
                 build = self.repo.get(d.component_builds, binding["build_id"])
                 positions = json.loads(self.repo.artifacts.read(build["artifacts"]["mesh"]))["positions"]
-                rows.append((part.id, close_up.crop(image, regions[part.id]) if part.id in regions else None, positions))
-            return self._image(close_up.shape_sheet(rows)) if rows else None
+                drawn = close_up.crop(image, regions[part.id], mark=True) if part.id in regions else None
+                pairs[part.id] = self._image(close_up.shape_pair(part.id, drawn, positions))
+            return pairs
         except (ValueError, KeyError, OSError):
-            return None
+            return {}
+
+    def _shape_readings(self, version, program, pairs):
+        """{part id: a reading of its form, or None}, one model call an object. Measured
+        on a real run: a shared call named a part's extra base 1 time of 3, and a call
+        of its own 5 of 5, at low effort. Checkpointed on the build, so a solid is judged
+        once however many critics follow; running out of budget leaves it unjudged."""
+        figure = self.repo.get(d.figures, version["figure_id"])["artifact_id"]
+        readings = {}
+        for part, pair in pairs.items():
+            others = [p.id for p in program.parts if p.shape == "cad" and p.id != part]
+            prompt = SHAPE_RULE + f"The object is {part}. The other objects of this detail are {', '.join(others) or 'none'}: what belongs to one of them is not this part."
+            try:
+                readings[part] = self.gateway.json(prompt, [figure, pair], SHAPE_CHECK_SCHEMA, "shape", "shape-" + version["bindings"][part]["build_id"])
+            except (BudgetExceeded, ProviderRejected, ValueError, KeyError):
+                readings[part] = None
+        return readings
 
     def _check_labels(self, read, figure, call_id):
         """Hold the READ's labels against what the drawing says, as far as that can
@@ -469,6 +516,25 @@ class Tools:
             written = self.gateway.json(prompt + "\nThis code was rejected: " + str(error) + "\nRejected code:\n" + written["code"],
                                         images, CAD_SCHEMA, "cad", call_id + "-retry")
         return written["code"], (written.get("envelope_problem") or "").strip()
+
+    def _repairs(self, run):
+        """What this run's own evidence says the agent can still fix: the errors its last
+        critic named, and on its working version every FAIL and every relation or part a
+        measurement could still reach. A covered layer left open is the reviewer's, and an
+        issue that needs a human is not the agent's to fix."""
+        steps = self.repo.list(d.steps, d.steps.c.run_id == run["id"], d.steps.c.tool_name == "critic", order=d.steps.c.n)
+        issues = next((s["output"]["issues"] for s in reversed(steps) if "issues" in (s["output"] or {})), [])
+        named = [issue["id"] for issue in issues if issue.get("severity") == "error" and not issue.get("needs_human")]
+        reports = self.repo.list(d.verifications, d.verifications.c.version_id == run["working_version_id"], order=d.verifications.c.created_at)
+        open_checks = [c["id"] for c in (reports[-1]["checks"] if reports else []) if c["status"] == "FAIL" or (
+            c.get("required") and c["status"] != "PASS" and c["id"].startswith(("assembly-", "anchored-")))]
+        return sorted(set(named + open_checks))
+
+    def _refused_finishes(self, run):
+        """The working version each earlier finish of this run was sent back from."""
+        steps = self.repo.list(d.steps, d.steps.c.run_id == run["id"], d.steps.c.tool_name == "finish", order=d.steps.c.n)
+        return [(s["output"].get("error") or {}).get("working_version_id") for s in steps
+                if ((s["output"] or {}).get("error") or {}).get("code") == "repairs_left"]
 
     def _stage_successor(self, values, builds=None, components=None):
         ident = uid()
@@ -780,22 +846,20 @@ class Tools:
             figure = self.repo.get(d.figures, version["figure_id"])
             program = NativeProgram.model_validate(version["program"])
             read = self.repo.get(d.reads, version["drawing_read_id"])["response"] if version["drawing_read_id"] else {}
-            sheet = self._shape_sheet(version, program)
+            pairs = self._shape_pairs(version, program)
             result = self.gateway.json("Independently compare the source installation drawing with the assembled renders. "
                      "Check dimension attribution, missing parts, layer placement/order and visible geometry. "
                      "Reject generic blocks standing in for recognisable objects, even if all dimension checks pass: each object must show the form the source shows (openings, cavities, bowls, flanges, legs, profiles, supports). A solid box standing in for a shaped object is a fidelity error. "
-                     + slot_brief(version["program"].get("assembly_class")) + RETENTION_RULE + (SHEET_RULE if sheet else NO_SHEET_RULE) + MISSING_RULE +
+                     + slot_brief(version["program"].get("assembly_class")) + RETENTION_RULE + MISSING_RULE +
                      "Return fail for errors; inconclusive if evidence is insufficient. Never approve an empty or unreadable render. "
-                     "Version/evidence: " + canonical({"program": version["program"], **model_checks(report["checks"]),
+                     "Version/evidence: " + canonical({"program": critic_evidence(version["program"]), **model_checks(report["checks"]),
                      "drawn_without_a_label": read.get("unlabelled", []),
                      "views": [{"id": r["id"], "view": r["view"], "tags": r["tags"]} for r in renders]}),
-                     [figure["artifact_id"]] + ([sheet] if sheet else []) + [r["artifact_id"] for r in renders if not r["tags"] or r["view"] == "iso"],
+                     [figure["artifact_id"]] + [r["artifact_id"] for r in renders if not r["tags"] or r["view"] == "iso"],
                      CRITIC_SCHEMA, "critic", call_id)
             if result["verdict"] not in ("pass", "fail", "inconclusive") or not isinstance(result["issues"], list):
                 raise ValueError("invalid critic verdict")
-            if "shape_checks" in result:
-                apply_shape_checks(result, [p.id for p in program.parts if sheet and p.shape == "cad" and
-                                            version["bindings"].get(p.id, {}).get("build_id")])
+            apply_shape_checks(result, self._shape_readings(version, program, pairs))
             if "missing_parts" in result:
                 apply_missing_parts(result)
             if result["verdict"] == "pass" and any(i.get("severity") == "error" for i in result["issues"]):
@@ -841,7 +905,8 @@ class Tools:
                 return staged if "tool_error" in staged else {**staged, "completion": summary}
             return {"result": summary}
         if name == "finish":
-            return {"result": args}
+            return {"result": args, "repairs": self._repairs(run) if args["status"] == "needs_review" and run["working_version_id"] else [],
+                    "refused": self._refused_finishes(run)}
         raise ValueError("tool not implemented")
 
     def _successor(self, con, data, bindings=None):
@@ -948,6 +1013,19 @@ class Tools:
                     errors = ["missing_completion_evidence"]
                 if errors:
                     return {"error": {"code": "not_ready", "conditions": errors}}
+            repairs = data.get("repairs") or []
+            if repairs and not self.stop_reason:
+                # A run may not give up on what it can fix while budget remains. Bounded:
+                # a finish is sent back only so many times, and only if something changed
+                # since the last. Out of budget, it stops and the worker continues it.
+                refused = data["refused"]
+                out_of_cad = run["consumed"].get("cad_calls", 0) >= run["budget"]["cad_calls"]
+                if not repair_room(run) or (out_of_cad and all(item.startswith(("shape-mismatch:", "cad-")) for item in repairs)):
+                    self.stop_reason = "repairs_left"
+                elif len(refused) < REPAIR_REFUSALS and (not refused or refused[-1] != run["working_version_id"]):
+                    return {"error": {"code": "repairs_left", "working_version_id": run["working_version_id"], "repairs": repairs[:16],
+                                      "message": "There is budget left and these can still be fixed, so the run is not over: fix them, "
+                                                 "render and call critic again, then finish."}}
             issues = list(result.get("open_issues", []))
             if result["status"] == "needs_review" and run["working_version_id"]:
                 reports = con.execute(sa.select(d.verifications).where(d.verifications.c.version_id == run["working_version_id"])
@@ -956,7 +1034,7 @@ class Tools:
                             (c.get("required") and c["status"] != "PASS")] if reports else ["missing_verification"])
             used_up = run["consumed"].get("cad_calls", 0) >= run["budget"]["cad_calls"]
             result = {**result, "open_issues": sorted(set(issues)), "version_id": run["working_version_id"], "detail_id": run["detail_id"],
-                      "stop_reason": self.stop_reason or ("budget_exhausted" if used_up else "finished")}
+                      "repairs": repairs, "stop_reason": self.stop_reason or ("budget_exhausted" if used_up else "finished")}
             self.repo._end(con, self.fence.job_id, "succeeded" if result["status"] == "done" else "needs_review", result)
             return result
         return data["result"]

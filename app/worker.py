@@ -19,7 +19,7 @@ from .repository import CUT_SHORT, BudgetExceeded, LostLease, Repository
 AUTO_CONTINUE = int(os.environ.get("SETOUT_AUTO_CONTINUE", "2"))
 CONTINUE_REQUEST = ("Continue where the previous run stopped on its budget. Any empty required slot (a slot-missing "
                     "check) comes first: complete_assembly fills it. Then model the remaining placeholder objects with "
-                    "CAD, then fix the remaining FAILs. Keep everything that already passes.")
+                    "CAD, then fix the remaining FAILs and what the critic named. Keep everything that already passes.")
 
 
 def continue_if_cut_short(repo, job_id, limit=None):
@@ -28,8 +28,9 @@ def continue_if_cut_short(repo, job_id, limit=None):
     The run says why it stopped (stop_reason, recorded when it stopped); this
     never works that out again from what was spent afterwards. Only when the
     run made a new version, that version is still the detail's current one, its
-    checks still block completion (a CAD placeholder, a failed measurement) and
-    the chain hasn't hit its limit. Returns the new job id."""
+    checks still block completion (a CAD placeholder, a failed measurement) or a
+    critic named what can be fixed, and the chain hasn't hit its limit. Returns the
+    new job id."""
     limit = AUTO_CONTINUE if limit is None else limit
     job, run = repo.get(d.jobs, job_id), repo.run(job_id)
     step = int((job["payload"] or {}).get("continuation") or 0)
@@ -40,8 +41,9 @@ def continue_if_cut_short(repo, job_id, limit=None):
     if repo.get(d.details, run["detail_id"])["current_version_id"] != version_id:
         return None
     reports = repo.list(d.verifications, d.verifications.c.version_id == version_id, order=d.verifications.c.created_at)
-    if (job["result"] or {}).get("stop_reason") not in CUT_SHORT or not reports or not any(
-            c["status"] == "FAIL" or (c.get("required") and c["status"] != "PASS") for c in reports[-1]["checks"]):
+    result = job["result"] or {}
+    if result.get("stop_reason") not in CUT_SHORT or not reports or not (result.get("repairs") or any(
+            c["status"] == "FAIL" or (c.get("required") and c["status"] != "PASS") for c in reports[-1]["checks"])):
         return None
     payload = {"detail_id": run["detail_id"], "base_version_id": version_id,
                "requested_changes": CONTINUE_REQUEST, "continuation": step + 1}

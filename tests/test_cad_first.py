@@ -11,7 +11,7 @@ from app import cad_sandbox, database as d
 from app.agent import INSTRUCTIONS
 from app.agent_tools import AUTO_CAD, auto_cad_view
 from app.model_gateway import ModelGateway
-from app.repository import DEFAULT_BUDGET, REVIEW_CALLS
+from app.repository import DEFAULT_BUDGET, REVIEW_CALLS, REVIEW_TAIL
 from app.worker import Worker
 from test_agent_v3 import FakeRenderer, response_json, source_repo  # noqa: F401
 from test_threshold_run import LOCAL, _builder, _read_response, _usage, threshold
@@ -65,7 +65,7 @@ def test_every_object_is_modelled_before_the_agents_next_turn(source_repo, auto_
     job, run = _run(source_repo, model)
     names = [s["tool_name"] for s in _tool_steps(source_repo, run)]
     assert names[:4] == ["read_drawing", "write_program", "model_component", "model_component"]
-    assert model.turns == 3  # read, write, then the turn that finishes: none for either object
+    assert model.turns == 4  # read, write, a finish sent back and the one that ends: none for either object
     built = source_repo.get(d.versions, run["working_version_id"])["bindings"]
     assert all(binding.get("build_id") for binding in built.values()) and set(built) == {"track", "bottom_tray"}
 
@@ -127,7 +127,8 @@ def test_the_harness_stops_at_the_cad_budget_and_the_agent_carries_on(source_rep
     model = Agentic()
     job, run = _run(source_repo, model, budget={"cad_calls": 1})
     assert len([s for s in _tool_steps(source_repo, run) if s["tool_name"] == "model_component"]) == 1
-    assert model.turns == 3  # the agent still got the turn it finished with
+    assert model.turns >= 3  # the agent still got the turn it finished with
+    assert source_repo.get(d.jobs, job["id"])["result"]["summary"] == "stop"  # its own finish, not a budget stop
 
 
 def test_it_can_be_switched_off(source_repo, monkeypatch):
@@ -190,10 +191,11 @@ def test_a_cheap_run_reaches_its_tokens_before_its_calls_stop_it():
     """Seen live: a patching run at 5.4k tokens and 20 s a call stopped on 32 calls with
     half its tokens left. At 48 calls the deadline does not get there first."""
     paid_per_call, seconds_per_call = 5400, 20
-    assert DEFAULT_BUDGET["model_calls"] == 48 and DEFAULT_BUDGET["tokens"] == 320_000
-    assert DEFAULT_BUDGET["model_calls"] * paid_per_call <= DEFAULT_BUDGET["tokens"]
+    agent_calls = DEFAULT_BUDGET["model_calls"] - REVIEW_CALLS
+    assert agent_calls == 47 and DEFAULT_BUDGET["tokens"] == 320_000
+    assert agent_calls * paid_per_call <= DEFAULT_BUDGET["tokens"] - REVIEW_TAIL
     assert DEFAULT_BUDGET["seconds"] >= DEFAULT_BUDGET["model_calls"] * seconds_per_call
-    assert DEFAULT_BUDGET["tool_calls"] > DEFAULT_BUDGET["model_calls"]
+    assert DEFAULT_BUDGET["tool_calls"] > agent_calls
 
 
 def test_a_run_of_nothing_but_cache_hits_still_stops_at_the_hard_limit(source_repo):
@@ -210,8 +212,13 @@ def test_a_run_of_nothing_but_cache_hits_still_stops_at_the_hard_limit(source_re
 
 
 def test_the_review_keeps_room_for_a_late_turn_and_the_close_ups():
-    turn, draft, retry, critic, locate, check = 1, 1, 1, 1, 1, 1
-    assert REVIEW_CALLS >= turn + draft + retry + critic + locate + check - 1  # the last call a turn can spend is the first left
+    turn, draft, retry, critic, locate, check, objects = 1, 1, 1, 1, 1, 1, 7  # seven objects seen
+    assert REVIEW_CALLS >= turn + draft + retry + critic + locate + check + objects
+
+
+def test_the_tail_holds_what_a_final_review_really_costs():
+    """Seen live: 26k for the critic and 5.3k an object, and seven objects."""
+    assert REVIEW_TAIL >= 26_000 + 7 * 5_300
 
 
 def test_the_final_review_stays_inside_the_budget_with_close_ups_to_find(source_repo, monkeypatch):
@@ -225,7 +232,7 @@ def test_the_final_review_stays_inside_the_budget_with_close_ups_to_find(source_
         if purpose == "locate":
             return response_json({"parts": []})
         if purpose == "critic":
-            return response_json({"verdict": "fail", "issues": [], "shape_checks": []})
+            return response_json({"verdict": "fail", "issues": [], "missing_parts": []})
         if purpose is None:
             model.turns += 1
             if model.turns > 2:
@@ -233,5 +240,5 @@ def test_the_final_review_stays_inside_the_budget_with_close_ups_to_find(source_
                                     "arguments": json.dumps({"query": "door"})}], "usage": _usage(100, 0, 10)}
             model.turns -= 1
         return model(payload)
-    job, run = _run(source_repo, respond, budget={"model_calls": 12})
-    assert source_repo.list(d.critics) and run["consumed"]["model_calls"] <= 12
+    job, run = _run(source_repo, respond, budget={"model_calls": 20})
+    assert source_repo.list(d.critics) and run["consumed"]["model_calls"] <= 20

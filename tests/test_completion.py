@@ -309,3 +309,91 @@ def test_reviewer_confirms_inferred_parts_through_the_review_api(client, source_
     scene = client.get(f"/api/versions/{version_id}/scene").json()
     assert scene["version_id"] == version_id and "quality" in scene
     assert {s["id"]: s["provenance"] for s in scene["solids"]}["head"] == "inferred"
+
+
+# ------------------------------------------------------- a slot the section leaves blank
+
+def _no_slab(membrane=None):
+    """A section that draws the layers and leaves the structure under them blank, as
+    a real drawing did: a slab can be blank paper, so nothing printed or drawn names it."""
+    raw = door_program()
+    raw["parts"] = [p for p in raw["parts"] if p["class_id"] != "slab"]
+    raw["relations"] = []
+    raw["parts"][0]["install_after"] = []
+    if membrane:
+        raw["parts"][0].update(shape="sheet", path=membrane, dims=_dims(thickness="memb_t", z0="0", z1="run"))
+    return raw
+
+
+def _ghost(raw):
+    native, _, _ = _prepared(raw)
+    result = completion.archetype_completion(native, ontology.load(), READ)
+    return native, result, next(p for p in result.parts if p.class_id == "slab")
+
+
+def test_a_required_slot_the_section_leaves_blank_is_filled_with_a_ghost():
+    native, result, ghost = _ghost(_no_slab())
+    assert ghost.id == "substrate" and ghost.provenance == "inferred" and ghost.shape == "box" and ghost.role == "substrate"
+    assert ghost.label is None and ghost.inferred_by.endswith(":substrate")
+    assert "substrate" not in {s.slot for s in result.suggestions}
+
+
+def test_the_ghost_sits_under_the_lowest_layer_below_the_threshold():
+    native, result, ghost = _ghost(_no_slab())
+    applied = completion.apply(native.model_dump(mode="json"), result)
+    patched, spec, _ = _prepared(applied, native.model_dump(mode="json"))
+    bounds = _built(spec)["substrate"].bounds()
+    assert bounds[4] == 0  # the membrane's underside
+    assert bounds[0] == -120 and bounds[3] == -10  # under the sill
+    assert bounds[4] - bounds[1] == 110  # its thickness takes the sill's depth, by the class's derive_from
+    assert bounds[2] == 0 and bounds[5] == 900
+
+
+def test_a_step_down_past_the_thresholds_end_does_not_pull_the_ghost_down():
+    """A membrane that runs under a sill and then down a step has two levels. The ghost
+    belongs under the one that runs under most of the threshold."""
+    path = [{"x": "0 - inner", "y": "0"}, {"x": "0 - slab_t / 10", "y": "0"}, {"x": "0 - slab_t / 10", "y": "0 - step"},
+            {"x": "outer", "y": "0 - step"}]
+    native, result, ghost = _ghost(_no_slab(path))
+    param = next(p for p in result.params if p.name == "substrate_y1")
+    assert param.value == -1  # half the 2 mm sheet below its centreline at 0; the run at -100 is past the sill
+    assert param.provenance.value == "assumption" and "placeholder position" in param.note and "no source" in param.note
+
+
+def test_with_no_layer_under_it_the_ghost_starts_at_the_threshold():
+    raw = _no_slab()
+    raw["parts"][0].update(dims=_dims(x0="sill_x0", x1="sill_x0 + memb_t", y0="0", y1="memb_t", z0="0", z1="run"))
+    native, result, ghost = _ghost(raw)
+    assert next(p for p in result.params if p.name == "substrate_y1").value == 2  # the sill's underside
+
+
+def test_a_ghost_slab_is_installed_first_and_owes_no_measurement():
+    native, result, ghost = _ghost(_no_slab())
+    assert ghost.install_after == []
+    applied = completion.apply(native.model_dump(mode="json"), result)
+    patched, spec, _ = _prepared(applied, native.model_dump(mode="json"))
+    from app.verification_v3 import slot_checks, spatial_checks
+    checks = {c["id"]: c for c in slot_checks(patched, READ)}
+    assert "slot-missing:substrate" not in checks
+    assert checks["slot-inferred:substrate"]["status"] == "UNVERIFIED" and not checks["slot-inferred:substrate"]["required"]
+    assert "anchored-substrate" not in {c["id"] for c in spatial_checks(patched, _built(spec))}
+
+
+def test_a_slab_the_drawing_labels_is_never_a_ghost():
+    read = {**READ, "elements": READ["elements"] + [{"label_verbatim": "Concrete slab", "kind": "label", "where": "below", "category": "layer"}]}
+    native, _, _ = _prepared(_no_slab())
+    result = completion.archetype_completion(native, ontology.load(), read)
+    assert not [p for p in result.parts if p.class_id == "slab"]
+    assert next(s for s in result.suggestions if s.slot == "substrate").reason.startswith("the drawing labels 'Concrete slab'")
+
+
+def test_a_program_with_a_slab_gets_no_ghost():
+    native, _, _ = _prepared(door_program())
+    assert not [p for p in completion.archetype_completion(native, ontology.load(), READ).parts if p.class_id == "slab"]
+
+
+def test_the_placement_is_library_data():
+    known = ontology.load()
+    slot = known.assembly("door_threshold").slot("substrate")
+    assert (slot.anchor, slot.position, slot.placement) == ("threshold", "under", "extrude_along_run")
+    assert known.component("slab").dimension("thickness").derive_from == "threshold.depth"

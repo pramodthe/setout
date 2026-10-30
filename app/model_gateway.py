@@ -111,9 +111,9 @@ class ModelGateway:
         content += [{"type": "input_image", "image_url": "artifact:" + ident} for ident in images]
         # Reasoning counts as output: seen live, a critic spent all of 8192 thinking,
         # and a program 30.9k of 32768, one step from coming back empty.
-        limit = {"program": 49152, "cad": 32768, "read": 16384, "critic": 16384}.get(purpose, 8192)
+        limit = {"program": 49152, "cad": 32768, "read": 16384, "critic": 16384, "shape": 16384}.get(purpose, 8192)
         payload = {"model": model or meta_client.default_model(), "max_output_tokens": limit,
-                   "reasoning":{"effort":"low" if purpose in ("read","locate","proof") else "medium"},
+                   "reasoning":{"effort":"low" if purpose in ("read","locate","proof","shape") else "medium"},
                    "input": [{"role": "user", "content": content}],
                    "text": {"format": {"type": "json_schema", "name": purpose,
                                         "schema": schema, "strict": True}}}
