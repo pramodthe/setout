@@ -3,6 +3,7 @@ import {
   INFERRED_OPACITY,
   badgeClass,
   badgeLabel,
+  docSummary,
   framedParts,
   inferredBadge,
   inferredParts,
@@ -13,7 +14,7 @@ import {
   slotsMissing,
   worstProv,
 } from "./provenance";
-import type { CheckResult, Solid } from "./types";
+import type { CheckResult, Figure, Solid } from "./types";
 
 describe("framedParts", () => {
   it("frames what the drawing shows, so a ghost frame cannot shrink the section", () => {
@@ -169,5 +170,22 @@ describe("outcomeText", () => {
     expect(outcomeText("verified")).toBe("verified");
     expect(outcomeText("complete_with_inferred")).toBe("complete, with inferred parts");
     expect(outcomeText("incomplete")).toBe("incomplete");
+  });
+});
+
+describe("docSummary", () => {
+  const figure = (kind: Figure["kind"], dpi: number | null): Figure =>
+    ({ crop_id: "p0_x", page: 0, width: 400, height: 300, kind, dpi });
+
+  it("never calls a rendered page an extracted image", () => {
+    const figures = [figure("embedded_image", null), figure("embedded_image", null), figure("rendered_page", 300)];
+    expect(docSummary({ pages: 3, figures, warnings: [] })).toBe(
+      "3 page(s), 2 extracted image(s), lossless, 1 rendered page(s).");
+    expect(docSummary({ pages: 1, figures: [figures[2]], warnings: [] })).toBe("1 page(s), 1 rendered page(s).");
+  });
+
+  it("says when nothing was found, and passes on the renderer's warnings", () => {
+    expect(docSummary({ pages: 2, figures: [], warnings: ["page 2 could not be rendered: x"] })).toBe(
+      "2 page(s), no figures. page 2 could not be rendered: x");
   });
 });

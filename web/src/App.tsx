@@ -16,7 +16,7 @@ import ViewportView from "./ViewportView";
 import JobPanel from "./JobPanel";
 import type { ViewPreset, Viewport3D } from "./viewport";
 
-import { badgeClass, badgeLabel, partBadge, worstProv } from "./provenance";
+import { badgeClass, badgeLabel, docSummary, partBadge, worstProv } from "./provenance";
 import type { PartOrigin } from "./types";
 
 function Badge({ prov }: { prov: string }): JSX.Element {
@@ -482,8 +482,7 @@ export default function App(): JSX.Element {
             </button>
           </div>
           <div className="step" id="docmeta">
-            {doc &&
-              `${doc.pages} page(s), ${doc.figures.length} embedded figure(s). Crops are extracted embedded figures (lossless).`}
+            {doc && docSummary(doc)}
           </div>
           <h2>2 · Detail variant + crop</h2>
           <div id="variants" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -506,12 +505,12 @@ export default function App(): JSX.Element {
           <div id="crops">
             {!doc && (
               <div className="step">
-                Upload the reference PDF to list its embedded drawing figures.
+                Upload a PDF to list its drawings.
               </div>
             )}
             {doc &&
               doc.figures.length === 0 &&
-              "No embedded figures in this PDF — nothing to select. Vector-only pages are not rasterized in v0."}
+              "No drawings found in this PDF: no embedded figures and no pages of vector line work."}
             {doc?.figures.map((f) => (
               <div
                 key={f.crop_id}
@@ -526,6 +525,7 @@ export default function App(): JSX.Element {
                 />
                 <div className="cap">
                   {f.crop_id} · p{f.page + 1} · {f.width}×{f.height}px
+                  {f.kind === "rendered_page" && ` · rendered at ${f.dpi} dpi`}
                 </div>
               </div>
             ))}

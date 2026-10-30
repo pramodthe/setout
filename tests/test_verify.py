@@ -43,17 +43,14 @@ def test_d4_verdict_pass_no_fail():
     assert by_id["B-contact-subsill"].tolerance == CONTACT_TOL_MM
 
 
-def test_d3_fillet_gap_is_reported_not_hidden():
-    """D3's fillet base (y = -97.5) is at the slip sheet's top; the membrane's
-    top under it is -98.5, a real 1.0 mm gap the old flat 2 mm band hid. Half
-    a 1.5 mm membrane is 0.75 mm, so the check now fails. The seed is what
-    needs correcting (the fillet on the membrane, or the contact declared
-    against the slip sheet it bears on), never the rule."""
+def test_d3_verdict_pass_no_fail():
+    """D3's fillet base (y = -97.5) sits on the slip sheet's top, which runs
+    between it and the membrane (top -98.5), so that is the contact to check."""
     spec = door_sill_d3()
     results = verify_all(spec, build_assembly(spec), spec.source.sha256)
-    assert summarize(results)["failed"] == ["B-contact-fillet"]
+    assert summarize(results)["failed"] == []
     by_id = {r.id: r for r in results}
-    assert by_id["B-contact-fillet"].actual == 1.0 and by_id["B-contact-fillet"].tolerance == 0.75
+    assert by_id["B-contact-fillet"].status == "PASS" and by_id["B-contact-fillet"].actual == 0.0
     assert by_id["B-contact-packer"].status == "PASS" and by_id["B-contact-packer"].tolerance == 0.75
     assert by_id["B-contact-screed"].status == "PASS" and by_id["B-contact-screed"].tolerance == 0.5
     assert by_id["B-contact-frame"].status == "PASS" and by_id["B-contact-frame"].tolerance == CONTACT_TOL_MM
