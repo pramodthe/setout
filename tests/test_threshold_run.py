@@ -17,6 +17,7 @@ from app.native_program import _slot_claimed, anchor_placements, prepare
 from app.program_edits import apply_edits
 from app.program_schema import program_schema
 from app.repository import REVIEW_TAIL, BudgetExceeded, billed_tokens, tokens_left
+from app.v3_api import Revise
 from app.verification_v3 import envelope_problem, slot_checks, spatial_checks
 from app.worker import CONTINUE_REQUEST, Worker, continue_if_cut_short
 from test_agent_v3 import FakeRenderer, response_json, source_repo  # noqa: F401
@@ -610,6 +611,7 @@ def test_a_finish_sent_back_with_nothing_done_stops_and_goes_on_in_a_new_run(sou
     follow = continue_if_cut_short(source_repo, job["id"], limit=2)
     assert source_repo.get(d.jobs, follow)["kind"] == "revise_detail"
     assert source_repo.get(d.jobs, follow)["payload"]["repairs_before"] == final["result"]["repairs"]
+    assert Revise.model_validate(source_repo.get(d.jobs, follow)["payload"]).repairs_before  # the job API takes what the worker writes
 
 
 def test_a_finish_is_sent_back_a_bounded_number_of_times_however_much_changes(source_repo, monkeypatch):
