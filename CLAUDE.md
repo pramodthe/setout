@@ -139,6 +139,14 @@ npm run lint         # oxlint
 python e2e/drive.py [base-url]   # Playwright acceptance pass
 ```
 
+Drawing segmentation (datasets, weights and pages stay under gitignored `data/`):
+
+```sh
+python tools/make_seg_dataset.py --out data/datasets/<name> --drawings 1000 --seed 1   # synthetic dataset
+modal run training/rfdetr_seg.py --dataset <name>   # train, predict, score (spends GPU money)
+python dashboard/build.py [--watch]                 # results page: data/dashboard/index.html
+```
+
 `e2e/drive.py` needs the server running, Playwright, system Google Chrome (macOS
 path is hard-coded) and the reference PDF at `/tmp/conpro_sills.pdf`, which is not
 committed. It drives the upload screen at `#/workbench`. Screenshots go to

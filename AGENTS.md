@@ -86,5 +86,9 @@ need a Modal login (`modal token new`).
 - `tests/`, `e2e/drive.py`: tests, browser acceptance pass
 - `eval/agent_eval.py`, `eval/memory_eval.py`, `eval/v3_objects.py`,
   `eval/v3_smoke.py`: live evaluations and probes (they spend API credits)
+- `app/dxf_ingest.py`, `app/section_cut.py`, `app/synthetic.py`, `synthetic/`,
+  `tools/`: DXF reading, section drawings, synthetic training data
+- `training/`: Modal training jobs and the segmentation scorer (they spend GPU
+  money); `dashboard/`: builds the local results page into `data/dashboard/`
 - `scripts/demo_drawing.py`: draws our own test drawings into `data/demo/`
 - `ncc/`: the original NCC track (Python stdlib only)
