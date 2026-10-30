@@ -91,7 +91,9 @@ If asked to add any of the above, push back and cite this section.
 
 User decision, 29 Oct 2026 (replaces the earlier "no model training" and "no
 self-hosted LLM" cuts). Fine-tuning, CPT, SFT and RL, and self-hosted models are
-in scope, run on the team's own B200 GPUs. Train only on data we own (the
+in scope, run as Modal GPU jobs (`training/`). Use the cheapest GPU that fits
+each job, judged by cost per job rather than price per hour; B200s only when a
+job needs them (user decision, 30 Oct 2026). Train only on data we own (the
 owner's own drawings) or generate (synthetic details from our programs). Never
 train on manufacturer documents or standards text unless their licence allows
 it. Datasets and weights stay out of this public repo. Spec:
