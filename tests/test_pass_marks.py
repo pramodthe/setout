@@ -319,7 +319,20 @@ def _rod_resting_on_a_surface():
     return _rod_case(_box("sheet", 0, 0, 200, 2), _rod("rod", 100, 7))
 
 
+def _part_sunk_into_its_target():
+    """A closed solid set 10 mm into a thick target, so lines along it do share solid."""
+    raw = _parts(("block", "substrate"), ("part", "finish"))
+    return raw, {"block": _box("block", 0, 0, 200, 50), "part": _box("part", 181, 40, 281, 80)}, {}, "part", "block"
+
+
+def _part_sunk_along_the_run():
+    """The same along the sill, the longest axis of any part of an extruded section."""
+    raw = _parts(("block", "substrate"), ("part", "finish"))
+    return raw, {"block": _box("block", 0, 0, 200, 50, z1=1000), "part": _box("part", 50, 40, 150, 80, z1=1000)}, {}, "part", "block"
+
+
 HOSTILE = {"foot on the end of a sheet": _foot_on_end_of_a_sheet, "floating in a bent plate": _floating_in_a_bent_plate,
+           "part sunk into its target": _part_sunk_into_its_target, "part sunk along the run": _part_sunk_along_the_run,
            "beside its target": _beside_its_target, "resting on a surface": _resting_on_a_surface,
            "rod over the end of a sheet": _rod_over_the_end_of_a_sheet, "rod floating": _rod_floating,
            "rod beside its target": _rod_beside_its_target, "rod sunk into its target": _rod_sunk_into_its_target,
@@ -342,7 +355,8 @@ def test_every_kind_is_classified():
 
 @pytest.mark.parametrize("kind", KINDS)
 @pytest.mark.parametrize("case", ["foot on the end of a sheet", "floating in a bent plate", "beside its target",
-                                  "rod over the end of a sheet", "rod floating", "rod beside its target", "rod sunk into its target"])
+                                  "rod over the end of a sheet", "rod floating", "rod beside its target", "rod sunk into its target",
+                                  "part sunk into its target", "part sunk along the run"])
 @pytest.mark.parametrize("declared", DECLARED)
 def test_no_kind_passes_what_is_not_there(case, kind, declared):
     """Renaming a relation, or declaring it differently, must never clear a measurement."""
@@ -557,6 +571,42 @@ def test_a_long_plate_sunk_into_a_slab_is_touching_not_fixed():
     raw, meshes = _fixing(_box("screw", 20, 103, 180, 110), (0, 100, 200, 104))
     check = _checks(raw, meshes)["assembly-0-fixed_to"]
     assert check["status"] == "FAIL" and check["embedded"] == 0
+
+
+@pytest.mark.parametrize("case", ["part sunk into its target", "part sunk along the run"])
+def test_a_part_sunk_into_a_face_shares_solid_and_is_still_no_fixing(case):
+    """Past the contact tolerance a part shares plenty of solid along its length, and
+    without the rule 5 mm into a slab read as a fixing embedded 1,000 mm."""
+    check, _, _ = _verdict(case, "fixed_to", {})
+    assert check["status"] == "FAIL" and check["embedded"] == 0
+
+
+def test_a_fixing_close_to_the_edge_of_what_it_fixes_still_enters_through_its_face():
+    raw, meshes = _fixing(_box("screw", 192, 60, 198, 110, z1=6))
+    check = _checks(raw, meshes)["assembly-0-fixed_to"]
+    assert check["status"] == "PASS" and check["embedded"] == pytest.approx(4)
+
+
+def _two_screws(left, right, length=50):
+    screws = Mesh("screw")
+    _box_tris(screws, left, 60, 47, left + 4, 60 + length, 53)
+    _box_tris(screws, right, 60, 47, right + 4, 60 + length, 53)
+    return screws
+
+
+def test_two_screws_set_wider_apart_than_they_are_long_run_along_their_own_length():
+    """Their box's long side is the air between them, and across that they stand out of
+    a thin plate. Each one still enters through its face."""
+    raw, meshes = _fixing(_two_screws(10, 210), (0, 100, 400, 104))
+    check = _checks(raw, meshes)["assembly-0-fixed_to"]
+    assert check["status"] == "PASS" and check["embedded"] == pytest.approx(4)
+
+
+def test_a_part_holding_two_fixings_must_have_both_in_what_it_fixes():
+    """Seen in a stored run: one screw of a pair stood clear of the angle it was to fix."""
+    raw, meshes = _fixing(_two_screws(10, 210), (100, 100, 400, 104))
+    check = _checks(raw, meshes)["assembly-0-fixed_to"]
+    assert check["status"] == "FAIL" and "lie inside it across its length" in check["reason"]
 
 
 def test_a_line_through_a_shared_edge_is_one_crossing():

@@ -291,9 +291,11 @@ Cross-file contracts. These are not obvious from any single file:
   also hide the target's face. `laps_over` alone may have less, and
   only between two layers by role, running past each other's ends by `LAP_WIDTHS`
   times the thinner one; that bar is ours and rests on very little. `fixed_to` is
-  measured on the two solids along the fixing, and `hosted_in` on the target's solid
-  either side of the part, so resting on a surface fails both. `repeated_along` stays
-  open. A declared `min_coverage` can only ask for more, and a declared axis changes
+  measured on the two solids along the fixing, which enters through a face and so lies
+  inside the target across its length, and `hosted_in` on the target's solid either
+  side of the part, so resting on a surface fails both. Interpenetration itself is not
+  measured, so a part set at least half into a target can still pass `hosted_in`.
+  `repeated_along` stays open. A declared `min_coverage` can only ask for more, and a declared axis changes
   nothing. A covered layer's obligation adds up the real contact of what lies on it,
   whatever the kinds, and a part measured against nothing stays open. A new kind must
   be classified in `tests/test_pass_marks.py`, or its hostile cases fail. Values come

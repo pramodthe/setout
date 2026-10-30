@@ -307,20 +307,35 @@ def relation_problem(relation, measured, low, high, declared, ordering, lap):
     return None
 
 
+def fixing_axis(mesh):
+    """The axis a fixing runs along: where its solid runs longest. Not the long side of
+    its box: two screws in one part can have a box wider than they are long, and that way
+    is mostly air."""
+    a = mesh.bounds()
+    def longest(axis):
+        i, j = [k for k in range(3) if k != axis]
+        points = lines_through(mesh, [a[i], a[j]], [a[i + 3], a[j + 3]], axis, most=6)
+        return max((high - low for hits in line_hits(mesh, axis, points) for low, high in solid_spans(hits)), default=0.)
+    return max(range(3), key=longest)
+
+
 def fixing_depth(program, meshes, relation):
     """(mm of solid a fixing shares with its target along its own length, the mm it
     must beat). Measured on both solids, never on the ends of a span: a part resting on
     a surface shares none of it. The axis is the fixing's own, whatever a relation
-    declares, and the two must overlap by more than the contact tolerance every way."""
+    declares, and the two must overlap by more than the contact tolerance every way.
+    A fixing enters through a face, so across its length it lies inside what it fixes:
+    a part sunk into a face runs along it and stands out of it, however much solid the
+    two share. Seen: 5 mm into a slab read as a fixing embedded 1,000 mm."""
     source, target = meshes[relation.source], meshes[relation.target]
     a, b = source.bounds(), target.bounds()
     tolerances = [pair_tolerance(program, meshes, relation.source, relation.target, k) for k in range(3)]
     overlaps = [min(a[k + 3], b[k + 3]) - max(a[k], b[k]) for k in range(3)]
-    spans = [a[k + 3] - a[k] for k in range(3)]
-    axis = spans.index(max(spans))
-    if any(overlap <= tolerance for overlap, tolerance in zip(overlaps, tolerances)):
-        return 0., tolerances[axis]
+    axis = fixing_axis(source)
     i, j = [k for k in range(3) if k != axis]
+    inside = all(a[k] >= b[k] - tolerances[k] and a[k + 3] <= b[k + 3] + tolerances[k] for k in (i, j))
+    if not inside or any(overlap <= tolerance for overlap, tolerance in zip(overlaps, tolerances)):
+        return 0., tolerances[axis]
     points = lines_through(source, [max(a[k], b[k]) for k in (i, j)], [min(a[k + 3], b[k + 3]) for k in (i, j)], axis)
     depths = [shared_length(solid_spans(first), solid_spans(second))
               for first, second in zip(line_hits(source, axis, points), line_hits(target, axis, points))]
@@ -350,7 +365,8 @@ def solid_relation(ident, relation, program, meshes, ordering):
         depth, needed = fixing_depth(program, meshes, relation)
         measured, ok = dict(embedded=depth, contact=min(depth / needed, 1.) if needed else 0.), depth > needed
         problem = (f"{relation.source} runs {depth:.3g} mm inside {relation.target}, and a fixing must pass into what it fixes by "
-                   f"more than {needed:g} mm, whatever axis is declared. A part resting on or against another is a contact "
+                   f"more than {needed:g} mm and lie inside it across its length, every fixing in the part, whatever axis is "
+                   "declared. A part resting on or against another is a contact "
                    "kind (supported_by, bonded_to, terminates_against), not fixed_to")
     else:
         share = held_share(meshes[relation.source].bounds(), meshes[relation.target])

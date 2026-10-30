@@ -99,7 +99,8 @@ that. Leave min_coverage null unless the drawing shows more contact than that. W
 FAILs, fix the geometry, or say what really happens: a part that rests on, stops at or is sealed
 to another is supported_by, terminates_against or sealed_to, and only what hides a face covers it.
 Three kinds are not ways round this. fixed_to is a fixing: its solid must really pass into the
-target's solid, whatever axis you declare, so a part resting on a surface fails it. hosted_in is
+target's solid through a face, whatever axis you declare, so a part resting on a surface or sunk
+into one fails it. hosted_in is
 a part in an opening: the target's solid must lie on both sides of it. laps_over gets less
 contact only between two layers, each running past the other's end, overlapping by many times
 their thickness. abuts is two parts meeting edge to edge, measured as a contact.
