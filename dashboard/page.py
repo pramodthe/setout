@@ -495,7 +495,7 @@ def history_tip(row):
     if not points:
         return ""
     best_i, best_v = max(points, key=lambda p: (p[1], -p[0]))
-    return (f"Validation AP: pass {points[0][0]} {points[0][1]:.3f}, best {best_v:.3f} at pass {best_i}, "
+    return (f"Validation box AP: pass {points[0][0]} {points[0][1]:.3f}, best {best_v:.3f} at pass {best_i}, "
             f"pass {points[-1][0]} {points[-1][1]:.3f}")
 
 
@@ -504,9 +504,9 @@ def class_table(run, manifest, styles):
     if not rows:
         return f"<p>{NOT_RUN}</p>"
     plan = runs.plan_passes(run.progress, run.config, run.train_summary)
-    val_head = f"Validation AP, pass {plan.best_pass}" if plan.best_pass else "Validation AP"
-    head = tr(th("Class"), th("Test parts", "n"), th("Thin share", "n"), th("Test AP", "n"), th("Test AP50", "n"),
-              th(val_head, "n"), th("Validation AP by pass"))
+    val_head = f"Validation box AP, pass {plan.best_pass}" if plan.best_pass else "Validation box AP"
+    head = tr(th("Class"), th("Test parts", "n"), th("Thin share", "n"), th("Test mask AP", "n"), th("Test mask AP50", "n"),
+              th(val_head, "n"), th("Validation box AP by pass"))
     body = []
     blank = "no test parts" if run.metrics else NOT_RUN  # scored, and this class has nothing to score
     for row in rows:
@@ -532,7 +532,7 @@ def class_history_table(run):
         return ""
     head = tr(th("Class"), *[th(i, "n") for i in range(1, len(passes) + 1)])
     rows = [tr(td(esc(name), "name"), *[td(num(runs.class_ap(p, name)), "n") for p in passes]) for name in names]
-    return f"<details><summary>Table of validation AP per class and pass</summary>{table(head, rows)}</details>"
+    return f"<details><summary>Table of validation box AP per class and pass</summary>{table(head, rows)}</details>"
 
 
 def section_classes(models, manifests, styles):

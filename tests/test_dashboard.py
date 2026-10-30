@@ -392,7 +392,8 @@ def test_validation_numbers_never_land_in_the_test_sections(dirs):
     write_run(models, RUN, progress=[progress_line(i, per_class=0.777) for i in range(2)], config=CONFIG)
     _, html = built(dirs)
     assert "0.777" in section(html, "classes")
-    assert "Validation AP" in section(html, "classes")
+    # The log has box AP per class and mask AP only overall, so the table says which is which.
+    assert "Validation box AP" in section(html, "classes") and "Test mask AP" in section(html, "classes")
     assert "0.777" not in section(html, "before-after") + section(html, "thin")
 
 
