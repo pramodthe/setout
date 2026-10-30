@@ -300,8 +300,10 @@ Cross-file contracts. These are not obvious from any single file:
   from measured runs; never change them to clear a check.
 - **A drawing is looked at up close, never measured** (`app/close_up.py`). Before an
   object is modelled, two model calls place it and it is cut from the full-resolution
-  figure; if they disagree the writer gets the whole drawing. The crop is shape and
-  topology only. Each object's form is then read in a low-effort call of its own, with
+  figure; if they disagree the writer gets the whole drawing. A part narrower than
+  `SMALL_SIDE` gets a third call on an enlarged piece around where they looked, since
+  both can be 1 to 2% of the sheet out, and if it is not there it gets no close-up. The
+  crop is shape and topology only. Each object's form is then read in a low-effort call of its own, with
   its close-up beside its built section (`Tools._shape_readings`): a reader lists the
   drawing's features, ticks them, lists the built members and ticks those, and code
   decides from the ticks. It is never shown the author's brief. A difference, or a part

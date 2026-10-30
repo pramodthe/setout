@@ -422,9 +422,10 @@ class Tools:
         return close_up.upright(self.repo.artifacts.read(figure["artifact_id"]), read.get("rotation_deg", 0))
 
     def _part_regions(self, version, program):
-        """{part id: box} for the objects two model calls agree on (app/close_up.py).
-        Checkpointed by the parts they were asked about, so CAD and the critic share
-        them. Anything that goes wrong here costs a close-up, never the part."""
+        """{part id: box} for the objects located (app/close_up.py): two model calls on
+        the whole figure, and a closer look at the small ones. Checkpointed by the parts
+        they were asked about, so CAD and the critic share them. Anything that goes wrong
+        here costs a close-up, never the part."""
         parts = [{"id": p.id, "description": p.cad_brief or p.type, "printed_label": p.label}
                  for p in program.parts if p.shape == "cad"]
         if not parts or not switched_on("SETOUT_CLOSE_UP"):
@@ -439,9 +440,30 @@ class Tools:
                 return {}
             checked = self.gateway.json(close_up.CHECK_PROMPT + listing, [self._image(close_up.boxes_image(image, first))],
                                         close_up.CHECK_SCHEMA, "locate", "locate-check-" + key)
-            return close_up.settle(first, checked)
         except (BudgetExceeded, ProviderRejected, ValueError, KeyError, OSError):
             return {}
+        return self._closer_look(image, parts, key, close_up.looked_at(first, checked), close_up.settle(first, checked))
+
+    def _closer_look(self, image, parts, key, places, regions):
+        """Place each small part again on an enlarged piece around where the two calls
+        put it, in a call of its own that does not see their boxes. If it is not there it
+        gets no close-up. A call that fails leaves what the two calls settled on."""
+        for part in parts:
+            ident = part["id"]
+            piece = close_up.window(image.size, places[ident]) if ident in places else None
+            if piece is None:
+                continue
+            try:
+                answer = self.gateway.json(close_up.ZOOM_PROMPT + canonical(part), [self._image(close_up.zoom_image(image, piece))],
+                                           close_up.ZOOM_SCHEMA, "zoom", f"locate-zoom-{key}-{ident}")
+            except (BudgetExceeded, ProviderRejected, ValueError, KeyError, OSError):
+                continue
+            box = close_up.on_figure(image.size, piece, answer)
+            if box:
+                regions[ident] = box
+            else:
+                regions.pop(ident, None)
+        return regions
 
     def _close_up(self, version, program, part):
         """The artifact id of an enlarged crop of this part, or None."""

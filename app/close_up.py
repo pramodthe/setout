@@ -2,8 +2,8 @@
 
 A model sees a drawing shrunk to fit, so a small part is a few pixels of what it
 reads. Before a part is modelled it is cut out of the full-resolution figure and
-enlarged. Finding it takes two model calls. Measured 30 Oct on a real section,
-against boxes marked by hand:
+enlarged. Finding it takes two model calls, and a small part a third. Measured on a
+real section, 30 Oct:
 
 - SAM found nothing on line work: 0 of 17 prompts.
 - One call on the bare image put small parts in the wrong place at a stated
@@ -16,6 +16,16 @@ against boxes marked by hand:
 So a box is used when the second call accepts it, or corrects it to the same spot.
 A correction that moves it elsewhere means the two calls disagree, and the writer
 gets the whole drawing instead: a missing close-up costs little, a wrong one misleads.
+
+That is not enough where objects are small on the sheet. Measured 31 Oct on a synthetic
+section with known boxes: both calls read the sheet 1 to 2% out, which is three widths
+of a 17 px rod, and the second passed a box on the empty leader beside it. So a part
+whose short side is under a fifth of the sheet gets a third call, on an enlarged piece
+around everywhere the two put it, which does not see their boxes: it placed that rod
+to within 3 units 3 times of 3. Against known or hand-marked boxes, over 22 placements
+on two drawings: right 9 to 16, wrong 7 to 6, none 6 to 0. A large part keeps its box:
+the two calls held it, and the third boxed a piece of it. That bar was chosen from
+those 22, only 2 of them over it.
 
 The crop shows shape and topology and nothing else. Drawings are mostly not to
 scale, so no size is ever read from it: dimensions stay named values.
@@ -33,6 +43,10 @@ MARGIN = 0.25           # of the box's longer side on every edge: a long thin bo
 MIN_MARGIN = 0.025      # of the figure's longer side: a tiny part keeps its neighbours
 MIN_AGREEMENT = 0.5     # share of the smaller box inside the larger, for a corrected box to count as the same spot
 MAX_CROP_SHARE = 0.6    # a crop this much of the figure is the figure: it gains nothing
+SMALL_SIDE = 200        # thousandths: a part narrower than this on the sheet gets a closer look (see above)
+ZOOM_ROOM = 0.05        # of the figure's longer side, around where the two calls looked: they can be 2% out
+ZOOM_PIXELS = 1_000_000 # about 1.3k tokens: a part's closer look needs no more
+MIN_ZOOM = 1.5          # a window that cannot be enlarged this much gains nothing, and its box stands
 PROOF_ENLARGE = 3.0     # labels read better larger, and the figure needs no more than this
 # The critic's picture of one object: its close-up beside its section, about a megapixel
 # and so about 1.3k tokens. Seen on a real run: seven objects on one sheet shrank each crop
@@ -50,6 +64,9 @@ CHECK_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["p
                                "properties": {"id": {"type": "string"}, **_BOX, "verdict": {
                                    "type": "string", "enum": ["holds_whole_part", "corrected", "cannot_tell"]}}}}}}
 
+ZOOM_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["found", *_BOX],
+               "properties": {"found": {"type": "boolean"}, **_BOX}}
+
 LOCATE_PROMPT = (
     "Locate each listed part on this construction drawing, so that we can cut a close-up of it. A printed label is joined "
     "to its part by a leader line: follow the leader to where it ends, and box the part it touches, not the words. Box the whole "
@@ -63,6 +80,15 @@ CHECK_PROMPT = (
     "and the part is really the one described. If a box is right, answer holds_whole_part. If it is on the wrong thing or cuts the part "
     "off, answer corrected and give the right box, read from the grid (red x along the top, blue y down the side, 0 to 1000). If you "
     "cannot tell where the part is, answer cannot_tell. Parts: ")
+
+
+ZOOM_PROMPT = (
+    "This is an enlarged piece of a construction drawing. Box one part in it, the one described below, so that we can outline it. "
+    "A printed label is joined to its part by a leader line: a leader ends on its part, and the line itself is not the part. Box "
+    "the whole part from end to end, every bend, leg and fin, and nothing of what is next to it. If it runs off the edge of this "
+    "piece, box what is here. A thin grid is drawn over the image: red numbers along the top are x, blue numbers down the side are "
+    "y, from 0 to 1000 as fractions of this image. Read the coordinates off the grid. If this piece does not show the part, set "
+    "found=false. Part: ")
 
 
 def upright(data: bytes, rotation_deg: int = 0) -> Image.Image:
@@ -168,6 +194,49 @@ def settle(first: dict, checked: dict) -> dict:
         elif verdict == "corrected" and _valid(box) and agreement(before, box) >= MIN_AGREEMENT:
             settled[ident] = box
     return settled
+
+
+def looked_at(first: dict, checked: dict) -> dict:
+    """{part id: the box around everywhere the two calls put it}."""
+    places = {ident: [box] for ident, box in first.items()}
+    for item in checked["parts"]:
+        if item["id"] in places and item["verdict"] == "corrected" and _valid(as_box(item)):
+            places[item["id"]].append(as_box(item))
+    return {ident: [min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes)]
+            for ident, boxes in places.items()}
+
+
+def window(size: tuple[int, int], box) -> list[int] | None:
+    """The piece of a figure to look at closer, in pixels; None if the part is large
+    enough for the two calls, or it would gain nothing."""
+    if min(box[2] - box[0], box[3] - box[1]) >= SMALL_SIDE:
+        return None
+    width, height = size
+    room = ZOOM_ROOM * max(width, height)
+    left, top = max(0, box[0] * width / 1000 - room), max(0, box[1] * height / 1000 - room)
+    right, bottom = min(width, box[2] * width / 1000 + room), min(height, box[3] * height / 1000 + room)
+    return [round(left), round(top), round(right), round(bottom)] if _zoom((right - left) * (bottom - top)) >= MIN_ZOOM else None
+
+
+def _zoom(pixels: float) -> float:
+    return min(MAX_ENLARGE, (ZOOM_PIXELS / pixels) ** 0.5)
+
+
+def zoom_image(image: Image.Image, piece) -> bytes:
+    """A piece of the figure, enlarged, with a grid of its own."""
+    region = image.crop(tuple(piece))
+    return grid_image(_sized(region, _zoom(region.width * region.height)))
+
+
+def on_figure(size: tuple[int, int], piece, answer: dict) -> list[float] | None:
+    """A box read on a piece's grid, as a box on the figure's; None if there is none."""
+    box = as_box(answer)
+    if not answer["found"] or not _valid(box):
+        return None
+    left, top, right, bottom = piece
+    across, down = (right - left) / size[0], (bottom - top) / size[1]
+    return [round(left * 1000 / size[0] + box[0] * across, 1), round(top * 1000 / size[1] + box[1] * down, 1),
+            round(left * 1000 / size[0] + box[2] * across, 1), round(top * 1000 / size[1] + box[3] * down, 1)]
 
 
 def crop(image: Image.Image, box, margin=MARGIN, mark=False) -> bytes | None:

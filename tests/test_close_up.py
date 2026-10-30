@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw
 from app import agent_tools, close_up, database as d
 from app.agent_tools import CAD_SCHEMA, CRITIC_SCHEMA, Tools, apply_shape_checks, model_view
 from app.model_gateway import ModelGateway
+from app.native_program import NativeProgram
 from test_agent_v3 import FakeRenderer, response_json, source_repo  # noqa: F401
 from test_threshold_run import LOCAL, _builder, _claim, _read_response, threshold
 
@@ -131,16 +132,66 @@ def test_a_box_that_cannot_exist_is_dropped(box):
 
 def test_the_prompts_never_ask_for_a_size():
     """The owner's drawings are mostly NTS: the grid places a part, it measures nothing."""
-    for text in (close_up.LOCATE_PROMPT, close_up.CHECK_PROMPT):
+    for text in (close_up.LOCATE_PROMPT, close_up.CHECK_PROMPT, close_up.ZOOM_PROMPT):
         assert "mm" not in text.lower().split() and "scale" not in text.lower()
+
+
+# ------------------------------------------------------------------ a closer look
+
+def test_a_closer_look_goes_where_both_calls_looked():
+    first = {"a": [100, 100, 200, 200], "b": [300, 300, 400, 400], "c": [500, 500, 600, 600]}
+    places = close_up.looked_at(first, _checked(a=("corrected", (150, 150, 400, 300)), b=("cannot_tell",), c=("corrected", (0, 0, 1200, 90))))
+    assert places == {"a": [100, 100, 400, 300], "b": [300, 300, 400, 400], "c": [500, 500, 600, 600]}
+
+
+def test_a_window_reaches_a_part_the_two_calls_placed_beside_it():
+    """Our own numbers, the shape of a live miss: a part 8 thousandths wide, boxed 17 to its right."""
+    size, placed, part = (2400, 1000), [661, 226, 675, 245], (644, 231, 652, 247)
+    piece = close_up.window(size, placed)
+    assert piece[0] <= part[0] * 2.4 and piece[2] >= part[2] * 2.4 and piece[1] <= part[1] and piece[3] >= part[3]
+
+
+def test_a_window_stays_on_the_figure():
+    assert close_up.window((1000, 1000), [0, 0, 50, 50])[:2] == [0, 0]
+    assert close_up.window((1000, 1000), [950, 950, 1000, 1000])[2:] == [1000, 1000]
+
+
+def test_a_part_a_fifth_of_the_sheet_keeps_the_box_the_two_calls_gave():
+    """Measured: both held a large part, and a closer look boxed a piece of it."""
+    assert close_up.window((1000, 1000), [100, 100, 400, 299]) is not None
+    assert close_up.window((1000, 1000), [100, 100, 400, 300]) is None
+
+
+def test_a_window_that_could_not_be_enlarged_gains_nothing():
+    assert close_up.window((800, 800), [100, 100, 900, 150]) is not None  # a third of a megapixel
+    assert close_up.window((4000, 4000), [100, 100, 900, 150]) is None
+
+
+def test_a_closer_look_is_enlarged_and_carries_a_grid_of_its_own():
+    image = Image.new("RGB", (2000, 1000), "white")
+    data = close_up.zoom_image(image, [100, 100, 300, 200])
+    with Image.open(io.BytesIO(data)) as shown:
+        assert shown.size == (1414, 707)  # about a megapixel
+        assert len(shown.convert("RGB").getcolors(1 << 16)) > 1  # the grid, on a blank sheet
+
+
+def test_a_box_read_on_a_piece_goes_back_onto_the_figure():
+    box = close_up.on_figure((1000, 500), [100, 50, 300, 150], {"found": True, "x0": 500, "y0": 0, "x1": 1000, "y1": 500})
+    assert box == [200.0, 100.0, 300.0, 200.0]
+
+
+@pytest.mark.parametrize("answer", [{"found": False, "x0": 1, "y0": 1, "x1": 9, "y1": 9}, {"found": True, "x0": 9, "y0": 1, "x1": 1, "y1": 9}])
+def test_a_closer_look_with_no_box_has_none_to_give(answer):
+    assert close_up.on_figure((1000, 500), [100, 50, 300, 150], answer) is None
 
 
 # ------------------------------------------------------------------ the writer
 
 class Located:
     """A model that places the two objects, then writes their CAD."""
-    def __init__(self, check=None, located=None, fail=None, reading=None, missing=()):
+    def __init__(self, check=None, located=None, fail=None, reading=None, missing=(), zoomed=None):
         self.check, self.located, self.fail, self.missing = check, located, fail, list(missing)
+        self.zoomed = zoomed or {"found": True, "x0": 400, "y0": 400, "x1": 600, "y1": 600}
         self.reading = reading or (lambda prompt: _shape("match"))
         self.calls, self.payloads = [], {}
 
@@ -159,6 +210,12 @@ class Located:
             if second:
                 return response_json(self.check or _checked(**{p: ("holds_whole_part",) for p in PARTS}))
             return response_json(self.located or _located(track=(300, 300, 500, 500), bottom_tray=(200, 500, 800, 540)))
+        if purpose == "zoom":
+            self.calls.append("zoom")
+            self.payloads.setdefault("zoom", []).append(payload)
+            if self.fail == "zoom":
+                return {"output": [], "status": "incomplete", "usage": {"input_tokens": 1, "output_tokens": 1}}
+            return response_json(self.zoomed)
         if purpose == "cad":
             self.calls.append("cad")
             self.payloads.setdefault("cad", []).append(payload)
@@ -213,7 +270,7 @@ def test_the_two_locating_calls_happen_once_for_all_the_parts(source_repo, close
     job, tools, written = _tools(source_repo, model)
     first = tools.run("m1", "model_component", {"version_id": written["version_id"], "part_key": "track", "brief": "x"})
     tools.run("m2", "model_component", {"version_id": first["version_id"], "part_key": "bottom_tray", "brief": "y"})
-    assert model.calls == ["locate", "check", "cad", "cad"]
+    assert model.calls == ["locate", "check", "zoom", "cad", "cad"]  # the thin tray alone gets a closer look
     listing = _text(model.payloads["locate"][0])
     assert "Door bottom track" in listing and "bottom_tray" in listing
     assert len(_images(model.payloads["check"][0])) == 1  # the boxes drawn on the figure
@@ -233,6 +290,55 @@ def test_a_locating_call_that_comes_back_empty_costs_the_close_up_not_the_part(s
     job, tools, written = _tools(source_repo, model)
     result = tools.run("m", "model_component", {"version_id": written["version_id"], "part_key": "track", "brief": "x"})
     assert result.get("component_id") and len(_images(model.payloads["cad"][0])) == 1
+
+
+SMALL = dict(track=(300, 300, 340, 340), bottom_tray=(200, 500, 800, 540))
+
+
+def _regions(model, repo):
+    job, tools, written = _tools(repo, model)
+    version = repo.get(d.versions, written["version_id"])
+    return tools._part_regions(version, NativeProgram.model_validate(version["program"]))
+
+
+def test_a_small_part_is_placed_by_its_closer_look_not_by_the_boxes_before(source_repo, close_ups):
+    """Seen live: both calls passed a box on the empty leader beside the part."""
+    model = Located(located=_located(**SMALL))
+    regions = _regions(model, source_repo)
+    assert model.calls.count("zoom") == 2 and regions["track"] != [300, 300, 340, 340]
+    assert "track" in _text(model.payloads["zoom"][0]) and len(_images(model.payloads["zoom"][0])) == 1
+    assert model.payloads["zoom"][0]["reasoning"]["effort"] == "low"  # a box needs no deep thought, and there is one per part
+
+
+def test_where_the_two_calls_disagree_a_closer_look_can_still_place_the_part(source_repo, close_ups):
+    model = Located(located=_located(**SMALL), check=_checked(track=("corrected", (360, 300, 400, 340)), bottom_tray=("cannot_tell",)))
+    regions = _regions(model, source_repo)
+    assert set(regions) == {"track", "bottom_tray"}  # seen live: no close-up for either
+
+
+def test_a_part_a_closer_look_cannot_find_gets_no_close_up(source_repo, close_ups):
+    model = Located(located=_located(**SMALL), zoomed={"found": False, "x0": 0, "y0": 0, "x1": 1, "y1": 1})
+    assert _regions(model, source_repo) == {}
+
+
+def test_a_failed_closer_look_leaves_what_the_two_calls_settled(source_repo, close_ups):
+    model = Located(located=_located(**SMALL), fail="zoom")
+    assert _regions(model, source_repo) == {"track": [300, 300, 340, 340], "bottom_tray": [200, 500, 800, 540]}
+
+
+def test_a_large_part_is_not_looked_at_closer(source_repo, close_ups):
+    model = Located(located=_located(track=(100, 100, 600, 600), bottom_tray=(100, 100, 900, 900)))
+    regions = _regions(model, source_repo)
+    assert "zoom" not in model.calls and regions["track"] == [100, 100, 600, 600]
+
+
+def test_a_closer_look_is_spent_once_however_often_it_is_asked_for(source_repo, close_ups):
+    model = Located(located=_located(**SMALL))
+    job, tools, written = _tools(source_repo, model)
+    version = source_repo.get(d.versions, written["version_id"])
+    program = NativeProgram.model_validate(version["program"])
+    assert tools._part_regions(version, program) == tools._part_regions(version, program)
+    assert model.calls.count("zoom") == 2
 
 
 def test_when_nothing_is_found_the_check_call_is_not_spent(source_repo, close_ups):
