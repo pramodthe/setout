@@ -2,7 +2,7 @@
    rules for inferred parts: how they are badged, how faint they render, and
    what the verification outcome tier may say about them. */
 
-import type { Outcome, PartOrigin, Scene } from "./types";
+import type { Doc, Outcome, PartOrigin, Scene } from "./types";
 
 export const PROV_CLASS: Record<string, string> = {
   drawing: "b-draw",
@@ -100,4 +100,16 @@ export function outcomeOf(scene: Graded): Outcome | null {
   if (slotsMissing(scene).length) return "incomplete";
   if (stated === "verified" && inferredParts(scene).length) return "complete_with_inferred";
   return stated;
+}
+
+/** What an upload gave, keeping extracted images and rendered pages apart:
+    one is the PDF's own pixels, the other is our rasterisation of a page. */
+export function docSummary(doc: Pick<Doc, "pages" | "figures" | "warnings">): string {
+  const rendered = doc.figures.filter((f) => f.kind === "rendered_page").length;
+  const extracted = doc.figures.length - rendered;
+  const found = [
+    ...(extracted ? [`${extracted} extracted image(s), lossless`] : []),
+    ...(rendered ? [`${rendered} rendered page(s)`] : []),
+  ];
+  return [`${doc.pages} page(s), ${found.join(", ") || "no figures"}.`, ...doc.warnings].join(" ");
 }
