@@ -171,7 +171,7 @@ old file library (`var/library/*.json`) is imported once at startup
 (`versioning.import_library`); a seed imported earlier never shadows its code.
 
 ```
-POST /api/documents  -> app/store.py: sha256, embedded raster figures (pypdf+pillow) -> var/docs/{id}/
+POST /api/documents  -> app/store.py: sha256, embedded images (pypdf+pillow) or rendered pages (pypdfium2) -> var/docs/{id}/
 GET/PATCH /api/specs -> seeds (PATCH only) or the detail's current database version
 POST /api/builds     -> build_assembly (geometry.py) -> verify_all (verify.py), or a version's v3 verification
                         -> var/builds/{id}/{spec.json, scene.json, model.glb, report.json | error.txt}
@@ -212,6 +212,12 @@ The older routes stay for the UI and map onto jobs: `POST /api/generate`,
 
 Cross-file contracts. These are not obvious from any single file:
 
+- **Figures come two ways** (`store._plan_page`): `embedded_image` is the PDF's
+  own pixels, `rendered_page` is PDFium's rasterisation at the `dpi` it records.
+  Downstream both are plain figure files, sent to the model byte for byte. `kind`
+  and `dpi` live in the document record, not the v3 `figures` table, where only
+  the crop id `p<page>_rendered` marks a rendering. PDFium is not thread-safe:
+  every call holds `store._PDFIUM`.
 - **Gates are the honesty boundary** (`generate.gate`, run inside
   `native_program.prepare` on every write and patch). A `drawing` param survives
   only if its quote matches a READ dimension and the number appears in the quote;
