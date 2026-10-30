@@ -1,0 +1,32 @@
+id: door_leaf
+name: Door leaf
+status: draft
+definition: The moving panel of a door, hung in the frame and closing against the sill and the stops.
+function: operation
+role: object
+shape_hint: cad
+# A flush leaf is a block. A panelled or glazed leaf is shaped: the author
+# changes the form when the drawing shows one.
+form: block
+relations_allowed: [hosted_in, sealed_to, abuts, installed_before]
+dimension_slots:
+  - name: height
+    unit: mm
+    typical_min: 1980
+    typical_max: 2040
+    source: https://archipro.com.au/article/standard-door-sizes-australia
+    derive_from: null
+  - name: width
+    unit: mm
+    typical_min: 820
+    typical_max: 920
+    source: https://archipro.com.au/article/standard-door-sizes-australia
+    derive_from: null
+  - name: thickness
+    unit: mm
+    typical_min: 35
+    typical_max: 45
+    source: https://archipro.com.au/article/standard-door-sizes-australia
+    derive_from: null
+drawing_appearance: {}
+aliases: [leaf, door leaf, door, door panel, panel, sliding door, hinged door]

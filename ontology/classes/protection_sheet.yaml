@@ -1,0 +1,18 @@
+id: protection_sheet
+name: Protection sheet
+status: draft
+definition: A thin sheet laid over a membrane to protect it from damage or to let the layer above move independently of it.
+function: protection
+role: covered_layer
+shape_hint: sheet
+form: null
+relations_allowed: [covers, laps_over, terminates_against, installed_before]
+dimension_slots:
+  - name: thickness
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+drawing_appearance: {}
+aliases: [protection sheet, membrane protection sheet, slip sheet, slip/protection sheet, protection board]

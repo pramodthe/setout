@@ -246,3 +246,17 @@
 
 /* a card whose detail an AI run is working on */
 .badge.b-gen{background:#173a5e;color:#cfe0f5;border-color:var(--accent)}
+
+/* inferred parts (filled in by a model or an archetype slot, not read from
+   the drawing) and the verification outcome tier */
+.badge.b-inferred{background:#352a4f;color:#d6c2ff;outline:1px dashed #8d74cc;outline-offset:-1px}
+.outcome{font-weight:600}
+.o-verified{color:var(--ok)}
+.o-complete_with_inferred{color:#c9adff}
+.o-incomplete{color:var(--bad)}
+.inf{display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px;
+  border:1px dashed var(--line);border-radius:8px;padding:6px 8px;background:#121823}
+.inf .id{cursor:pointer;font-weight:600}
+.inf .badge{margin-left:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.inf button{padding:3px 9px;font-size:12px;margin-left:auto}
+.ev .kv .badge{margin-left:0}

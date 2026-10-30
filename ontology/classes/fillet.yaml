@@ -1,0 +1,18 @@
+id: fillet
+name: Fillet or bond breaker
+status: draft
+definition: A small cove or strip at an internal corner that eases the membrane round the corner or stops it bonding there, so it can stretch.
+function: movement_joint
+role: covered_layer
+shape_hint: fillet
+form: null
+relations_allowed: [bonded_to, supported_by, terminates_against, installed_before]
+dimension_slots:
+  - name: leg
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+drawing_appearance: {}
+aliases: [fillet, bond breaker, fillet or bond breaker, cove, bond breaker tape]

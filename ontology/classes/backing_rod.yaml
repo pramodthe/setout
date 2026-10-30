@@ -1,0 +1,18 @@
+id: backing_rod
+name: Backing rod
+status: draft
+definition: A round foam rod pushed into a joint to set the depth of the sealant over it.
+function: movement_joint
+role: object
+shape_hint: cad
+form: shaped
+relations_allowed: [supported_by, abuts, installed_before]
+dimension_slots:
+  - name: diameter
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+drawing_appearance: {}
+aliases: [backing rod, backer rod, foam rod, backing rod and sealant]

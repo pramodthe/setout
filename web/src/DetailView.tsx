@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
 import { api } from "./api";
 import Guide from "./Guide";
-import { badgeClass, badgeLabel, worstProv } from "./provenance";
+import { badgeClass, badgeLabel, inferredParts, outcomeOf, outcomeText, partBadge, slotsMissing, worstProv } from "./provenance";
 import ReviewPanel from "./ReviewPanel";
 import type { GuideAction, Region, Scene } from "./types";
 import type { ViewPreset, Viewport3D } from "./viewport";
@@ -123,6 +123,12 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
     {},
   );
   const situation = (scene?.context.situation as string[] | undefined) || [];
+  /* The verifier's outcome tier and the parts it (or the scene) marks as
+     inferred: filled in by a model or archetype, never read from the drawing. */
+  const outcome = scene ? outcomeOf(scene) : null;
+  const inferred = scene ? inferredParts(scene) : [];
+  const missing = scene ? slotsMissing(scene) : [];
+  const selBadge = sel ? partBadge(sel) : null;
   const isAI = !!scene?.origin.startsWith("ai-generated") || scene?.context.program_version === "3.0";
   const regions = (scene?.context.drawing_regions as Record<string, Region> | undefined) || {};
   const nLocated = Object.keys(regions).length;
@@ -192,6 +198,7 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
   const hud = sel ? (
     <div id="hud">
       <div className="t">{labelText(sel.id, sel.source_label)}</div>
+      {selBadge && <div className="n">{selBadge.text}</div>}
       <div className="n">{sel.note}</div>
     </div>
   ) : null;
@@ -208,6 +215,18 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
         </div>
         <span className="vsum">
           {counts.PASS || 0} pass · {counts.FAIL || 0} fail · {counts.UNVERIFIED || 0} unverified
+          {inferred.length > 0 && ` · ${inferred.length} inferred`}
+          {outcome && (
+            <>
+              {" · "}
+              <span
+                className={`outcome o-${outcome}`}
+                title={missing.length ? `required slot(s) empty: ${missing.join(", ")}` : undefined}
+              >
+                {outcomeText(outcome)}
+              </span>
+            </>
+          )}
         </span>
         {isAI && !pub && !historyVersion && (
           <button
@@ -231,15 +250,23 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
           {order
             .map((id) => solids.find((s) => s.id === id))
             .filter((s): s is NonNullable<typeof s> => !!s && s.tri_count > 0)
-            .map((s, i) => (
-              <div key={s.id} className={"comp" + (s.id === selected ? " sel" : "")} onClick={() => focus(s.id)}>
-                <span className="step">{i + 1}</span>
-                <span className="nm">{labelText(s.id, s.source_label)}</span>
-                <span className={badgeClass(worstProv(s.params.map((p) => p.provenance)))}>
-                  {badgeLabel(worstProv(s.params.map((p) => p.provenance)))}
-                </span>
-              </div>
-            ))}
+            .map((s, i) => {
+              const pb = partBadge(s); // what the part is; the second badge is where its values come from
+              return (
+                <div key={s.id} className={"comp" + (s.id === selected ? " sel" : "")} onClick={() => focus(s.id)}>
+                  <span className="step">{i + 1}</span>
+                  <span className="nm">{labelText(s.id, s.source_label)}</span>
+                  {pb && (
+                    <span className={pb.cls} title={pb.text}>
+                      {pb.short}
+                    </span>
+                  )}
+                  <span className={badgeClass(worstProv(s.params.map((p) => p.provenance)))}>
+                    {badgeLabel(worstProv(s.params.map((p) => p.provenance)))}
+                  </span>
+                </div>
+              );
+            })}
           {sel && (
             <div className="ev">
               <h2>Evidence · {sel.id}</h2>
@@ -247,6 +274,15 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
                 drawing label: {sel.source_label ? <b>“{sel.source_label}”</b> : <i>none — not invented</i>}
               </div>
               <div className="kv">type: {sel.layer}</div>
+              {sel.class_id && <div className="kv">class: {sel.class_id}</div>}
+              {selBadge && (
+                <div className="kv">
+                  part: <span className={selBadge.cls}>{selBadge.text}</span>
+                  {sel.provenance === "user_input" && sel.inferred_by && (
+                    <span className="k"> · was inferred by {sel.inferred_by}, confirmed by a reviewer</span>
+                  )}
+                </div>
+              )}
               {sel.params
                 .filter((p) => p.role === "physical")
                 .map((p) => (
@@ -362,7 +398,7 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
           />
         </main>
         {mode === "review" && isAI ? (
-          <ReviewPanel detailId={detailId} onShow={show} onSaved={() => void reload()} />
+          <ReviewPanel detailId={detailId} scene={scene} onShow={show} onSaved={() => void reload()} />
         ) : (
           <Guide detailId={detailId} run={run} off={!aiOn} />
         )}

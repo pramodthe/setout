@@ -20,7 +20,9 @@ cross-file contracts. This file is the short version for any coding agent.
   invariant" in `CLAUDE.md`.
 - **Stay trade-agnostic.** No check, prompt or schema rule may key off part
   names such as a fixture or material. Roles come from the drawing reading;
-  objects declare their form.
+  objects declare their form. Library data under `ontology/` may name parts
+  (classes, assemblies, slots); engine code keys off `class_id`, roles and
+  that data, never off a name in code.
 - **Follow the "Working rules" in `CLAUDE.md`.**
 
 ## Where the work is

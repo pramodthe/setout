@@ -18,10 +18,23 @@ from .artifacts import ArtifactStore
 TERMINAL = {"succeeded", "failed", "needs_review", "cancelled"}
 DEFAULT_BUDGET = {"model_calls": 32, "tool_calls": 48, "tokens": 320_000,
                   "cad_calls": 8, "render_calls": 6, "seconds": 900}
-VERIFIER_VERSION = "setout-v3-" + hashlib.sha256(b"".join(
-    (Path(__file__).parent/name).read_bytes() for name in
-    ("verification_v3.py","native_program.py","interfaces.py","cad_components.py","verify.py","geometry.py"))).hexdigest()[:16]
+
+
+def _verifier_sources():
+    """The code and the library data a verification depends on. Any change
+    invalidates earlier evidence, which is then recomputed."""
+    root = Path(__file__).parent
+    paths = [root/name for name in ("verification_v3.py","verification_probes.py","native_program.py",
+                                    "interfaces.py","cad_components.py","verify.py","geometry.py")]
+    library = root.parent/"ontology"
+    if library.is_dir():
+        paths += sorted(p for p in library.rglob("*") if p.is_file() and (p.suffix in (".yaml",".yml") or p.name == "VERSION"))
+    return b"".join(p.read_bytes() for p in paths)
+
+
+VERIFIER_VERSION = "setout-v3-" + hashlib.sha256(_verifier_sources()).hexdigest()[:16]
 RESOURCE_TTL = 360  # exceeds the longest bounded external call (300 seconds)
+OUTCOMES = ("incomplete", "complete_with_inferred", "verified")  # quality["outcome"]; None when none applies
 
 
 def uid():
@@ -34,6 +47,31 @@ def canonical(value):
 
 def sha(value):
     return hashlib.sha256(canonical(value).encode()).hexdigest()
+
+
+def inferred_part_ids(parts):
+    """Ids of the parts a model or archetype filled in (part-level provenance
+    `inferred`), from program JSON or NativePart objects."""
+    def provenance(part):
+        return part.get("provenance") if isinstance(part, dict) else getattr(part, "provenance", None)
+    def ident(part):
+        return part["id"] if isinstance(part, dict) else part.id
+    return [ident(part) for part in parts if provenance(part) == "inferred"]
+
+
+def outcome_tier(checks, inferred):
+    """How complete a verified version is. incomplete: a required slot is
+    empty, so it can never finish as done. complete_with_inferred: every
+    required slot is filled, some by inferred parts. verified: no FAIL and no
+    required check short of PASS. None when no tier applies (complete, but a
+    check failed): such a version is never promoted to verified."""
+    if any(c["status"] == "FAIL" and c["id"].startswith("slot-missing:") for c in checks):
+        return "incomplete"
+    if inferred:
+        return "complete_with_inferred"
+    if any(c["status"] == "FAIL" or (c.get("required") and c["status"] != "PASS") for c in checks):
+        return None
+    return "verified"
 
 
 def version_content(program, spec, bindings, figure_id, read_id, format_version="3.0"):
@@ -451,7 +489,7 @@ class Repository:
         return {"version_id": ident, "advanced": advanced, "current_head_id": ident if advanced else head,
                 "detail_id": detail_id}
 
-    def completion_errors(self, con, version_id, verification_id, critic_id):
+    def completion_errors(self, con, version_id, verification_id, critic_id, open_issues=None):
         version = row(con, d.versions, version_id)
         detail = row(con, d.details, version["detail_id"], True)
         verification = row(con, d.verifications, verification_id)
@@ -464,6 +502,20 @@ class Repository:
             errors.append("verification_mismatch")
         errors.extend(check["id"] for check in verification["checks"]
                       if check["status"] == "FAIL" or (check.get("required") and check["status"] != "PASS"))
+        # Completeness: an empty required slot never finishes as done. Inferred
+        # parts may complete it, and a finishing summary (open_issues) must
+        # name every one of them. Older records carry no outcome; derive it.
+        quality = verification["quality"] or {}
+        inferred = quality.get("inferred_parts")
+        if inferred is None:
+            inferred = inferred_part_ids((version["program"] or {}).get("parts", []))
+        outcome = quality["outcome"] if "outcome" in quality else outcome_tier(verification["checks"], inferred)
+        if outcome == "incomplete":
+            errors.append("incomplete")
+        if open_issues is not None:
+            unlisted = [part for part in inferred if not any(part in issue for issue in open_issues)]
+            if unlisted:
+                errors.append("inferred_parts_not_in_open_issues:" + ",".join(unlisted))
         if (critic["version_id"] != version_id or critic["verification_id"] != verification_id or
                 critic["manifest_sha"] != verification["manifest_sha"] or critic["verdict"] != "pass"):
             errors.append("critic_mismatch_or_not_pass")

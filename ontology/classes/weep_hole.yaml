@@ -1,0 +1,24 @@
+id: weep_hole
+name: Weep hole
+status: draft
+definition: A small opening left through a sill, joint or wall so water trapped behind it can drain out; it is a gap, not a built part.
+function: drainage
+role: zone
+shape_hint: box
+form: null
+relations_allowed: []
+dimension_slots:
+  - name: diameter
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+  - name: spacing
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+drawing_appearance: {}
+aliases: [weep hole, weep-hole, weep holes, weep holes through sections, weep, drainage hole, drainage holes]

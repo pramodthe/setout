@@ -1,0 +1,18 @@
+id: bedding
+name: Bedding
+status: draft
+definition: A mortar or sand bed laid in place to seat a finish such as pavers or tiles, covered by that finish.
+function: support
+role: covered_layer
+shape_hint: box
+form: null
+relations_allowed: [covers, supported_by, bonded_to, terminates_against, installed_before]
+dimension_slots:
+  - name: thickness
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+drawing_appearance: {}
+aliases: [bed, bedding, mortar bed, sand bed, adhesive bed, tile bed]

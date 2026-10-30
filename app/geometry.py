@@ -641,6 +641,10 @@ def export_scene_json(spec: DetailSpec, meshes: dict[str, Mesh]) -> dict:
             "id": comp.id, "name": comp.type, "source_label": comp.source_label,
             "representation": comp.representation, "layer": comp.type,
             "color": comp.color, "note": comp.note,
+            # Detail world model: ontology class and part-level provenance.
+            # Inferred parts render ghosted with a badge; they never PASS.
+            "class_id": comp.class_id, "provenance": comp.provenance,
+            "confidence": comp.confidence, "inferred_by": comp.inferred_by,
             "tris": m.positions, "tri_count": m.tri_count,
             "bounds": m.bounds(),
             "params": [p.model_dump() for p in comp.params],

@@ -48,6 +48,11 @@ state and add an entry when a milestone lands.
 - **Every value is named and sourced.** Every param carries `provenance`
   (`drawing` / `manufacturer_doc` / `user_input` / `assumption`). Assumptions
   and unresolved items must **never** produce a verified PASS.
+- **Decided, not yet in code:** a fifth provenance, `inferred`, for parts a model
+  fills in that the drawing does not show (e.g. the door frame behind a threshold
+  section). It is labelled inference, never `drawing`: shown ghosted with its
+  source and confidence, never a verified PASS, and user confirmation turns it
+  into `user_input`. Spec: `docs/DETAIL_WORLD_MODEL_SPEC.md`.
 - **Layers and substrates** (anything built up in place or laid as a sheet or
   board) are exact primitives from the program grammar (`app/program.py`,
   `app/native_program.py`): box, sheet, wedge, profile, revolve, sweep. The model
@@ -78,12 +83,19 @@ manufacturer system is selected. A spec's `origin` must say how it was made
 - **No compliance verdict on real installations.** The tool shows what correct looks like.
   It does not grade the user's work. This avoids liability and removes the need for
   inspector validation.
-- **No model training.** No fine-tuning, no LoRA, no GRPO, no RL. The compute
-  budget (~$150 API + ~$225 partner credits) is for inference only.
-  RLVR is future work; the verifier generates the trajectories for it as a by-product.
-- No IFC/BIM export, accounts, catalogues, native mobile or self-hosted LLM.
+- No IFC/BIM export, accounts, catalogues or native mobile.
 
 If asked to add any of the above, push back and cite this section.
+
+## Training and self-hosted models: allowed
+
+User decision, 29 Oct 2026 (replaces the earlier "no model training" and "no
+self-hosted LLM" cuts). Fine-tuning, CPT, SFT and RL, and self-hosted models are
+in scope, run on the team's own B200 GPUs. Train only on data we own (the
+owner's own drawings) or generate (synthetic details from our programs). Never
+train on manufacturer documents or standards text unless their licence allows
+it. Datasets and weights stay out of this public repo. Spec:
+`docs/DETAIL_WORLD_MODEL_SPEC.md`.
 
 ## Source documents — hard rule
 

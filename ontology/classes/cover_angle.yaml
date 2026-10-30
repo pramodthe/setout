@@ -1,0 +1,24 @@
+id: cover_angle
+name: Cover angle
+status: draft
+definition: A trim angle fitted over the edge of a membrane upstand or joint to protect it and tidy its appearance.
+function: protection
+role: object
+shape_hint: cad
+form: shaped
+relations_allowed: [bonded_to, fixed_to, sealed_to, covers, installed_before]
+dimension_slots:
+  - name: leg_height
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+  - name: leg_thickness
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+drawing_appearance: {}
+aliases: [cover angle, decorative cover angle, cover trim, trim angle, capping]

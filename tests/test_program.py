@@ -23,7 +23,7 @@ READ = {"drawing_type": "isometric_room", "rotation_deg": 0, "title": "",
 def _program(raw: dict) -> DetailProgram:
     return DetailProgram(
         detail_id="t", title=raw["title"], origin="test", kind=raw["kind"],
-        situation=raw["situation"], source=SRC,
+        situation=raw["situation"], source=SRC, assembly_class=raw.get("assembly_class"),
         params=[{**q, "source_quote": q["source_quote"] or None,
                  "note": q["note"] or None} for q in raw["params"]],
         parts=[{**p, "note": p["note"] or None} for p in raw["parts"]])
@@ -113,6 +113,35 @@ def test_program_rejects_missing_dims_and_bad_ids():
     raw["parts"][0] = {**raw["parts"][0], "dims": raw["parts"][0]["dims"][:2]}
     with pytest.raises(ValueError):
         _program(raw)
+
+
+def test_inferred_ranks_between_user_input_and_assumption():
+    from app.program import _RANK
+    order = sorted(_RANK, key=_RANK.get)
+    assert order == [Provenance.DRAWING, Provenance.MANUFACTURER_DOC, Provenance.USER_INPUT,
+                     Provenance.INFERRED, Provenance.ASSUMPTION]
+    prog, _ = gate(EXAMPLE, READ)
+    prog = {**prog, "params": [dict(q) for q in prog["params"]]}
+    for q in prog["params"]:
+        if q["name"] == "floor":
+            q.update(provenance="inferred", kind="exact")  # a derived input, at best inferred
+    spec = compile_program(_program(prog))
+    assert spec.component("membrane_upturn_back").param("y1").provenance == Provenance.INFERRED  # floor + upturn_h
+    assert spec.component("floor_slab").param("y0").provenance == Provenance.ASSUMPTION  # floor - slab_t
+
+
+def test_part_fields_pass_through_compile_and_old_programs_are_unchanged():
+    prog, _ = gate(EXAMPLE, READ)
+    spec = compile_program(_program(prog))
+    assert all(c.provenance == "drawing" and c.class_id is None and c.inferred_by is None for c in spec.components)
+    assert spec.context["assembly_class"] is None
+    raw = {**prog, "assembly_class": "door_threshold", "parts": [dict(p) for p in prog["parts"]]}
+    raw["parts"][1].update(class_id="slab", provenance="inferred", confidence=0.7,
+                           inferred_by="archetype:door_threshold@2026.10.30:substrate")
+    spec = compile_program(_program(raw))
+    wall = spec.components[1]
+    assert (wall.class_id, wall.provenance, wall.confidence) == ("slab", "inferred", 0.7)
+    assert wall.inferred_by.endswith(":substrate") and spec.context["assembly_class"] == "door_threshold"
 
 
 # ---------------------------------------------------------------- new shapes

@@ -100,7 +100,9 @@ class NativeRelation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source: str
     target: str
-    kind: Literal["supported_by", "bonded_to", "covers", "laps_over", "terminates_against", "sealed_to", "installed_before"]
+    kind: Literal["supported_by", "bonded_to", "covers", "laps_over", "terminates_against", "sealed_to", "installed_before",
+                  # ontology/relations.yaml kinds; the verifier reports them UNVERIFIED until it measures them
+                  "hosted_in", "fixed_to", "abuts", "repeated_along"]
     constraints: dict = Field(default_factory=dict)
 
 
@@ -254,6 +256,64 @@ def check_roles(program, read, human=False):
                              f"(0.9 means 90%), not {coverage:g}")
 
 
+def _slot_claimed(inferred_by):
+    """The slot an inferred_by string names: the last segment of
+    "<kind>:<id>@<version>:<slot>"; None when it has no such shape."""
+    pieces = (inferred_by or "").split(":")
+    return pieces[2] if len(pieces) == 3 and all(pieces) and "@" in pieces[1] else None
+
+
+def check_provenance(program, base=None, human=False):
+    """Part-level provenance is a claim about the drawing, gated like a value.
+
+    `inferred` says the drawing does not show the part and a required slot of
+    the program's assembly class calls for it. The claim is valid only when
+    `inferred_by` names such a slot, the part carries a class the slot takes,
+    and no drawing or reviewer-confirmed part already fills it. An invalid
+    claim is rejected with its reason, never relabelled: calling a hidden part
+    `drawing` would say the drawing shows it. `user_input` is a reviewer's
+    confirmation, which an agent can neither grant nor withdraw."""
+    previous = {p["id"]: p for p in (base or {}).get("parts", [])}
+    if not human:
+        for part in program.parts:
+            before = previous.get(part.id, {}).get("provenance", "drawing")
+            if part.provenance == "user_input" and before != "user_input":
+                raise ValueError(f"{part.id}: only a reviewer can confirm a part (provenance user_input)")
+            if part.provenance == "drawing" and before != "drawing":
+                raise ValueError(f"{part.id} was {before}; calling it drawing would claim the drawing shows it. "
+                                 "Keep the provenance, or leave the part for a reviewer to confirm")
+        for ident, old in previous.items():
+            if old.get("provenance") == "user_input" and not any(
+                    p.id == ident and p.provenance == "user_input" for p in program.parts):
+                raise ValueError(f"{ident} is a part a reviewer confirmed; keep it and its provenance unchanged. "
+                                 "Only a reviewer can change it.")
+    for part in program.parts:
+        if part.provenance == "drawing" and part.inferred_by:
+            raise ValueError(f"{part.id}: inferred_by is set but provenance is drawing; a part the drawing shows was not inferred")
+    inferred = [p for p in program.parts if p.provenance == "inferred"]
+    if not inferred:
+        return
+    from . import ontology
+    known = ontology.load()
+    archetype = known.assembly(program.assembly_class) if program.assembly_class else None
+    if archetype is None:
+        raise ValueError("an inferred part needs assembly_class set to the archetype whose required slot it fills; "
+                         "choose one of: " + ", ".join(known.assembly_ids()))
+    required = {s.id: s for s in known.required_slots(archetype.id)}
+    for part in inferred:
+        slot = required.get(_slot_claimed(part.inferred_by) or "")
+        kind, _, rest = (part.inferred_by or "").partition(":")
+        if slot is None or (kind == "archetype" and rest.split("@")[0] != archetype.id):
+            raise ValueError(f"{part.id}: inferred_by must name a required slot of {archetype.id} as "
+                             f"archetype:{archetype.id}@{known.version}:<slot>; required slots: " + ", ".join(required))
+        if part.class_id not in slot.classes:
+            raise ValueError(f"{part.id}: slot {slot.id!r} takes class_id {list(slot.classes)}, not {part.class_id!r}")
+        shown = [p.id for p in program.parts if p.provenance != "inferred" and p.class_id in slot.classes]
+        if len(shown) >= (slot.max if slot.max is not None else slot.min):
+            raise ValueError(f"{part.id}: slot {slot.id!r} is already filled by {shown}, which the drawing shows or a "
+                             "reviewer confirmed; an inferred part cannot duplicate it")
+
+
 def prepare(raw, source, detail_id, read, base=None, human=False):
     raw = copy.deepcopy(raw)
     raw["version"] = "3.0"
@@ -263,6 +323,8 @@ def prepare(raw, source, detail_id, read, base=None, human=False):
     for part in raw.get("parts", []):
         if part.get("role") != "object":
             part["form"] = None  # form describes objects only; a layer's is ignored
+        if part.get("provenance", "drawing") != "inferred":
+            part["confidence"] = None  # existence confidence belongs to inferred parts only
     raw["parts"] = [NativePart.model_validate(p).model_dump(mode="json") for p in raw.get("parts", [])]
     raw["params"] = [NativeParam.model_validate(p).model_dump(mode="json") for p in raw.get("params", [])]
     raw = normalize_identifiers(raw)
@@ -321,6 +383,7 @@ def prepare(raw, source, detail_id, read, base=None, human=False):
             part["cad_brief"] = original.get("cad_brief") or original.get("type")
     program = NativeProgram.model_validate(gated)
     check_roles(program, read, human)
+    check_provenance(program, base, human)
     compiled_input = program.model_dump(mode="json")
     compiled_input["version"] = "2.0"
     spec = compile_program(DetailProgram.model_validate(compiled_input))

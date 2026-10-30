@@ -163,6 +163,23 @@ def test_tool_schema_has_no_dangling_nested_references(source_repo):
     assert not {"source","detail_id","origin"} & fields.keys()
 
 
+def test_program_schema_offers_the_ontology_and_gated_part_provenance():
+    from app import ontology
+    from app.program_schema import program_schema
+    known = ontology.load()
+    schema = program_schema()
+    assembly = schema["properties"]["assembly_class"]["anyOf"]
+    assert assembly[0]["enum"] == known.assembly_ids() and assembly[1] == {"type": "null"}
+    part = schema["properties"]["parts"]["items"]["properties"]
+    assert part["class_id"]["anyOf"][0]["enum"] == known.component_ids() and "door_jamb" in part["class_id"]["anyOf"][0]["enum"]
+    assert part["provenance"] == {"type": "string", "enum": ["drawing", "inferred"]}  # never a reviewer's confirmation
+    assert {"confidence", "inferred_by"} <= part.keys()
+    revising = program_schema(part_provenance=("drawing", "inferred", "user_input"))
+    assert revising["properties"]["parts"]["items"]["properties"]["provenance"]["enum"] == ["drawing", "inferred", "user_input"]
+    from app.agent import INSTRUCTIONS
+    assert "complete_assembly" in INSTRUCTIONS and "never a verified PASS" in INSTRUCTIONS
+
+
 def test_serialized_programs_and_small_patches_are_verified_atomically(source_repo):
     from app.model_gateway import ModelGateway
     repo = source_repo

@@ -1,5 +1,6 @@
 """Strict wire schema for complex programs without tool-JSON escaping."""
 import copy
+from . import ontology
 from .native_program import NativeProgram
 
 
@@ -7,12 +8,16 @@ def object_schema(properties):
     return {"type":"object", "properties":properties, "required":list(properties), "additionalProperties":False}
 
 
-def program_schema(labels=None, provenance=("drawing", "assumption")):
+def program_schema(labels=None, provenance=("drawing", "assumption"), part_provenance=("drawing", "inferred")):
     """The authoring wire schema. labels: the READ's verbatim labels; a part's
     label is one of them or null, so the model cannot reword one. provenance:
     what this author may claim (an agent never creates user or manufacturer
-    evidence; existing values of those kinds stay available in revisions)."""
+    evidence; existing values of those kinds stay available in revisions).
+    part_provenance: likewise for parts; an agent claims drawing or inferred
+    (gated in native_program.prepare), never a reviewer's confirmation.
+    class_id and assembly_class are a choice from the ontology or null."""
     schema = NativeProgram.model_json_schema()
+    known = ontology.load()
     definitions = schema.pop("$defs")
     for field in ("source", "origin", "version", "detail_id"):
         schema["properties"].pop(field, None)
@@ -39,6 +44,9 @@ def program_schema(labels=None, provenance=("drawing", "assumption")):
         choices = sorted({label for label in labels if label})
         part["label"] = {"anyOf": [{"type": "string", "enum": choices}, {"type": "null"}]} if choices else {"type": "null"}
     schema["properties"]["params"]["items"]["properties"]["provenance"] = {"type": "string", "enum": list(provenance)}
+    schema["properties"]["assembly_class"] = {"anyOf": [{"type": "string", "enum": known.assembly_ids()}, {"type": "null"}]}
+    part["class_id"] = {"anyOf": [{"type": "string", "enum": known.component_ids()}, {"type": "null"}]}
+    part["provenance"] = {"type": "string", "enum": list(part_provenance)}
     part["param_bindings"] = {"type":"array", "items":pair}
     part["placement"] = object_schema({axis:string for axis in ("x","y","z")})
     part["features"]["items"]["properties"]["selector"] = object_schema({

@@ -98,6 +98,18 @@ Render and critic must concern that same latest version and verification.
 Pass the render result's critic_args directly to critic; do not guess render IDs
 or use only the tagged screenshots.
 Inspect tool feedback and images and fix concrete problems with patch_program.
+ASSEMBLY CLASS AND SLOTS: set assembly_class to the ontology archetype the drawing
+shows (the schema lists them) and class_id on every part (the schema lists the
+classes). A section cannot show every required slot (members out of its plane
+never appear in it). Once the drawn parts verify, call complete_assembly
+on that version: in suggest mode apply its edits with patch_program; its
+suggestions name slots it could not place. A part you fill in yourself that the
+drawing does not show carries provenance=inferred, class_id, and
+inferred_by=archetype:<assembly>@<version>:<slot>; never call it drawing, and its
+sizes are assumption params whose notes say there is no source. Inferred parts
+render ghosted and are never a verified PASS; a reviewer confirms them. Never
+delete an inferred part because it is not in the drawing; a slot-missing check
+means a required slot is empty, not that a part should go.
 Never remove source evidence to clear checks. Call finish(done) only with the
 matching passing verification and critic IDs. Otherwise finish(needs_review)
 with a useful summary and unresolved issues. Do not publish or claim compliance.

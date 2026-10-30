@@ -1,0 +1,30 @@
+id: edge_angle
+name: Edge angle
+status: draft
+definition: A metal angle fixed along a slab edge or step as a stop and termination for the membrane.
+function: water_barrier
+role: object
+shape_hint: cad
+form: shaped
+relations_allowed: [supported_by, bonded_to, fixed_to, sealed_to, terminates_against, installed_before]
+dimension_slots:
+  - name: leg_height
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+  - name: leg_thickness
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+  - name: foot_length
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+drawing_appearance: {}
+aliases: [angle, edge angle, angle fitted to slab edge, water-stop, waterstop, water stop, water-stop with membrane attached, stop angle]

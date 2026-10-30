@@ -19,7 +19,16 @@ class Provenance(str, Enum):
     DRAWING = "drawing"  # value read from the source drawing
     MANUFACTURER_DOC = "manufacturer_doc"  # value from a manufacturer document
     USER_INPUT = "user_input"  # explicit user correction/input
+    # A value derived from a part a model or archetype filled in (the drawing
+    # does not show it). Shown ghosted; never counts as verified.
+    INFERRED = "inferred"
     ASSUMPTION = "assumption"  # modelling assumption; never counts as verified
+
+
+# Part-level provenance: "drawing" when the drawing shows the part, "inferred"
+# when a model or an archetype slot filled it in (ghosted, never a verified
+# PASS), "user_input" once a reviewer confirms an inferred part.
+PartProvenance = Literal["drawing", "inferred", "user_input"]
 
 
 class ParamRole(str, Enum):
@@ -74,6 +83,7 @@ class PathPoint(BaseModel):
 class Component(BaseModel):
     id: str
     type: str  # normalised type, e.g. "membrane", "sealant_bead"
+    class_id: str | None = None  # ontology component class (app/ontology.py), once classified
     source_label: str | None = None  # EXACT drawing label; null when none
     # zone: drawn but not built (a clearance, set-out line or datum); shown
     # see-through and never treated as a physical part.
@@ -86,6 +96,9 @@ class Component(BaseModel):
     source_regions: list[SourceRegion] = Field(default_factory=list)
     color: str = "#999999"
     note: str | None = None
+    provenance: PartProvenance = "drawing"
+    confidence: float | None = Field(default=None, ge=0, le=1)  # existence; inferred parts only, None = unmeasured
+    inferred_by: str | None = None  # "archetype:<assembly>@<ontology version>:<slot>" or "model:<id>@<version>:<slot>"
 
     def param(self, name: str) -> Param:
         for p in self.params:
@@ -105,6 +118,12 @@ class Relation(BaseModel):
         "terminates_against",
         "sealed_to",
         "installed_before",
+        # Detail world model kinds (ontology/relations.yaml). Reported
+        # UNVERIFIED by the verifier until it has a geometric check for them.
+        "hosted_in",
+        "fixed_to",
+        "abuts",
+        "repeated_along",
     ]
 
 

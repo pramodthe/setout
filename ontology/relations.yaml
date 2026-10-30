@@ -1,0 +1,40 @@
+# Relation kinds a program may declare between two parts (NativeRelation.kind),
+# each defined in our own words. `check` says what the verifier does with the
+# kind today: `geometric` kinds are measured on the built meshes when the
+# relation carries explicit interface constraints; `unverified` kinds are
+# recorded and reported UNVERIFIED until a measurement exists for them.
+status: draft
+relations:
+  - id: supported_by
+    definition: The source part bears on the target part, which carries its weight.
+    check: geometric
+  - id: bonded_to
+    definition: The source part is adhered or fused to the target over their shared face.
+    check: geometric
+  - id: covers
+    definition: The source part lies over the target and hides its face.
+    check: geometric
+  - id: laps_over
+    definition: The source part overlaps the edge of the target so water runs off it, not under it.
+    check: geometric
+  - id: terminates_against
+    definition: The source part stops at the target's face and goes no further.
+    check: geometric
+  - id: sealed_to
+    definition: A sealant or gasket closes the joint between the source and the target.
+    check: geometric
+  - id: installed_before
+    definition: The source part is installed before the target part (sequence only).
+    check: geometric
+  - id: hosted_in
+    definition: The source part sits inside an opening the target forms and is held by it, as a leaf sits in its frame.
+    check: unverified
+  - id: fixed_to
+    definition: The source part is mechanically fastened to the target.
+    check: unverified
+  - id: abuts
+    definition: The source part meets the target edge to edge with no overlap.
+    check: unverified
+  - id: repeated_along
+    definition: The source part recurs at a spacing along the target's run.
+    check: unverified
