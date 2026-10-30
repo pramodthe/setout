@@ -537,6 +537,37 @@ def test_a_second_trained_run_replaces_the_first_and_the_first_is_named(dirs):
     assert "older runs not shown" in section(html, "before-after")
 
 
+def test_two_datasets_never_share_a_before_and_after(dirs):
+    models, datasets, _ = dirs
+    zoomed = datasets / "zoomed"
+    (zoomed / "test").mkdir(parents=True)
+    (zoomed / "test" / "_annotations.coco.json").write_text((datasets / "demo" / "test" / "_annotations.coco.json").read_text())
+    for name in ("tile0.png", "tile1.png"):
+        (zoomed / "test" / name).write_bytes((datasets / "demo" / "test" / name).read_bytes())
+    manifest = json.loads((datasets / "demo" / "manifest.json").read_text())
+    (zoomed / "manifest.json").write_text(json.dumps({**manifest, "name": "zoomed", "config": {"zoom": 2.0}}))
+    later = "zoomed-seg-2xlarge-20261030T0800Z"
+    write_ledger(models, [entry("train", "ok", gpu_s=9.0, wall_s=12.0), entry("predict", "ok", gpu_s=9.0, wall_s=12.0, run_id=BEFORE),
+                          entry("train", "ok", gpu_s=9.0, wall_s=12.0, run_id=later, started="2026-10-30T07:30:00Z")])
+    write_run(models, BEFORE, metrics=metrics_file(ap=0.0, agnostic=0.02), predict={"weights": "pretrained"},
+              config={"dataset": "demo"})
+    write_run(models, RUN, metrics=metrics_file(ap=0.6), predict={"weights": "trained"}, config=CONFIG)
+    write_run(models, later, metrics=metrics_file(ap=0.9), predict={"weights": "trained"}, config={**CONFIG, "dataset": "zoomed"})
+    world, html = built(dirs)
+    groups = runs.group_models(world.runs)
+    first, second = groups["RF-DETR-Seg on demo"], groups["RF-DETR-Seg on zoomed"]
+    assert "RF-DETR-Seg" not in groups
+    assert first["before"].run_id == BEFORE and first["after"].run_id == RUN
+    assert second["before"] is None and second["after"].run_id == later
+    assert list(groups)[:2] == ["RF-DETR-Seg on demo", "RF-DETR-Seg on zoomed"]  # the older dataset first
+    table = section(html, "before-after")
+    assert "older runs not shown" not in table and "0.600" in table and "0.900" in table
+    thin = section(html, "thin")
+    assert thin.count("rendered at 2x") == 1 and thin.index("on demo") < thin.index("rendered at 2x")
+    columns = [c.title for c in build.gallery_columns(groups, "zoomed")]
+    assert columns == ["Correct masks", "RF-DETR-Seg before", "RF-DETR-Seg after"]
+
+
 def test_class_with_no_test_parts_is_not_called_not_run(dirs):
     models, _, _ = dirs
     write_ledger(models, [entry("predict", "ok", gpu_s=9.0, wall_s=12.0)])

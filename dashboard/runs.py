@@ -652,13 +652,27 @@ def short_run(run_id):
 
 
 def group_models(runs):
-    """{model name: {"before", "after", "older"}}, non-smoke runs only, newest scored run in each slot."""
-    empty = lambda: {"before": None, "after": None, "older": []}  # noqa: E731
-    models = {name: empty() for name in PLANNED_MODELS}
-    for run in sorted(runs, key=lambda r: r.last_seen):
-        if run.smoke or run.weights is None:
-            continue
-        group = models.setdefault(run.model_name, empty())
+    """{label: {"model", "before", "after", "older"}}, non-smoke runs only, newest scored run in each slot.
+
+    The label is the model's name. Before and after only mean something on one dataset, so a model
+    with runs on several datasets gets one group per dataset instead, "<model> on <dataset>", oldest
+    dataset first. A run that does not say its dataset yet joins the newest one.
+    """
+    placed = [r for r in sorted(runs, key=lambda r: r.last_seen) if not r.smoke and r.weights is not None]
+    datasets = {}
+    for run in placed:
+        if run.dataset and run.dataset not in datasets.setdefault(run.model_name, []):
+            datasets[run.model_name].append(run.dataset)
+
+    def label(model, dataset):
+        return model if len(datasets.get(model, ())) < 2 else f"{model} on {dataset}"
+
+    models = {}
+    for model in dict.fromkeys(PLANNED_MODELS + tuple(r.model_name for r in placed)):
+        for dataset in datasets.get(model, [None]):
+            models.setdefault(label(model, dataset), {"model": model, "before": None, "after": None, "older": []})
+    for run in placed:
+        group = models[label(run.model_name, run.dataset or datasets.get(run.model_name, [None])[-1])]
         slot = "before" if run.weights == "pretrained" else "after"
         held = group[slot]
         if held is None or run.metrics or not held.metrics:

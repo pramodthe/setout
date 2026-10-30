@@ -27,6 +27,27 @@ ontology `class_id`s. Each annotation carries `attributes: {thin, min_width_px,
 part_id}`; `thin` means narrower than 6 px in the tile, decided from geometry,
 never from names. The masks are the parts' filled cut regions.
 
+### Zoom
+
+`tools/make_seg_dataset.py --zoom 2` renders the same drawings at a higher
+resolution: the same paper at z x the dpi, so ink, hatches, text and blur all
+scale. Every random draw stays the zoom 1 draw. With the same `--seed` and
+`--drawings`, a drawing keeps its template, values, damage and layout, and its
+sheet is the zoom 1 sheet with every coordinate multiplied by z. Noise and JPEG
+stay per pixel. `--drawings` must stay the same, because it fixes the splits;
+to make fewer drawings use `--max-train-drawings` and `--max-valid-drawings`,
+which skip drawings and never move one.
+
+Tiles stay 1008 px, so each shows less of the drawing. Widths, `thin` and the
+scorer's width buckets count pixels of the render, so a 3 px part at zoom 1 is
+a 6 px "compact" part at zoom 2. Never compare two zooms by those buckets alone.
+
+A zoomed dataset also drops clipped pieces whose mask has no pixel
+(`--drop-empty-masks`): `seg-synth-v1` has 9 of them, which no model can match.
+The mask is the one the scorer and training see, the pycocotools rasterisation
+of the stored polygon. Only a zoom 1 run without that flag reproduces v1's
+bytes, and `tests/test_synthetic.py` pins that.
+
 ## Scoring: `eval_seg.py`
 
 ```sh

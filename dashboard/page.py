@@ -587,7 +587,17 @@ def confused_table(run):
             f'and score ≥ {conf.get("score_thr", 0.5):.2f}, but under the wrong class.</p>{table(head, rows, "pairs")}')
 
 
-def section_thin(models):
+def zoom_note(run, manifests):
+    """Width rows hold different parts on a dataset rendered at another resolution: say so."""
+    config = (manifests.get(run.dataset) or {}).get("config") or {}
+    if config.get("zoom", 1) == 1:
+        return ""
+    return (f'<p class="note"><code>{esc(run.dataset)}</code> is rendered at {config["zoom"]:g}x. Thin and the width rows '
+            "count pixels of that render, so a part that is thin at 1x can sit in a wider row here. Compare runs on "
+            "different datasets by class, not by these rows.</p>")
+
+
+def section_thin(models, manifests):
     parts = []
     for name, group in models.items():
         before, after = group["before"], group["after"]
@@ -595,7 +605,7 @@ def section_thin(models):
             parts.append(f"<h3>{esc(name)}</h3><p>{NOT_RUN}</p>")
             continue
         thr = (after or before).score_thr
-        parts.append(f'<h3>{esc(name)}</h3><div class="pair">'
+        parts.append(f'<h3>{esc(name)}</h3>{zoom_note(after or before, manifests)}<div class="pair">'
                      f'{thin_table("Recall at IoU 0.5", "recall50", group, thr)}'
                      f'{thin_table("Mean IoU", "mean_iou", group, thr)}</div>'
                      f'{confused_table(after) if after else ""}')
@@ -755,7 +765,7 @@ def render(world, models, manifests, styles, gallery, every):
     registry = {}
     sections = [
         section_now(world), section_curves(world, registry), section_before_after(world, models),
-        section_classes(models, manifests, styles), section_thin(models), section_images(gallery, styles),
+        section_classes(models, manifests, styles), section_thin(models, manifests), section_images(gallery, styles),
         section_limits(world, manifests),
     ]
     refresh = f'<meta http-equiv="refresh" content="{int(every)}">' if live else ""
