@@ -1,0 +1,70 @@
+# Drafting style for synthetic drawings: heavy architectural cut lines.
+#
+# Generic conventions written for synthetic data, not the owner's house style:
+# heavy outlines on cut parts, aggregate and sand hatches, thin layers often
+# filled solid, architectural ticks, narrow upper-case text. Sizes are paper
+# millimetres. See iso_fine.yaml for the schema.
+id: arch_heavy
+version: 1
+status: draft
+weight: 1.0
+basis: generic drafting conventions written for synthetic data; not the owner's house style
+scan_dpi: [180, 300]
+nts: {p_true: 0.4, range: [0.75, 1.35]}
+text:
+  height: [2.5, 3.5]
+  fonts: [Arial Narrow.ttf, Arial.ttf, Futura.ttc]
+  upper: 1.0
+weights:
+  fine: [0.18, 0.25]
+  medium: [0.35, 0.5]
+  heavy: [0.6, 0.9]
+hatch_weight: [0.13, 0.18]
+linetypes:
+  dashed: [4.0, -2.0]
+  hidden: [2.0, -1.0]
+  dotted: [0.25, -1.0]
+default: {weight: [heavy], linetype: [continuous], hatch: [none]}
+classes:
+  slab: {weight: [heavy], hatch: [[CONCRETE3, 0.6, 1.1], [AR-CONC, 0.05, 0.09], [CONCRETE2, 0.6, 1.0]]}
+  screed: {weight: [medium, heavy], hatch: [[AR-SAND, 0.05, 0.08], [SACNCR, 0.5, 0.9], [DOTS, 0.8, 1.2]]}
+  bedding: {weight: [medium], hatch: [[AR-SAND, 0.03, 0.06], [GRAVEL, 0.3, 0.5], none]}
+  floor_finish: {weight: [heavy], hatch: [[WOOD1, 0.5, 0.9], [ANSI37, 0.6, 1.0], [AR-HBONE, 0.03, 0.05], none]}
+  external_finish: {weight: [heavy], hatch: [[CONCRETE2, 0.4, 0.8], [AR-CONC, 0.04, 0.06], [BRICK, 0.3, 0.5]]}
+  door_sill: {weight: [heavy], hatch: [none, [STEEL, 0.4, 0.7]]}
+  sub_sill: {weight: [heavy], hatch: [none, [STEEL, 0.3, 0.5]]}
+  packer: {weight: [medium], hatch: [[ANSI31, 0.3, 0.5], none], angle: [45]}
+  door_leaf: {weight: [heavy], hatch: [[WOOD2, 0.6, 1.0], [GOST_WOOD, 0.6, 1.0], none]}
+  weather_seal: {weight: [medium], hatch: [[SOLID, 1, 1], none]}
+  sealant: {weight: [medium], hatch: [[SOLID, 1, 1], [DOTS, 0.3, 0.5]]}
+  backing_rod: {weight: [medium], hatch: [none, [CROSS, 0.2, 0.3]]}
+  fillet: {weight: [medium], hatch: [[SOLID, 1, 1], none]}
+  perimeter_joint: {weight: [medium], hatch: [[INSULATION, 0.3, 0.5], [FLEX, 0.3, 0.5], none]}
+  edge_angle: {weight: [heavy], hatch: [[SOLID, 1, 1], none]}
+  cover_angle: {weight: [heavy], hatch: [[SOLID, 1, 1], none]}
+  membrane: {weight: [medium]}
+  protection_sheet: {weight: [fine]}
+  sub_sill_flashing: {weight: [medium]}
+thin:
+  modes: {outline: 0.25, line: 0.3, dashed_line: 0.1, filled: 0.35}
+  weight: [fine, medium]
+  dashed: [dashed, hidden]
+  max_line_px: 12
+labels:
+  share: [0.6, 1.0]
+  sides: {left: 0.25, right: 0.35, both: 0.4}
+  ends: {arrow: 0.3, dot: 0.5, none: 0.2}
+  end_size: [2.0, 3.0]
+  offset: [15, 35]
+  weight: [fine]
+dims:
+  arrows: {ARCHTICK: 0.6, OBLIQUE: 0.3, DOT: 0.1}
+  text_height: [2.5, 3.0]
+  arrow_size: [2.0, 3.0]
+  offset: [10, 16]
+  spacing: [7, 10]
+  chains: 0.85
+  overall: 0.6
+  extra: [0, 2]
+  weight: [fine]
+clutter: {title: 0.9, notes: 0.5, break_lines: 0.7, levels: 0.4}

@@ -91,7 +91,9 @@ If asked to add any of the above, push back and cite this section.
 
 User decision, 29 Oct 2026 (replaces the earlier "no model training" and "no
 self-hosted LLM" cuts). Fine-tuning, CPT, SFT and RL, and self-hosted models are
-in scope, run on the team's own B200 GPUs. Train only on data we own (the
+in scope, run as Modal GPU jobs (`training/`). Use the cheapest GPU that fits
+each job, judged by cost per job rather than price per hour; B200s only when a
+job needs them (user decision, 30 Oct 2026). Train only on data we own (the
 owner's own drawings) or generate (synthetic details from our programs). Never
 train on manufacturer documents or standards text unless their licence allows
 it. Datasets and weights stay out of this public repo. Spec:
@@ -135,6 +137,14 @@ npx tsc -b           # type-check
 npm run lint         # oxlint
 
 python e2e/drive.py [base-url]   # Playwright acceptance pass
+```
+
+Drawing segmentation (datasets, weights and pages stay under gitignored `data/`):
+
+```sh
+python tools/make_seg_dataset.py --out data/datasets/<name> --drawings 1000 --seed 1   # synthetic dataset
+modal run training/rfdetr_seg.py --dataset <name>   # train, predict, score (spends GPU money)
+python dashboard/build.py [--watch]                 # results page: data/dashboard/index.html
 ```
 
 `e2e/drive.py` needs the server running, Playwright, system Google Chrome (macOS
