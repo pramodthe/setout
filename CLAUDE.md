@@ -53,7 +53,7 @@ when a milestone lands.
 - **Every value is named and sourced.** Every param carries `provenance`
   (`drawing` / `manufacturer_doc` / `user_input` / `assumption`). Assumptions
   and unresolved items must **never** produce a verified PASS.
-- **Decided, not yet in code:** a fifth provenance, `inferred`, for parts a model
+- **`inferred`** is a fifth provenance, for parts a model or archetype
   fills in that the drawing does not show (e.g. the door frame behind a threshold
   section). It is labelled inference, never `drawing`: shown ghosted with its
   source and confidence, never a verified PASS, and user confirmation turns it
