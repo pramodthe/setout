@@ -377,7 +377,8 @@ def archetype_completion(program: NativeProgram, ont: Ontology, read=None) -> Co
     no slots to fill. `read` (the READ pass) keeps a labelled part from being
     inferred and limits inference to section drawings."""
     if not program.assembly_class or ont.assembly(program.assembly_class) is None:
-        raise ValueError("set assembly_class to the archetype this drawing shows; one of: " + ", ".join(ont.assembly_ids()))
+        raise ValueError("this program names no archetype, so it has no slots to fill. write_program sets assembly_class, and a "
+                         "patch cannot; a drawing that is none of these leaves it unset: " + ", ".join(ont.assembly_ids()))
     filler = _Filler(program, ont, read)
     for slot in sorted(ont.required_slots(program.assembly_class), key=lambda s: ORDER.get(s.position, 0)):
         filler.fill(slot)

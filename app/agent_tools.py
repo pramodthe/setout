@@ -1030,17 +1030,19 @@ class Tools:
                     return {"error": {"code": "not_ready", "conditions": errors}}
             repairs = data.get("repairs") or []
             if repairs and not self.stop_reason:
-                # A run may not give up on what it can fix while budget remains. Bounded:
-                # a finish is sent back only so many times, and only if something changed
-                # since the last. Out of budget, it stops and the worker continues it.
+                # A run may not give up on what it can fix while budget remains. A finish is
+                # sent back only so many times, and only if something changed since the last.
+                # Past that, or out of room, the run stops saying repairs are left, and the
+                # worker continues it, at a higher effort. Seen live: a second finish with
+                # nothing done passed as finished, at 143k of 320k, and nothing continued it.
                 refused = data["refused"]
                 out_of_cad = run["consumed"].get("cad_calls", 0) >= run["budget"]["cad_calls"]
-                if not repair_room(run) or (out_of_cad and all(item.startswith(("shape-mismatch:", "cad-")) for item in repairs)):
-                    self.stop_reason = "repairs_left"
-                elif len(refused) < REPAIR_REFUSALS and (not refused or refused[-1] != run["working_version_id"]):
+                room = repair_room(run) and not (out_of_cad and all(item.startswith(("shape-mismatch:", "cad-")) for item in repairs))
+                if room and len(refused) < REPAIR_REFUSALS and (not refused or refused[-1] != run["working_version_id"]):
                     return {"error": {"code": "repairs_left", "working_version_id": run["working_version_id"], "repairs": repairs[:16],
                                       "message": "There is budget left and these can still be fixed, so the run is not over: fix them, "
                                                  "render and call critic again, then finish."}}
+                self.stop_reason = "repairs_left"
             issues = list(result.get("open_issues", []))
             if result["status"] == "needs_review" and run["working_version_id"]:
                 reports = con.execute(sa.select(d.verifications).where(d.verifications.c.version_id == run["working_version_id"])

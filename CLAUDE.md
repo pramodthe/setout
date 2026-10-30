@@ -306,9 +306,11 @@ Cross-file contracts. These are not obvious from any single file:
 - **A run does not stop on what it can still fix** (`Tools._repairs`). While budget
   remains, `finish(needs_review)` is sent back if the last critic named errors or the
   version has FAILs or open relations; at most `REPAIR_REFUSALS` times, and only if
-  something changed. With no room left the run ends as `repairs_left`, which the
-  worker continues as a `revise_detail`, up to `SETOUT_AUTO_CONTINUE` times. A covered
-  layer left open is the reviewer's, and does not hold a run back.
+  something changed. Past that, or with no room left, the run ends as `repairs_left`
+  whatever the agent says, and the worker continues it as a `revise_detail`, up to
+  `SETOUT_AUTO_CONTINUE` times, unless the run fixed none of what it was continued for
+  (`repairs_before`). A covered layer left open is the reviewer's, and does not hold a
+  run back.
 - **CAD runs before the agent's next turn** (`Tools.cad_call`), one try per object per
   contract; `SETOUT_AUTO_CAD`, `SETOUT_CLOSE_UP` and `SETOUT_LABEL_PROOF` (`off`) stop
   these harness steps. `tests/conftest.py` turns them off, as scripted models do not

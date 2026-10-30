@@ -183,7 +183,8 @@ def test_the_floor_cannot_stop_a_run_that_has_budget_left(source_repo, monkeypat
     job = source_repo.enqueue("generate_detail", {"figure_id": "figure"})
     Worker(source_repo, responder=model).run_once(only_ids=[job["id"]])
     final = source_repo.get(d.jobs, job["id"])
-    assert model.calls == 14 and final["result"]["stop_reason"] == "finished"  # its first finish was sent back
+    # All 14 turns ran: not the floor but its own finish ended it, with its CAD still to do.
+    assert model.calls == 14 and final["result"]["stop_reason"] == "repairs_left"
     assert source_repo.run(job["id"])["consumed"]["tokens"] == 14 * 8500 + 20  # and the nested read
 
 
@@ -595,7 +596,9 @@ def test_a_run_may_not_give_up_on_what_it_can_fix_while_budget_remains(source_re
     assert source_repo.get(d.jobs, job["id"])["state"] == "running"
 
 
-def test_a_finish_sent_back_with_nothing_done_ends_rather_than_spins(source_repo, monkeypatch):
+def test_a_finish_sent_back_with_nothing_done_stops_and_goes_on_in_a_new_run(source_repo, monkeypatch):
+    """Seen live: a second finish with nothing done passed as finished, at 143k of 320k,
+    with three repairs open, and nothing continued it. It neither spins nor gives up."""
     monkeypatch.setenv("SETOUT_COMPLETION", "off")
     job, tools, written = _written(source_repo)
     answer = {"version_id": written["version_id"], "verification_id": None, "critic_verdict_id": None,
@@ -603,8 +606,10 @@ def test_a_finish_sent_back_with_nothing_done_ends_rather_than_spins(source_repo
     tools.run("f1", "finish", answer)
     ended = tools.run("f2", "finish", answer)
     final = source_repo.get(d.jobs, job["id"])
-    assert "error" not in ended and final["state"] == "needs_review" and final["result"]["stop_reason"] == "finished"
-    assert continue_if_cut_short(source_repo, job["id"], limit=2) is None
+    assert "error" not in ended and final["state"] == "needs_review" and final["result"]["stop_reason"] == "repairs_left"
+    follow = continue_if_cut_short(source_repo, job["id"], limit=2)
+    assert source_repo.get(d.jobs, follow)["kind"] == "revise_detail"
+    assert source_repo.get(d.jobs, follow)["payload"]["repairs_before"] == final["result"]["repairs"]
 
 
 def test_a_finish_is_sent_back_a_bounded_number_of_times_however_much_changes(source_repo, monkeypatch):
@@ -619,6 +624,7 @@ def test_a_finish_is_sent_back_a_bounded_number_of_times_however_much_changes(so
         if "error" in answers[-1]:
             tools.run(f"p{i}", "patch_program", {"edits": [{"op": "replace", "path": "/params/@slab_length/value", "value": 500 + 10 * i}]})
     assert ["error" in answer for answer in answers] == [True] * REPAIR_REFUSALS + [False]
+    assert answers[-1]["stop_reason"] == "repairs_left"
 
 
 def test_a_run_with_nothing_left_to_fix_ends_at_once(source_repo, monkeypatch):
@@ -698,6 +704,39 @@ def test_repairs_named_by_a_critic_continue_though_every_check_passes(source_rep
     source_repo.end(tools.fence, "needs_review", {"version_id": written["version_id"], "stop_reason": "repairs_left",
                                                   "repairs": ["shape-mismatch:track"]})
     assert continue_if_cut_short(source_repo, job["id"], limit=2)
+
+
+def _continued(repo, tools, version_id, before, after):
+    """A continuation of a run that left `before`, itself stopping with `after`."""
+    repo.end(tools.fence, "needs_review", {"version_id": version_id, "stop_reason": "repairs_left", "repairs": after})
+    with d.transaction(repo.engine) as con:
+        con.execute(d.jobs.update().where(d.jobs.c.id == tools.fence.job_id).values(
+            payload={"continuation": 1, "repairs_before": before, "figure_id": "figure"}))
+
+
+def test_a_chain_stops_once_a_run_fixed_none_of_what_it_was_continued_for(source_repo, monkeypatch):
+    """Something no agent can fix must cost one run, not every run the limit allows."""
+    monkeypatch.setenv("SETOUT_COMPLETION", "off")
+    job, tools, written = _written(source_repo)
+    _continued(source_repo, tools, written["version_id"], ["check-a", "check-b"], ["check-a", "check-b", "check-c"])
+    assert continue_if_cut_short(source_repo, job["id"], limit=9) is None
+
+
+def test_a_chain_goes_on_while_runs_are_fixing_things(source_repo, monkeypatch):
+    monkeypatch.setenv("SETOUT_COMPLETION", "off")
+    job, tools, written = _written(source_repo)
+    _continued(source_repo, tools, written["version_id"], ["check-a", "check-b"], ["check-b"])
+    assert continue_if_cut_short(source_repo, job["id"], limit=9)
+
+
+def test_a_run_cut_short_before_it_could_say_what_is_left_still_goes_on(source_repo, monkeypatch):
+    """The budget stops a run with no finish, so it has no list to compare."""
+    monkeypatch.setenv("SETOUT_COMPLETION", "off")
+    job, tools, written = _written(source_repo)
+    source_repo.end(tools.fence, "needs_review", {"version_id": written["version_id"], "stop_reason": "budget_exhausted"})
+    with d.transaction(source_repo.engine) as con:
+        con.execute(d.jobs.update().where(d.jobs.c.id == job["id"]).values(payload={"continuation": 1, "repairs_before": ["check-a"], "figure_id": "figure"}))
+    assert continue_if_cut_short(source_repo, job["id"], limit=9)
 
 
 def test_a_chain_of_continuations_still_ends_at_its_limit(source_repo, monkeypatch):

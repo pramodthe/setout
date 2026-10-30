@@ -130,8 +130,8 @@ Pass the render result's critic_args directly to critic; do not guess render IDs
 or use only the tagged screenshots.
 Inspect tool feedback and images and fix concrete problems with patch_program.
 ASSEMBLY CLASS AND SLOTS: set assembly_class to the ontology archetype the drawing
-shows (the schema lists them) and class_id on every part (the schema lists the
-classes). Author what the drawing shows: a part drawn without a label is still
+shows (the schema lists them), or leave it null if it is none of them, and class_id on
+every part (the schema lists the classes). Author what the drawing shows: a part drawn without a label is still
 provenance=drawing, inferred_by=null, label=null. A section cannot show every required
 slot (members out of its plane never appear in it). complete_assembly fills those
 slots with inferred parts, before any CAD work: right after an accepted version it

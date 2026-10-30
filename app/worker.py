@@ -29,8 +29,8 @@ def continue_if_cut_short(repo, job_id, limit=None):
     never works that out again from what was spent afterwards. Only when the
     run made a new version, that version is still the detail's current one, its
     checks still block completion (a CAD placeholder, a failed measurement) or a
-    critic named what can be fixed, and the chain hasn't hit its limit. Returns the
-    new job id."""
+    critic named what can be fixed, the chain hasn't hit its limit, and the last run
+    fixed something of what it was continued for. Returns the new job id."""
     limit = AUTO_CONTINUE if limit is None else limit
     job, run = repo.get(d.jobs, job_id), repo.run(job_id)
     step = int((job["payload"] or {}).get("continuation") or 0)
@@ -45,8 +45,11 @@ def continue_if_cut_short(repo, job_id, limit=None):
     if result.get("stop_reason") not in CUT_SHORT or not reports or not (result.get("repairs") or any(
             c["status"] == "FAIL" or (c.get("required") and c["status"] != "PASS") for c in reports[-1]["checks"])):
         return None
-    payload = {"detail_id": run["detail_id"], "base_version_id": version_id,
-               "requested_changes": CONTINUE_REQUEST, "continuation": step + 1}
+    before = (job["payload"] or {}).get("repairs_before") or []
+    if before and set(before) <= set(result.get("repairs") or []):
+        return None  # none of it was fixed: another run would only spend
+    payload = {"detail_id": run["detail_id"], "base_version_id": version_id, "requested_changes": CONTINUE_REQUEST,
+               "continuation": step + 1, "repairs_before": result.get("repairs") or []}
     if (job["payload"] or {}).get("manufacturer"):
         payload["manufacturer"] = job["payload"]["manufacturer"]
     return repo.continue_job(job_id, "revise_detail", payload)
