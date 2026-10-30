@@ -71,6 +71,11 @@ def table(c):
     lines += ["  fonts:"] + _counts(text["fonts"], indent="    ")
     layers = c["layers"]
     lines += ["", f"Layers ({layers['count']}; names are not labels)"] + _counts(layers["linetypes"])
+    paper = c["layouts"]
+    lines += ["", f"Paper space ({paper['with_entities']} of {paper['count']} layouts in use, {paper['entities']} entities, "
+                  f"{paper['viewports']} viewports; everything above is modelspace)",
+              f"  text {paper['text']}   dimensions {paper['dimensions']}   leaders LEADER {paper['leaders']['LEADER']}   "
+              f"MLEADER {paper['leaders']['MLEADER']}   line+text {paper['leaders']['line_plus_text']}"]
     lines += ["", "Per file"]
     for path, f in c["files"].items():
         lines.append(f"  {path}: {f['entities']} entities, {f['units_name']}, {f['dxfversion']}, "

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Setout review</title>
+<style>/*CSS*/</style>
+</head>
+<body>
+<header>
+  <strong>Setout review</strong>
+  <button id="prev-sheet" title="Previous sheet ( [ )">&lsaquo;</button>
+  <select id="sheet-pick" aria-label="Sheet"></select>
+  <button id="next-sheet" title="Next sheet ( ] )">&rsaquo;</button>
+  <span id="progress"></span>
+  <span class="grow"></span>
+  <span id="cost" title="Active seconds only: the clock stops when the page is hidden or idle"></span>
+  <button id="help-button" title="Shortcuts ( ? )">?</button>
+</header>
+<main>
+  <section id="stage" tabindex="0" aria-label="Sheet">
+    <svg id="sheet" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="The rendered sheet with its regions">
+      <image id="sheet-image" />
+      <g id="regions"></g>
+      <g id="labels"></g>
+      <g id="marks"></g>
+    </svg>
+    <div id="banner" hidden></div>
+  </section>
+  <aside>
+    <div id="card"></div>
+    <div id="picker" hidden>
+      <input id="filter" autocomplete="off" spellcheck="false" placeholder="Type a class, Enter to pick" aria-label="Class">
+      <ul id="options"></ul>
+    </div>
+    <div class="list-head">
+      <span>Regions</span>
+      <label><input id="show-aside" type="checkbox"> set aside (<span id="aside-count">0</span>)</label>
+    </div>
+    <ol id="list"></ol>
+  </aside>
+</main>
+<div id="help" hidden>
+  <div class="sheet">
+    <h2>Shortcuts</h2>
+    <dl>
+      <dt>Enter</dt><dd>accept the proposal</dd>
+      <dt>A</dt><dd>accept every proposal with a class on this sheet</dd>
+      <dt>c or /</dt><dd>pick a class</dd>
+      <dt>1 to 9</dt><dd>pick a suggested class</dd>
+      <dt>x</dt><dd>not a part</dd>
+      <dt>r</dt><dd>bring back a rejected or set-aside region</dd>
+      <dt>n, Tab</dt><dd>next undecided region</dd>
+      <dt>p, Shift Tab</dt><dd>previous region</dd>
+      <dt>m</dt><dd>add to the merge; with two or more picked, merge them</dd>
+      <dt>Shift click</dt><dd>add a region to the merge</dd>
+      <dt>s</dt><dd>split: click two points along the cut</dd>
+      <dt>Esc</dt><dd>cancel a split, a merge or the class list</dd>
+      <dt>u</dt><dd>undo</dd>
+      <dt>z / 0</dt><dd>zoom to the region / to the sheet</dd>
+      <dt>v</dt><dd>show regions the rules set aside</dd>
+      <dt>l</dt><dd>show or hide the names on the sheet</dd>
+      <dt>[ / ]</dt><dd>previous / next sheet</dd>
+      <dt>f</dt><dd>leave this sheet out of the dataset</dd>
+      <dt>?</dt><dd>this list</dd>
+    </dl>
+    <p>Wheel zooms, dragging pans. Every decision saves as you make it.</p>
+  </div>
+</div>
+<script>
+const TOKEN = "__TOKEN__";
+/*JS*/
+</script>
+</body>
+</html>

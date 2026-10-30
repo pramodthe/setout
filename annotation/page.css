@@ -1,0 +1,103 @@
+:root {
+  --paper: #ffffff; --ground: #f4f4f1; --ink: #1c1c1a; --quiet: #6b6b66; --rule: #dcdcd6;
+  --accent: #0b6e4f; --warn: #a33a1f; --chip: #ecece7; --pick: #1d4ed8;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #1b1b19; --ground: #111110; --ink: #ececea; --quiet: #a2a29c; --rule: #33332f;
+    --accent: #4cc39b; --warn: #e88a6d; --chip: #2a2a27; --pick: #8ab0ff;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  display: flex; flex-direction: column; background: var(--ground); color: var(--ink);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+header {
+  display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: var(--paper);
+  border-bottom: 1px solid var(--rule); min-height: 42px;
+}
+header strong { margin-right: 8px; }
+.grow { flex: 1; }
+button, select {
+  font: inherit; color: inherit; background: var(--chip); border: 1px solid var(--rule);
+  border-radius: 5px; padding: 3px 9px; cursor: pointer;
+}
+button:hover { border-color: var(--quiet); }
+#sheet-pick { max-width: 320px; }
+#progress, #cost { color: var(--quiet); font-variant-numeric: tabular-nums; white-space: nowrap; }
+main { flex: 1; display: flex; min-height: 0; }
+#stage { position: relative; flex: 1; min-width: 0; overflow: hidden; background: #fff; outline: none; }
+#sheet { width: 100%; height: 100%; display: block; cursor: grab; }
+#sheet.panning { cursor: grabbing; }
+#sheet.cutting { cursor: crosshair; }
+#banner {
+  position: absolute; left: 50%; top: 10px; transform: translateX(-50%); padding: 5px 12px;
+  background: var(--ink); color: var(--paper); border-radius: 6px; font-size: 13px; max-width: 80%;
+}
+aside {
+  width: 340px; flex: none; display: flex; flex-direction: column; min-height: 0;
+  background: var(--paper); border-left: 1px solid var(--rule);
+}
+#card { padding: 12px; border-bottom: 1px solid var(--rule); min-height: 170px; }
+#card h2 { margin: 0 0 2px; font-size: 18px; line-height: 1.25; overflow-wrap: anywhere; }
+#card .sub { color: var(--quiet); font-size: 12px; }
+#card .said { margin: 8px 0 4px; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#card .why { color: var(--quiet); font-size: 12.5px; margin: 0 0 8px; overflow-wrap: anywhere; }
+.badge { display: inline-block; padding: 0 6px; border-radius: 4px; font-size: 11.5px; background: var(--chip); color: var(--quiet); margin-right: 4px; }
+.badge.callout, .badge.hatch { color: var(--accent); }
+.badge.done { background: var(--accent); color: var(--paper); }
+.badge.no { background: var(--warn); color: var(--paper); }
+.actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.actions button { padding: 2px 7px; font-size: 12.5px; }
+.actions .main { background: var(--accent); border-color: var(--accent); color: var(--paper); }
+kbd { font: 11px ui-monospace, Menlo, monospace; color: var(--quiet); margin-left: 3px; }
+.actions .main kbd { color: inherit; opacity: .8; }
+#picker { padding: 8px 12px; border-bottom: 1px solid var(--rule); }
+#filter { width: 100%; padding: 5px 7px; font: inherit; color: inherit; background: var(--ground); border: 1px solid var(--rule); border-radius: 5px; }
+#options { list-style: none; margin: 6px 0 0; padding: 0; max-height: 240px; overflow: auto; }
+#options li { padding: 2px 6px; border-radius: 4px; cursor: pointer; }
+#options li.on { background: var(--chip); }
+#options small { color: var(--quiet); }
+.list-head { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; color: var(--quiet); font-size: 12px; }
+#list { list-style: none; margin: 0; padding: 0 0 8px; overflow: auto; flex: 1; }
+#list li { display: flex; gap: 7px; align-items: center; padding: 3px 12px; cursor: pointer; border-left: 3px solid transparent; }
+#list li:hover { background: var(--chip); }
+#list li.on { background: var(--chip); border-left-color: var(--pick); }
+#list li.picked { outline: 1px dashed var(--pick); outline-offset: -2px; }
+#list li.decided .name { color: var(--quiet); }
+#list li.out .name { text-decoration: line-through; color: var(--quiet); }
+#list .dot { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+#list .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#list .tag { color: var(--quiet); font-size: 11px; }
+#help { position: fixed; inset: 0; background: #0007; display: flex; align-items: center; justify-content: center; }
+#help[hidden], #banner[hidden], #picker[hidden] { display: none; }
+#help .sheet { background: var(--paper); padding: 16px 22px; border-radius: 9px; max-height: 90vh; overflow: auto; }
+#help h2 { margin: 0 0 8px; font-size: 16px; }
+#help dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 16px; margin: 0; }
+#help dt { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; white-space: nowrap; }
+#help dd { margin: 0; color: var(--quiet); }
+#help p { color: var(--quiet); margin: 10px 0 0; font-size: 12.5px; }
+/* regions: sizes are screen pixels, whatever the zoom */
+#regions path { vector-effect: non-scaling-stroke; cursor: pointer; }
+#regions .fill { fill-opacity: .28; stroke-width: 1px; stroke-dasharray: 5 3; fill-rule: evenodd; }
+#regions .fill.decided { fill-opacity: .42; stroke-dasharray: none; }
+#regions .fill.unknown { fill-opacity: .14; stroke-opacity: .8; }
+#regions .fill.out { fill-opacity: .06; stroke-dasharray: 2 3; stroke-opacity: .6; }
+#regions .fill.picked { fill-opacity: .5; }
+#regions .halo { fill: none; stroke-width: 9px; stroke-opacity: 0; pointer-events: stroke; }
+#regions .on { stroke: var(--pick) !important; stroke-width: 2.5px; fill-opacity: .5; stroke-dasharray: none; stroke-opacity: 1; }
+#labels text {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-weight: 600; fill: #111; pointer-events: none;
+  paint-order: stroke; stroke: #fff; stroke-opacity: .85; stroke-linejoin: round; text-anchor: middle; dominant-baseline: middle;
+}
+#labels text.unknown { fill: #666; font-weight: 400; }
+#labels text.on { fill: #1d4ed8; }
+#marks circle { fill: var(--pick); vector-effect: non-scaling-stroke; }
+#marks line { stroke: var(--pick); stroke-width: 2px; vector-effect: non-scaling-stroke; stroke-dasharray: 6 4; }
+@media (max-width: 760px) {
+  main { flex-direction: column; }
+  aside { width: 100%; height: 45%; border-left: none; border-top: 1px solid var(--rule); }
+}

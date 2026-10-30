@@ -7,6 +7,11 @@ meaningless, so a DIMENSION record carries the printed text beside the measured
 value. Layer names are metadata, never labels. Nothing here guesses a class:
 `to_coco` writes only the labels the caller supplies.
 
+Everything reads modelspace unless told otherwise. Callouts and notes may live on
+paper-space layouts, so `layouts`, `viewports`, `entities(doc, layout)`,
+`pseudo_leaders(doc, layout=...)` and `layout_primitives` read those too, and a
+`ViewportMap` carries a paper point into modelspace.
+
 The rasteriser is a small Pillow backend for ezdxf's drawing add-on. The
 frontend does the flattening, linetype dashes, hatch patterns, text glyphs and
 block expansion; this module only maps drawing units to pixels, so the sheet
@@ -29,9 +34,10 @@ from ezdxf.addons.drawing import Frontend, RenderContext
 from ezdxf.addons.drawing.backend import Backend
 from ezdxf.addons.drawing.config import (BackgroundPolicy, ColorPolicy, Configuration,
                                          HatchPolicy)
+from ezdxf.disassemble import recursive_decompose
 from ezdxf.entities import DXFGraphic
 from ezdxf.lldxf import const
-from ezdxf.math import BoundingBox2d
+from ezdxf.math import BoundingBox2d, Matrix44, Vec3
 from ezdxf.tools import text as dxf_text
 from PIL import Image, ImageChops, ImageDraw
 
@@ -39,6 +45,7 @@ TEXT_TYPES = ("TEXT", "ATTRIB", "ATTDEF")
 LEADER_TYPES = ("MULTILEADER", "MLEADER")  # one entity, two DXF names
 DIMENSION_TYPES = ("DIMENSION", "ARC_DIMENSION", "LARGE_RADIAL_DIMENSION")
 MAX_PSEUDO_LEADER_VERTICES = 4  # longer polylines are outlines, not leaders
+MODEL = "model"  # EntityRecord.space of a modelspace entity; on a layout, the layout's name
 
 _INHERITED_LINEWEIGHTS = (const.LINEWEIGHT_BYLAYER, const.LINEWEIGHT_BYBLOCK,
                           const.LINEWEIGHT_DEFAULT)
@@ -77,16 +84,26 @@ class EntityRecord:
     dim_measurement: float | None = None   # DIMENSION: raw measured value, drawing units
     dim_lfac: float | None = None          # DIMENSION: linear factor applied to measured text
     annotation: str | None = None          # LEADER: handle of the annotation it points at
+    space: str = MODEL                     # "model", or the paper-space layout's name
 
 
-def entities(doc) -> list[EntityRecord]:
-    """One record per modelspace entity, properties resolved through BYLAYER / BYBLOCK."""
-    msp = doc.modelspace()
+def _space(doc, layout):
+    return doc.modelspace() if layout is None else doc.paperspace(layout)
+
+
+def entities(doc, layout=None) -> list[EntityRecord]:
+    """One record per entity, properties resolved through BYLAYER / BYBLOCK: modelspace
+    by default, or the named paper-space layout (`layouts` lists them)."""
+    space = _space(doc, layout)
     ctx = RenderContext(doc)
-    ctx.set_current_layout(msp)
+    ctx.set_current_layout(space)
     # Colours as on a white sheet, the same as the render: ACI 7 resolves to black.
     ctx.current_layout_properties.set_colors("#ffffff")
-    return [_record(entity, ctx) for entity in msp if isinstance(entity, DXFGraphic)]
+    records = [_record(entity, ctx) for entity in space if isinstance(entity, DXFGraphic)]
+    if layout is not None:
+        for record in records:
+            record.space = layout
+    return records
 
 
 def _record(entity, ctx) -> EntityRecord:
@@ -164,17 +181,17 @@ def _extents(entity):
 
 # --- leaders drawn as lines ---------------------------------------------------
 
-def pseudo_leaders(doc, tolerance=None) -> list[tuple[str, str]]:
+def pseudo_leaders(doc, tolerance=None, layout=None) -> list[tuple[str, str]]:
     """(line handle, text handle) pairs for LINE or short open LWPOLYLINE entities
-    with exactly one end at a TEXT / MTEXT box.
+    with exactly one end at a TEXT / MTEXT box, in modelspace or the named layout.
 
     A heuristic for drawings whose leaders are plain lines plus text. It links
     handles, never classes. `tolerance` is in drawing units; by default each
     text's own height.
     """
-    msp = doc.modelspace()
+    space = _space(doc, layout)
     texts = []
-    for entity in msp:
+    for entity in space:
         kind = entity.dxftype()
         if kind not in TEXT_TYPES and kind != "MTEXT":
             continue
@@ -185,7 +202,7 @@ def pseudo_leaders(doc, tolerance=None) -> list[tuple[str, str]]:
         tol = tolerance if tolerance is not None else float(height)
         texts.append((entity.dxf.handle, box, tol))
     pairs = []
-    for entity in msp:
+    for entity in space:
         ends = _free_ends(entity)
         if ends is None:
             continue
@@ -217,6 +234,87 @@ def _nearest_text(point, texts):
     return best
 
 
+# --- paper space --------------------------------------------------------------
+
+def layouts(doc) -> list[str]:
+    """Paper-space layout names in tab order, modelspace left out."""
+    return [name for name in doc.layout_names_in_taborder() if name.lower() != "model"]
+
+
+@dataclass(frozen=True)
+class ViewportMap:
+    """How one VIEWPORT shows modelspace: its window on the layout and the transform.
+
+    `scale` is paper units per drawing unit, the plotted scale of whatever this
+    viewport shows. It is a fact of the layout, not a measurement of the drawing.
+    """
+    layout: str
+    handle: str
+    box: tuple                 # x0, y0, x1, y1 of the window on the layout
+    scale: float               # paper units per drawing unit
+    matrix: tuple              # 16 floats: paper to modelspace, ezdxf Matrix44 order
+
+    @property
+    def to_model_matrix(self) -> Matrix44:
+        return Matrix44(self.matrix)
+
+    def to_model(self, x, y):
+        point = self.to_model_matrix.transform(Vec3(x, y, 0))
+        return (point.x, point.y)
+
+    def contains(self, x, y, margin=0.0) -> bool:
+        x0, y0, x1, y1 = self.box
+        return x0 - margin <= x <= x1 + margin and y0 - margin <= y <= y1 + margin
+
+    def distance(self, x, y) -> float:
+        """From a paper point to the window; 0 inside it."""
+        x0, y0, x1, y1 = self.box
+        return math.hypot(max(x0 - x, 0.0, x - x1), max(y0 - y, 0.0, y - y1))
+
+
+def viewports(doc, layout=None) -> list[ViewportMap]:
+    """The viewports that show modelspace, on the named layout or on all of them.
+
+    Left out: viewports switched off (status <= 0), the layout's own overall view
+    (the first status 1 viewport, as CAD and the ezdxf frontend treat it), and
+    anything but a top view, which no 2D transform can map.
+    """
+    names = layouts(doc) if layout is None else [layout]
+    maps = []
+    for name in names:
+        found = sorted((e for e in doc.paperspace(name) if e.dxftype() == "VIEWPORT"),
+                       key=lambda e: e.dxf.get("status", 1))
+        found = [e for e in found if e.dxf.get("status", 1) > 0]
+        if found and found[0].dxf.get("status", 1) == 1:
+            found = found[1:]  # the layout's overall view shows the paper, not the model
+        for entity in found:
+            scale = entity.get_scale()
+            if not entity.is_top_view or scale <= 0.0:
+                continue
+            inverse = entity.get_transformation_matrix().copy()
+            inverse.inverse()
+            (x0, y0), (x1, y1) = entity.clipping_rect()
+            maps.append(ViewportMap(layout=name, handle=entity.dxf.handle, box=(x0, y0, x1, y1),
+                                    scale=scale, matrix=tuple(inverse)))
+    return maps
+
+
+def layout_primitives(entity, view: ViewportMap) -> list:
+    """Virtual copies of a layout entity's primitives in modelspace coordinates: what
+    the render draws for it. Block references, dimensions and leaders are broken into
+    the lines and text they show. The document is not changed."""
+    matrix = view.to_model_matrix
+    primitives = []
+    for primitive in recursive_decompose([entity]):
+        moved = primitive.copy() if primitive.dxf.handle else primitive
+        try:
+            moved.transform(matrix)
+        except (TypeError, NotImplementedError, const.DXFError):
+            continue  # a primitive with no transform stays off the sheet rather than misplaced
+        primitives.append(moved)
+    return primitives
+
+
 # --- census -------------------------------------------------------------------
 
 def census(paths) -> dict:
@@ -235,6 +333,28 @@ def census(paths) -> dict:
     total["files"] = files
     total["errors"] = errors
     return total
+
+
+def _layout_census(doc) -> dict:
+    """What the layouts hold: the census keys beside this one count modelspace only."""
+    names = layouts(doc)
+    records = [r for name in names for r in entities(doc, name) if r.type != "VIEWPORT"]
+    types = Counter(r.type for r in records)
+    used = sorted({r.space for r in records})
+    return {
+        "count": len(names),
+        "with_entities": len(used),
+        "entities": len(records),
+        "viewports": len(viewports(doc)),
+        "entity_types": dict(types),
+        "text": sum(types[t] for t in TEXT_TYPES) + types["MTEXT"],
+        "dimensions": sum(1 for r in records if r.dim_kind),
+        "leaders": {
+            "LEADER": types["LEADER"],
+            "MLEADER": sum(types[t] for t in LEADER_TYPES),
+            "line_plus_text": sum(len(pseudo_leaders(doc, layout=name)) for name in used),
+        },
+    }
 
 
 def census_doc(doc) -> dict:
@@ -280,6 +400,7 @@ def census_doc(doc) -> dict:
             "count": len(doc.layers),
             "linetypes": dict(Counter(layer.dxf.linetype.upper() for layer in doc.layers)),
         },
+        "layouts": _layout_census(doc),
         "units": doc.units,
         "units_name": dxf_units.unit_name(doc.units),
         "dxfversion": doc.dxfversion,
@@ -338,27 +459,35 @@ class RenderInfo:
 
 
 def render(doc, dpi=96.0, out_png=None, *, max_px=8192, margin_px=16, min_stroke_px=1,
-           hatch="pattern") -> RenderInfo:
-    """Render modelspace black on white to `out_png` (when given) and return the transform.
+           hatch="pattern", layout=None, extra=(), only=None) -> RenderInfo:
+    """Render a layout black on white to `out_png` (when given) and return the transform.
 
     `hatch` is "pattern" (as drawn) or "region" (every HATCH as a solid fill).
+    `layout` picks a paper-space layout instead of modelspace; its viewports are not
+    drawn. `extra` is entities drawn on top in the same coordinates, such as
+    `layout_primitives` moved into modelspace. `only` is a set of top-level handles: the
+    page then holds those and nothing else, for one detail of a sheet that has many.
     """
-    info = render_info(doc, dpi, max_px=max_px, margin_px=margin_px,
-                       min_stroke_px=min_stroke_px, out_png=out_png)
-    image = render_image(doc, info, hatch=hatch)
+    info = render_info(doc, dpi, max_px=max_px, margin_px=margin_px, min_stroke_px=min_stroke_px,
+                       out_png=out_png, layout=layout, extra=extra, only=only)
+    image = render_image(doc, info, hatch=hatch, layout=layout, extra=extra, only=only)
     if out_png is not None:
         image.save(out_png)
     return info
 
 
 def render_info(doc, dpi=96.0, *, max_px=8192, margin_px=16, min_stroke_px=1,
-                out_png=None) -> RenderInfo:
+                out_png=None, layout=None, extra=(), px_per_unit=None, only=None) -> RenderInfo:
+    """The transform for a render. `px_per_unit` sets the geometry scale directly, for a
+    sheet whose $INSUNITS say nothing useful about how large it was drawn; `dpi` then only
+    sets how lineweights plot."""
     units = doc.units
     known = 0 < units < len(dxf_units.METER_FACTOR) and dxf_units.METER_FACTOR[units] is not None
     assumed = not known
     source = dxf_units.MM if assumed else units
-    px_per_unit = dpi * dxf_units.conversion_factor(source, dxf_units.IN)
-    extents = drawn_extents(doc) or (0.0, 0.0, 0.0, 0.0)
+    if px_per_unit is None:
+        px_per_unit = dpi * dxf_units.conversion_factor(source, dxf_units.IN)
+    extents = drawn_extents(doc, layout=layout, extra=extra, only=only) or (0.0, 0.0, 0.0, 0.0)
     span = max(extents[2] - extents[0], extents[3] - extents[1])
     capped = span * px_per_unit + 2 * margin_px > max_px
     if capped:
@@ -372,14 +501,28 @@ def render_info(doc, dpi=96.0, *, max_px=8192, margin_px=16, min_stroke_px=1,
                       path=str(out_png) if out_png is not None else None)
 
 
-def render_image(doc, info, *, hatch="pattern"):
+def render_image(doc, info, *, hatch="pattern", layout=None, extra=(), only=None):
     """The sheet as an 8-bit greyscale Pillow image, ink 0 on white."""
     image = Image.new("L", (info.width, info.height), 255)
     backend = _PillowBackend(info)
     backend.begin(image, ink=0)
-    frontend = _frontend(doc, backend, _config(info, hatch))
-    frontend.draw_layout(doc.modelspace(), finalize=True)
+    frontend = _frontend(doc, backend, _config(info, hatch), layout)
+    _draw(frontend, doc, layout, extra, finalize=True, only=only)
     return image
+
+
+def _draw(frontend, doc, layout, extra, *, finalize, only=None):
+    """The layout, then `extra` on top. Viewports stay out: a sheet is one transform."""
+    def wanted(entity):
+        if layout is not None and entity.dxftype() == "VIEWPORT":
+            return False
+        return only is None or entity.dxf.handle in only
+
+    frontend.draw_layout(_space(doc, layout), finalize=False, filter_func=wanted)
+    if extra:
+        frontend.draw_entities(extra)
+    if finalize:
+        frontend.pipeline.finalize()
 
 
 def _config(info, hatch):
@@ -394,15 +537,15 @@ def _config(info, hatch):
     )
 
 
-def _frontend(doc, backend, config):
+def _frontend(doc, backend, config, layout=None):
     ctx = RenderContext(doc)
-    ctx.set_current_layout(doc.modelspace())
+    ctx.set_current_layout(_space(doc, layout))
     return Frontend(ctx, backend, config=config)
 
 
-def drawn_extents(doc):
-    """x0, y0, x1, y1 of everything the drawing add-on draws for modelspace, in
-    drawing units, or None for an empty drawing.
+def drawn_extents(doc, *, layout=None, extra=(), only=None):
+    """x0, y0, x1, y1 of everything the drawing add-on draws for a layout (modelspace
+    by default) plus `extra`, in drawing units, or None for an empty drawing.
 
     Text glyphs, dimension blocks and leaders are included. `ezdxf.bbox` only
     approximates text, so a page sized from it cuts right-attached callouts.
@@ -410,7 +553,7 @@ def drawn_extents(doc):
     backend = _ExtentsBackend()
     # pattern lines never leave their boundary, so the outline is enough here
     config = Configuration(hatch_policy=HatchPolicy.SHOW_OUTLINE)
-    _frontend(doc, backend, config).draw_layout(doc.modelspace(), finalize=False)
+    _draw(_frontend(doc, backend, config, layout), doc, layout, extra, finalize=False, only=only)
     box = backend.box
     if not box.has_data:
         return None
