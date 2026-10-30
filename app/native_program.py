@@ -60,6 +60,29 @@ def expression_unit(expression, units):
         raise ValueError(f"invalid dimensional expression: {expression!r}") from error
 
 
+def unit_faults(parts, units):
+    """Every expression the unit rule refuses: {reason: ["part.dim = expression"]}.
+
+    All of them, each with where it is. Told only the first and not where, an agent with
+    25 of these spent 14 turns adding 90 params and changed none of the 25."""
+    found = {}
+    def check(where, expression, want):
+        try:
+            reason = None if expression_unit(expression, units) in (want, "zero") else f"use a named {want} value"
+        except ValueError as error:
+            reason = str(error).split(":")[0]
+        if reason:
+            found.setdefault(reason, []).append(f"{where} = {expression}")
+    for part in parts:
+        for dimension in part.dims:
+            check(f"{part.id}.{dimension.name}", dimension.expr, "ratio" if dimension.name == "fall_ratio" else "mm")
+        for point in part.path:
+            for expression in (point.x, point.y, point.z):
+                if expression:
+                    check(f"{part.id} path", expression, "mm")
+    return found
+
+
 class Feature(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
@@ -146,14 +169,11 @@ class NativeProgram(DetailProgram):
             for expression in list(part.param_bindings.values()) + [f.expected_expr for f in part.features]:
                 if not expr_names(expression) <= names:
                     raise ValueError(f"{part.id}: unknown parameter binding")
-            for dimension in part.dims:
-                want = "ratio" if dimension.name == "fall_ratio" else "mm"
-                if expression_unit(dimension.expr, units) not in (want, "zero"):
-                    raise ValueError(f"{part.id}.{dimension.name}: use a named {want} value")
-            for point in part.path:
-                for expression in (point.x, point.y, point.z):
-                    if expression and expression_unit(expression, units) not in ("mm", "zero"):
-                        raise ValueError(f"{part.id}: path coordinates require named lengths")
+        faults = unit_faults(self.parts, units)
+        if faults:
+            listed = " ".join(f"{reason}: {'; '.join(where)}." for reason, where in faults.items())
+            raise ValueError(f"{sum(map(len, faults.values()))} expressions refused. Replace each one: a new param "
+                             f"changes nothing until an expression uses it. {listed}")
         return self
 
 
@@ -196,14 +216,16 @@ def normalize_identifiers(raw):
             return ast.unparse(Rename().visit(ast.parse(value,mode="eval"))) if value else value
         except SyntaxError as error:
             raise ValueError("invalid dimensional expression: "+str(value)) from error
-    unique = {}
-    for param in raw["params"]:
+    unique, first_at = {}, {}
+    for index, param in enumerate(raw["params"]):
         param["name"] = names[param["name"]]
         if param["name"] in ("min","max"):
             raise ValueError("min/max are reserved expression function names")
         if param["name"] in unique and unique[param["name"]] != param:
-            raise ValueError("conflicting parameter definitions after normalization: "+param["name"])
+            raise ValueError(f"conflicting parameter definitions after normalization: {param['name']} "
+                             f"at /params/{first_at[param['name']]} and /params/{index}")
         unique[param["name"]] = param
+        first_at.setdefault(param["name"], index)
     raw["params"] = list(unique.values())
     for part in raw["parts"]:
         part["id"] = parts[part["id"]]

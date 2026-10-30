@@ -214,6 +214,12 @@ The stored step keeps the whole result, since `patch_program` resumes from a
 rejected `proposal` and the trace reads it. The full checks are in
 `verifications`. A failed render is tool feedback, never a lost run.
 
+A refused write says everything at once: every expression the unit rule refuses,
+each with where it is (`native_program.unit_faults`), and only the parts and
+params it names reach the model. A patch cannot define a name twice. With no
+version yet, the same refusal `SAME_REFUSALS` times over ends the run as
+`refused_again`: nothing moved, and there is no draft to continue from.
+
 A run records why it stopped when it stops, as `stop_reason` in the job result.
 One cut short (`repository.CUT_SHORT`) whose draft still has blocking checks
 (e.g. CAD placeholders) and made progress continues automatically as a

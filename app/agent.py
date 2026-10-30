@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 
 from . import database as d, meta_client
-from .agent_tools import AUTO_CAD, AUTO_COMPLETION, Tools, auto_cad_view, model_view
+from .agent_tools import AUTO_CAD, AUTO_COMPLETION, Tools, auto_cad_view, model_view, refused_again
 from .model_gateway import ModelGateway
 from .repository import TERMINAL, BudgetExceeded, canonical, inferred_part_ids, review_due, review_tail, tokens_left
 
@@ -331,6 +331,11 @@ class Agent:
                     self.stop_on_budget(error)
                     return
                 continue
+            if not run["working_version_id"] and refused_again(steps):
+                self.repo.end(self.fence, "needs_review", {"version_id": None, "detail_id": run["detail_id"],
+                              "open_issues": ["no program was accepted: the same refusal kept coming back"],
+                              "stop_reason": "refused_again"})
+                return
             if agent_turns and not any(o.get("type") == "function_call" for o in agent_turns[-1]["response"]["output"]):
                 response = agent_turns[-1]["response"]
                 reason, stop = (("provider_output_limit", "output_limit") if response.get("status") == "incomplete"

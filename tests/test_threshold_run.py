@@ -303,9 +303,42 @@ def test_a_rejection_that_names_no_part_shows_the_proposal_because_nothing_else_
     tools = Tools(source_repo, fence, ModelGateway(source_repo, fence, _read_response))
     tools.run("read", "read_drawing", {})
     candidate = threshold()
-    candidate["params"].append(dict(candidate["params"][1], value=999))
+    next(dim for dim in candidate["parts"][0]["dims"] if dim["name"] == "x1")["expr"] = "1 +"
     view = model_view("write_program", tools.run("w1", "write_program", {"program": candidate}))["error"]
-    assert view["proposal"]["parts"]
+    assert "1 +" in view["message"] and view["proposal"]["parts"]
+
+
+def test_a_conflict_says_where_both_definitions_are_and_shows_them_alone(source_repo):
+    """Seen live: told only the name, an agent counted indexes by hand and got them wrong,
+    and `@name` cannot reach one of two definitions."""
+    job, fence = _claim(source_repo)
+    tools = Tools(source_repo, fence, ModelGateway(source_repo, fence, _read_response))
+    tools.run("read", "read_drawing", {})
+    candidate, first = threshold(), 1
+    candidate["params"].append(dict(candidate["params"][first], value=999))
+    last = len(candidate["params"]) - 1
+    view = model_view("write_program", tools.run("w1", "write_program", {"program": candidate}))["error"]
+    assert f"{candidate['params'][first]['name']} at /params/{first} and /params/{last}" in view["message"]
+    assert "proposal" not in view and [p["value"] for p in view["named_params"]] == [candidate["params"][first]["value"], 999]
+    fixed = tools.run("p1", "patch_program", {"edits": [{"op": "remove", "path": f"/params/{last}"}]})
+    assert fixed.get("version_id"), fixed
+
+
+def test_a_patch_cannot_define_a_name_twice():
+    """Seen live: 59 added params, eight of them second definitions that took 12 turns to untangle."""
+    program, kept = threshold(), 1
+    param = program["params"][kept]
+    with pytest.raises(ValueError, match=f"params already has {param['name']}: replace /params/@{param['name']}"):
+        apply_edits(program, [{"op": "add", "path": "/params/-", "value": dict(param, value=999)}])
+    with pytest.raises(ValueError, match="already has"):
+        apply_edits(program, [{"op": "add", "path": f"/params/@{param['name']}", "value": dict(param, value=999)}])
+    assert apply_edits(program, [{"op": "add", "path": "/params/-", "value": dict(param)}])["params"] == program["params"]
+    swapped = [{"op": "remove", "path": f"/params/@{param['name']}"}, {"op": "add", "path": "/params/-", "value": dict(param, value=999)}]
+    assert apply_edits(program, swapped)["params"][-1]["value"] == 999
+    with pytest.raises(ValueError, match="/parts/@slab/dims already has x1: replace /parts/@slab/dims/@x1"):
+        apply_edits(program, [{"op": "add", "path": "/parts/@slab/dims/-", "value": {"name": "x1", "expr": "slab_depth"}}])
+    relation = dict(program["relations"][0])  # a list with no names is not touched
+    assert len(apply_edits(program, [{"op": "add", "path": "/relations/-", "value": relation}])["relations"]) == len(program["relations"]) + 1
 
 
 def test_a_result_names_the_objects_still_to_model(source_repo):
@@ -313,6 +346,114 @@ def test_a_result_names_the_objects_still_to_model(source_repo):
     view = model_view("write_program", written)
     assert view["next_step"].endswith("track, bottom_tray") and "before any more patches" in view["next_step"]
     assert "next_step" not in model_view("write_program", {"checks": [{"id": "cad-envelope-x", "status": "FAIL", "reason": "off"}]})
+
+
+def test_a_refusal_lists_every_fault_with_where_it_is_so_the_program_need_not_come_back(source_repo):
+    """Seen live: 25 of these, reported one at a time and with no location, took 14 turns
+    of adding params and fixed none of them."""
+    job, fence = _claim(source_repo)
+    tools = Tools(source_repo, fence, ModelGateway(source_repo, fence, _read_response))
+    tools.run("read", "read_drawing", {})
+    candidate = threshold()
+    dims = {d_["name"]: d_ for d_ in candidate["parts"][0]["dims"]}
+    dims["x1"]["expr"], dims["x0"]["expr"] = "slab_length + 25", "-70"
+    next(d_ for d_ in candidate["parts"][1]["dims"] if d_["name"] == "x1")["expr"] = "no_such_length"
+    view = model_view("write_program", tools.run("w1", "write_program", {"program": candidate}))["error"]
+    assert "3 expressions refused" in view["message"]
+    for fault in ("slab.x1 = slab_length + 25", "slab.x0 = -70", "layer.x1 = no_such_length"):
+        assert fault in view["message"]
+    assert "matching units" in view["message"] and "use a named mm value" in view["message"]
+    assert "invalid dimensional expression" in view["message"]
+    assert "proposal" not in view and [p["id"] for p in view["named_parts"]] == ["slab", "layer"]
+    assert [p["name"] for p in view["named_params"]] == ["slab_length"]
+
+
+def test_a_refusal_has_room_for_a_long_list(source_repo):
+    job, fence = _claim(source_repo)
+    tools = Tools(source_repo, fence, ModelGateway(source_repo, fence, _read_response))
+    tools.run("read", "read_drawing", {})
+    candidate = threshold()
+    for n in range(15):
+        extra = copy.deepcopy(candidate["parts"][0])
+        extra["id"] = f"copy_{n}"
+        for dim in extra["dims"]:
+            if dim["name"] in ("x1", "y1"):
+                dim["expr"] = "structural_slab_top_level + 25"
+        candidate["parts"].append(extra)
+    view = model_view("write_program", tools.run("w1", "write_program", {"program": candidate}))["error"]
+    assert "30 expressions refused" in view["message"] and view["message"].count("+ 25") == 30
+
+
+def test_a_rejected_path_coordinate_says_which_part():
+    raw = threshold()
+    raw["parts"][1].update(shape="sheet", dims=_dims(thickness="liquid_applied_layer_thickness", z0="0", z1="run_length"),
+                           path=[{"x": "0", "y": "slab_length + 25"}, {"x": "slab_length", "y": "0"}])
+    with pytest.raises(ValueError, match=r"layer path = slab_length \+ 25"):
+        _prepared(raw)
+
+
+class Refused:
+    """Writes a program with faults, then sends the patches it is given, one a turn."""
+    def __init__(self, program, patches):
+        self.program, self.patches, self.turns = program, patches, 0
+
+    def __call__(self, payload):
+        if payload.get("text", {}).get("format", {}).get("name") == "read":
+            return _read_response(payload)
+        self.turns += 1
+        if self.turns == 1:
+            call = ("read_drawing", {})
+        elif self.turns == 2:
+            call = ("write_program", {"program": self.program})
+        elif self.patches:
+            call = ("patch_program", {"edits": self.patches.pop(0)})
+        else:
+            call = ("finish", {"version_id": None, "verification_id": None, "critic_verdict_id": None,
+                               "status": "needs_review", "summary": "stop", "open_issues": []})
+        return {"output": [{"type": "function_call", "name": call[0], "call_id": f"call-{self.turns}", "arguments": json.dumps(call[1])}],
+                "usage": _usage(100, 0, 10)}
+
+
+def _faulty(*dims):
+    program = threshold()
+    for dim in program["parts"][0]["dims"]:
+        if dim["name"] in dims:
+            dim["expr"] = "structural_slab_top_level + 25"
+    return program
+
+
+def test_the_same_refusal_three_times_ends_a_run_that_has_no_version(source_repo):
+    """Seen live: 268k tokens on a program that was never accepted."""
+    idle = [{"op": "replace", "path": "/title", "value": "another try"}]
+    model = Refused(_faulty("x1"), [idle] * 40)
+    job = source_repo.enqueue("generate_detail", {"figure_id": "figure"})
+    Worker(source_repo, responder=model).run_once(only_ids=[job["id"]])
+    ended = source_repo.get(d.jobs, job["id"])
+    assert ended["state"] == "needs_review" and ended["result"]["stop_reason"] == "refused_again"
+    assert model.turns == 4 and ended["result"]["version_id"] is None  # the write and two patches
+    assert continue_if_cut_short(source_repo, job["id"], limit=2) is None  # nothing to continue from
+
+
+def test_a_run_with_a_draft_is_not_stopped_by_refused_patches(source_repo):
+    """It has a version to keep, a refused patch leaves that version as it was, and the
+    repair loop and the budget bound what follows."""
+    refused = [{"op": "replace", "path": "/parts/@slab/role", "value": "object"}]
+    model = Refused(threshold(), [refused] * 4)
+    job = source_repo.enqueue("generate_detail", {"figure_id": "figure"})
+    Worker(source_repo, responder=model).run_once(only_ids=[job["id"]])
+    assert source_repo.run(job["id"])["working_version_id"] and model.turns >= 6
+    assert source_repo.get(d.jobs, job["id"])["result"].get("stop_reason") != "refused_again"
+
+
+def test_a_run_getting_through_its_faults_is_not_stopped(source_repo):
+    """Three refusals in a row, each with less on it: only sameness means nothing moved."""
+    model = Refused(_faulty("x1", "y1", "z1"), [
+        [{"op": "replace", "path": "/parts/@slab/dims/@x1/expr", "value": "slab_length"}],
+        [{"op": "replace", "path": "/parts/@slab/dims/@y1/expr", "value": "structural_slab_top_level"}],
+        [{"op": "replace", "path": "/parts/@slab/dims/@z1/expr", "value": "run_length"}]])
+    job = source_repo.enqueue("generate_detail", {"figure_id": "figure"})
+    Worker(source_repo, responder=model).run_once(only_ids=[job["id"]])
+    assert source_repo.run(job["id"])["working_version_id"]
 
 
 def test_a_repeated_gate_note_reaches_the_model_once(source_repo, monkeypatch):

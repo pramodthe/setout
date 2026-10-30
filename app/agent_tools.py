@@ -125,6 +125,10 @@ def model_checks(checks):
             "check_counts": dict(sorted(Counter(c["status"] for c in checks).items()))}
 
 
+SAME_REFUSALS = 3  # the same refusal this many times over, with no version, ends the run
+REFUSAL_CHARS = 3000  # room for a refusal listing what is wrong; far less than sending the program back
+
+
 def rejected_write(error):
     """A rejected write as the model reads it. The stored result keeps the whole
     proposal, because patch_program resumes from it when no version exists yet."""
@@ -133,17 +137,28 @@ def rejected_write(error):
     if error.get("working_version_id"):
         # It came from a program the model has and edits it wrote.
         return {**error, "note": "Nothing was applied: the working version is unchanged. Send the corrected edits."}
-    parts = proposal.get("parts", [])
+    parts, params = proposal.get("parts", []), proposal.get("params", [])
     named = [p for p in parts if re.search(rf"\b{re.escape(p['id'])}\b", error.get("message", ""))]
-    if not named:
+    named_params = [p for p in params if re.search(rf"\b{re.escape(p['name'])}\b", error.get("message", ""))]
+    if not named and not named_params:
         # write_program authors in a nested call, so the model has never seen
         # this program, and the message does not say where the fault is: the
         # whole proposal is the only way to find it.
         return {**error, "proposal": proposal}
-    return {**error, "named_parts": named, "part_ids": [p["id"] for p in parts],
-            "parameter_names": [p["name"] for p in proposal.get("params", [])],
+    return {**error, "named_parts": named, "named_params": named_params, "part_ids": [p["id"] for p in parts],
+            "parameter_names": [p["name"] for p in params],
             "note": "The rejected program is kept. Repair it with patch_program (/parts/@id/...), which applies to it; "
                     "do not call write_program again."}
+
+
+def refused_again(steps):
+    """Whether the last writes all came back with one refusal. It lists every fault, so
+    if nothing changed then nothing moved, and with no version more turns only spend:
+    seen live, 268k tokens on a program that was never accepted."""
+    writes = [s for s in steps if s["kind"] == "tool" and s["tool_name"] in ("write_program", "patch_program")]
+    errors = [(s["output"] or {}).get("error") for s in writes[-SAME_REFUSALS:]]
+    messages = {e.get("message") if isinstance(e, dict) else None for e in errors}
+    return len(errors) == SAME_REFUSALS and len(messages) == 1 and None not in messages
 
 
 def completion_view(summary):
@@ -611,7 +626,7 @@ class Tools:
             try:
                 return self._prepare(call_id, "write_program", {"program":proposed})
             except ValueError as error:
-                return {"tool_error":{"code":"invalid_tool_input","message":str(error)[:1000],
+                return {"tool_error":{"code":"invalid_tool_input","message":str(error)[:REFUSAL_CHARS],
                          "working_version_id":run["working_version_id"],"proposal":proposed}}
         if name == "read_drawing":
             if run["working_version_id"]:
@@ -708,7 +723,7 @@ class Tools:
                 # Return the rejected proposal: with no working version yet,
                 # the next patch applies to it, so fixes accumulate instead of
                 # restarting from the first rejected program.
-                return {"tool_error": {"code": "invalid_tool_input", "message": str(error)[:1000],
+                return {"tool_error": {"code": "invalid_tool_input", "message": str(error)[:REFUSAL_CHARS],
                         "working_version_id": run["working_version_id"], "proposal": proposed}}
             bindings = kept_bindings(parent["program"], copy.deepcopy(parent["bindings"]), program) if parent else {}
             return self._stage_successor({"program": program.model_dump(mode="json"), "spec": spec.model_dump(mode="json"),
