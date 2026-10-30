@@ -50,8 +50,10 @@ Shape dimensions are a dims ARRAY of {name,expr}, with expressions in mm:
 - cad (objects only): x0,x1,y0,y1,z0,z1 envelope, cad_brief, param_bindings and
   placement {x:expr,y:expr,z:expr}. Define dimensions for every part, including CAD.
 Every part has id,type,label,shape,role,dims,path,install_after,note and features.
-Use boxes for planar layer interfaces this verifier supports; unsupported curved
-interfaces remain UNVERIFIED. Do not replace layers with CAD to evade these checks.
+Use boxes for planar layer interfaces this verifier supports. A built solid with no
+flat face toward another part (a rod, a rounded bead) is measured at its curve, so give
+it a relation as you would any part; a flat face tilted off the axis stays UNVERIFIED.
+Do not replace layers with CAD to evade these checks.
 Each READ dimension ID must own one measured feature via source_dimension_id. Only
 that feature carries it; every other feature leaves source_dimension_id null.
 Drawing parameters must drive geometry itself, not only expected_expr.

@@ -283,8 +283,12 @@ Cross-file contracts. These are not obvious from any single file:
 - **A relation's pass mark belongs to the verifier** (`verification_v3.py`,
   `CONTACT_FLOOR`, `COVER_FLOOR`). The contact kinds (`supported_by`, `bonded_to`,
   `sealed_to`, `terminates_against`, `abuts`, `covers`, `laps_over`) measure the same
-  thing on planes the verifier picks: the share of the smaller face that touches.
-  `covers` must also hide the target's face. `laps_over` alone may have less, and
+  thing on planes the verifier picks: the share of the smaller face that touches. A
+  built solid with no flat face that way (a rod) has the strip of its curve within the
+  contact tolerance for a face, and `MESH_SAG`, the export tolerance, is all a gap is
+  forgiven; a flat face tilted that way is no curve and stays UNVERIFIED, or a foot
+  tilted to touch at its tip would clear the floor it fails lying flat. `covers` must
+  also hide the target's face. `laps_over` alone may have less, and
   only between two layers by role, running past each other's ends by `LAP_WIDTHS`
   times the thinner one; that bar is ours and rests on very little. `fixed_to` is
   measured on the two solids along the fixing, and `hosted_in` on the target's solid

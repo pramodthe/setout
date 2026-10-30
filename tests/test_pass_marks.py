@@ -5,11 +5,14 @@ taken. The fixtures are our own: blocks of named sizes, no drawing. Measured on
 built meshes through the same code a version is verified with.
 """
 import copy
+import math
+from pathlib import Path
 from typing import get_args
 
 import pytest
 
 from app.geometry import Mesh, _box_tris
+from app.interfaces import MESH_SAG
 from app.native_program import NativeProgram, NativeRelation, prepare
 from app.verification_probes import shared_length, solid_spans
 from app.verification_v3 import (COVER_FLOOR, CONTACT_FLOOR, LAP_WIDTHS, is_lap, label_check, part_thickness,
@@ -277,8 +280,50 @@ def _resting_on_a_surface():
     return raw, {"slab": _box("slab", 0, 0, 500, 50), "part": _box("part", 200, 50, 240, 90)}, {}, "part", "slab"
 
 
+def _rod(name, cx, cy, radius=5, z0=0, z1=100, segments=64):
+    """A round bar along z, its mesh made the way an exporter makes one: of chords, with no
+    vertex on the very top or bottom of the curve."""
+    mesh = Mesh(name)
+    corner = lambda i: (cx + radius * math.sin((i + .5) * 2 * math.pi / segments), cy - radius * math.cos((i + .5) * 2 * math.pi / segments))  # noqa: E731
+    for i in range(segments):
+        (ax, ay), (bx, by) = corner(i), corner(i + 1)
+        mesh.positions += [ax, ay, z0, bx, by, z0, bx, by, z1, ax, ay, z0, bx, by, z1, ax, ay, z1]
+    return mesh
+
+
+def _rod_case(sheet, rod, target_is_rod=False):
+    """A built rod with only its two flat ends measured, as a real solid reports one."""
+    raw = _parts(("sheet", "substrate"), ("rod", "object"))
+    raw["parts"][1].update(shape="cad", form="shaped", cad_brief="a round bar", param_bindings={"width": "width"})
+    return raw, {"sheet": sheet, "rod": rod}, {"rod": [([0, 0, -1], [100, 0, 0]), ([0, 0, 1], [100, 0, 100])]}, "rod", "sheet"
+
+
+def _rod_over_the_end_of_a_sheet():
+    """The 19% foot again: all of the rod's width over the sheet, 19% of its run."""
+    return _rod_case(_box("sheet", 0, 0, 200, 2, z1=19), _rod("rod", 100, 7))
+
+
+def _rod_floating():
+    return _rod_case(_box("sheet", 0, 0, 200, 2), _rod("rod", 100, 12))
+
+
+def _rod_beside_its_target():
+    return _rod_case(_box("sheet", 0, 0, 200, 2), _rod("rod", 300, 7))
+
+
+def _rod_sunk_into_its_target():
+    return _rod_case(_box("sheet", 0, 0, 200, 50), _rod("rod", 100, 52))
+
+
+def _rod_resting_on_a_surface():
+    return _rod_case(_box("sheet", 0, 0, 200, 2), _rod("rod", 100, 7))
+
+
 HOSTILE = {"foot on the end of a sheet": _foot_on_end_of_a_sheet, "floating in a bent plate": _floating_in_a_bent_plate,
-           "beside its target": _beside_its_target, "resting on a surface": _resting_on_a_surface}
+           "beside its target": _beside_its_target, "resting on a surface": _resting_on_a_surface,
+           "rod over the end of a sheet": _rod_over_the_end_of_a_sheet, "rod floating": _rod_floating,
+           "rod beside its target": _rod_beside_its_target, "rod sunk into its target": _rod_sunk_into_its_target,
+           "rod resting on a surface": _rod_resting_on_a_surface}
 # Every way of declaring a relation that might change what is measured.
 DECLARED = {"faces": dict(TOUCHING), "faces, asking nothing": {**TOUCHING, "min_coverage": 0.0}, "no constraints": {},
             "axis x": {"axis": "x"}, "axis y": {"axis": "y"}, "axis z": {"axis": "z"}}
@@ -296,7 +341,8 @@ def test_every_kind_is_classified():
 
 
 @pytest.mark.parametrize("kind", KINDS)
-@pytest.mark.parametrize("case", ["foot on the end of a sheet", "floating in a bent plate", "beside its target"])
+@pytest.mark.parametrize("case", ["foot on the end of a sheet", "floating in a bent plate", "beside its target",
+                                  "rod over the end of a sheet", "rod floating", "rod beside its target", "rod sunk into its target"])
 @pytest.mark.parametrize("declared", DECLARED)
 def test_no_kind_passes_what_is_not_there(case, kind, declared):
     """Renaming a relation, or declaring it differently, must never clear a measurement."""
@@ -309,9 +355,10 @@ def test_no_kind_passes_what_is_not_there(case, kind, declared):
 
 
 @pytest.mark.parametrize("kind", KINDS)
+@pytest.mark.parametrize("case", ["resting on a surface", "rod resting on a surface"])
 @pytest.mark.parametrize("declared", DECLARED)
-def test_a_part_resting_on_a_surface_is_a_contact_and_nothing_more(kind, declared):
-    found, checks, source = _verdict("resting on a surface", kind, DECLARED[declared])
+def test_a_part_resting_on_a_surface_is_a_contact_and_nothing_more(case, kind, declared):
+    found, checks, source = _verdict(case, kind, DECLARED[declared])
     if kind == "installed_before":
         assert f"anchored-{source}" in checks
     elif kind in CONTACT_ONLY and "source_face" in DECLARED[declared]:
@@ -321,9 +368,85 @@ def test_a_part_resting_on_a_surface_is_a_contact_and_nothing_more(kind, declare
 
 
 @pytest.mark.parametrize("kind", SOLID)
-def test_a_part_that_rests_is_told_to_say_so(kind):
-    found, _, _ = _verdict("resting on a surface", kind, {})
+@pytest.mark.parametrize("case", ["resting on a surface", "rod resting on a surface"])
+def test_a_part_that_rests_is_told_to_say_so(case, kind):
+    found, _, _ = _verdict(case, kind, {})
     assert found["status"] == "FAIL" and "contact kind" in found["reason"] and "supported_by" in found["reason"]
+
+
+# ----------------------------------------------------------------------------- round parts
+
+def _rod_relation(raw, meshes, planes, source, target, **constraints):
+    raw["relations"] = [_relation(source, target, "supported_by", **constraints)]
+    return _checks(raw, meshes, cad_planes=planes)["assembly-0-supported_by"]
+
+
+def test_a_rod_on_a_surface_is_measured_where_it_touches():
+    """Seen live: a backing rod could be measured against nothing."""
+    raw, meshes, planes, source, target = _rod_resting_on_a_surface()
+    found = _rod_relation(raw, meshes, planes, source, target, max_gap=0)
+    assert found["status"] == "PASS" and found["contact"] == 1 and found["min_gap"] == found["max_gap"] == 0
+
+
+def test_a_part_resting_on_a_rod_is_measured_the_same():
+    raw, meshes, planes, _, _ = _rod_case(_box("sheet", 90, 12, 110, 20), _rod("rod", 100, 7))
+    raw["parts"].reverse()  # the rod goes in first
+    raw["parts"][0]["install_after"], raw["parts"][1]["install_after"] = [], ["rod"]
+    found = _rod_relation(raw, meshes, planes, "sheet", "rod", max_gap=0)
+    assert found["status"] == "PASS" and found["contact"] == 1
+
+
+def _tilted_foot():
+    """A foot 100 long whose underside is tilted so that only the 19 mm over the sheet
+    comes near it: no flat face down, so judged on its lowest strip it would touch fully."""
+    raw, _, _, _, _ = _rod_case(_box("sheet", 0, 0, 200, 2), _rod("rod", 100, 7))
+    foot = Mesh("rod")
+    low, high = (181, 2, 0), (281, 30, 0)
+    for z0, z1 in ((0, 100),):
+        foot.positions += [low[0], low[1], z0, high[0], high[1], z0, high[0], high[1], z1,
+                           low[0], low[1], z0, high[0], high[1], z1, low[0], low[1], z1]
+        foot.positions += [low[0], 34, z0, high[0], 34, z0, high[0], 34, z1, low[0], 34, z0, high[0], 34, z1, low[0], 34, z1]
+    tilt = math.hypot(100, 28)
+    planes = {"rod": [([28 / tilt, -100 / tilt, 0], [231, 16, 50]), ([0, 1, 0], [231, 34, 50]),
+                      ([0, 0, -1], [231, 18, 0]), ([0, 0, 1], [231, 18, 100])]}
+    return raw, {"sheet": _box("sheet", 0, 0, 200, 2), "rod": foot}, planes, "rod", "sheet"
+
+
+@pytest.mark.parametrize("kind", CONTACT_ONLY + HIDES)
+def test_a_tilted_foot_is_not_a_curve_and_gets_no_way_round_the_floor(kind):
+    """The way round the curved path opens if tilted faces count as curves."""
+    raw, meshes, planes, source, target = _tilted_foot()
+    raw["relations"] = [_relation(source, target, kind)]
+    found = _checks(raw, meshes, cad_planes=planes)[f"assembly-0-{kind}"]
+    assert found["status"] == "UNVERIFIED" and found["required"] and "B-Rep plane" in found["reason"]
+
+
+def test_a_rod_measures_a_gap_as_small_as_its_mesh_can_show_and_no_smaller():
+    """The sag allowance covers the mesh's chords, not a real gap: 0.2 mm is still a gap."""
+    for clearance, passes in ((0, True), (.2, False)):
+        raw, meshes, planes, source, target = _rod_case(_box("sheet", 0, 0, 200, 2), _rod("rod", 100, 7 + clearance))
+        assert (_rod_relation(raw, meshes, planes, source, target, max_gap=0)["status"] == "PASS") is passes
+    raw, meshes, planes, source, target = _rod_case(_box("sheet", 0, 0, 200, 2), _rod("rod", 100, 7.2))
+    found = _rod_relation(raw, meshes, planes, source, target, max_gap=.5)
+    assert found["status"] == "PASS" and .1 < found["max_gap"] < .2  # an allowed gap, and it says how much
+
+
+def test_a_rod_overlapping_its_target_is_not_excused_by_the_allowance():
+    raw, meshes, planes, source, target = _rod_case(_box("sheet", 0, 0, 200, 2), _rod("rod", 100, 6.9))
+    found = _rod_relation(raw, meshes, planes, source, target, max_gap=0)
+    assert found["status"] == "FAIL" and found["min_gap"] < -.05
+
+
+def test_the_allowance_is_what_the_exporter_really_uses():
+    source = Path("app/cad_components.py").read_text()
+    assert source.count(f"tolerance={MESH_SAG}, angularTolerance") == 2
+
+
+def test_a_cad_part_that_was_never_built_is_still_not_measured():
+    """A placeholder has a mesh but no solid. Only a built solid may meet things on a curve."""
+    raw, meshes, _, source, target = _rod_resting_on_a_surface()
+    found = _rod_relation(raw, meshes, {}, source, target)
+    assert found["status"] == "UNVERIFIED" and "B-Rep" in found["reason"]
 
 
 # ------------------------------------------------------------------------- a true lap
@@ -537,11 +660,11 @@ def test_a_shaped_object_that_does_not_reach_shows_its_real_gap():
     assert check["status"] == "FAIL" and "5 to 5 mm apart" in check["reason"]
 
 
-def test_a_solid_with_no_flat_face_that_way_is_not_measured():
+def test_a_solid_with_only_a_tilted_face_that_way_is_not_measured():
     raw = _shaped(("supported_by", "supported_by"))
     meshes = {"pad": _box("pad", 50, 10, 150, 20), "plate": _bent_plate(), "foot": _box("foot", 60, 24, 140, 40)}
-    up_only = [plane for plane in PLATE_PLANES if plane[0][1] > 0]
-    check = _checks(raw, meshes, cad_planes={"plate": up_only, "foot": FOOT_PLANES})["assembly-0-supported_by"]
+    tilted = [plane for plane in PLATE_PLANES if plane[0][1] > 0] + [([0, -.7, .7], [100, 20, 50])]
+    check = _checks(raw, meshes, cad_planes={"plate": tilted, "foot": FOOT_PLANES})["assembly-0-supported_by"]
     assert check["status"] == "UNVERIFIED" and check["required"] and "B-Rep plane" in check["reason"]
 
 

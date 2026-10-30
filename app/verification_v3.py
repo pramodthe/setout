@@ -363,16 +363,26 @@ def solid_relation(ident, relation, program, meshes, ordering):
 
 
 def facing_levels(part, mesh, planes, axis, side):
-    """Where along `axis` a part can meet another on `side`: a measured solid's flat
-    faces looking that way, or an exact primitive's outer face."""
+    """(levels, curved). Where along `axis` a part can meet another on `side`: a measured
+    solid's flat faces looking that way, or an exact primitive's outer face. A built solid
+    with no flat face that way (a rod, a rounded bead) turns a curve to the other part
+    and meets it at the curve's extreme. Seen live: a rod could be measured against
+    nothing, so no detail with one could ever be finished. A flat face tilted that way
+    is no curve: judged on its lowest strip, a foot tilted so that only its tip reached
+    a sheet would clear the floor it fails lying flat. `planes`: None if not built."""
+    bounds = mesh.bounds()
+    extreme = bounds[axis + (3 if side == "max" else 0)] if bounds else None
     if part.shape != "cad":
-        bounds = mesh.bounds()
-        return [bounds[axis + (3 if side == "max" else 0)]] if bounds else []
+        return ([extreme] if bounds else []), False
+    if planes is None or not bounds:
+        raise ValueError("selected CAD interface is not an independently measured B-Rep plane")
     sign = 1 if side == "max" else -1
     levels = sorted({center[axis] for normal, center in planes if normal[axis] * sign > 0.999999})
-    if not levels:
+    if levels:
+        return levels, False
+    if any(normal[axis] * sign > 1e-6 for normal, _ in planes):
         raise ValueError("selected CAD interface is not an independently measured B-Rep plane")
-    return levels
+    return [extreme], True
 
 
 def meeting_interface(relation, parts, meshes, cad_planes, axis, settings, tolerance):
@@ -383,15 +393,17 @@ def meeting_interface(relation, parts, meshes, cad_planes, axis, settings, toler
     picks the planes: the author names the sides, and the kind plays no part in it."""
     source, target = parts[relation.source], parts[relation.target]
     planes = cad_planes or {}
-    below = facing_levels(source, meshes[source.id], planes.get(source.id, []), axis, settings["source_face"])
-    above = facing_levels(target, meshes[target.id], planes.get(target.id, []), axis, settings["target_face"])
+    below, source_curved = facing_levels(source, meshes[source.id], planes.get(source.id), axis, settings["source_face"])
+    above, target_curved = facing_levels(target, meshes[target.id], planes.get(target.id), axis, settings["target_face"])
     pairs = sorted(((abs(a - b), a, b) for a in below for b in above), key=lambda pair: pair[0])
     close = [pair for pair in pairs if pair[0] <= tolerance + 1e-6] or pairs[:1]
     def measured(pair):
         return measure_interface(meshes[source.id], meshes[target.id], axis, settings["source_face"], settings["target_face"],
                                  relation.kind in ("covers", "laps_over"),
                                  source_level=pair[1] if source.shape == "cad" else None,
-                                 target_level=pair[2] if target.shape == "cad" else None)
+                                 target_level=pair[2] if target.shape == "cad" else None,
+                                 source_band=tolerance if source_curved else None,
+                                 target_band=tolerance if target_curved else None)
     return max((measured(pair) for pair in close), key=lambda result: result["contact"])
 
 
