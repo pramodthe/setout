@@ -385,3 +385,102 @@ def program_with_zone():
     zone.update(id="clear_space", type="circulation_space", label=None, role="zone", features=[], install_after=[])
     raw["parts"].append(zone)
     return raw
+
+
+def _solid(name, y0, y1, x0=0, x1=100, z0=0, z1=100):
+    from app.geometry import _box_tris
+    mesh = Mesh(name)
+    _box_tris(mesh, x0, y0, z0, x1, y1, z1)
+    return mesh
+
+
+def test_declared_gap_band_is_capped_by_half_the_thinner_part():
+    native = _layer_program()
+    for relation in native.relations:
+        relation.constraints["max_gap"] = 2.0  # the old flat tolerance, written into the relation
+    meshes = {"membrane": _solid("membrane", 0, 1.5), "adhesive": _solid("adhesive", 3.3, 8.3), "tile": _solid("tile", 8.3, 18.3)}
+    checks = {c["id"]: c for c in spatial_checks(native, meshes)}
+    floating = checks["assembly-0-covers"]  # adhesive 1.8 mm above a 1.5 mm membrane
+    assert floating["status"] == "FAIL" and floating["gap"] == pytest.approx(1.8)
+    assert floating["contact_tolerance"] == 0.75 and floating["gap_band"] == [-0.01, 0.75]
+    bedded = checks["assembly-1-covers"]  # 10 mm tile on 5 mm adhesive: the flat cap applies
+    assert bedded["status"] == "PASS" and bedded["contact_tolerance"] == 2.0
+    meshes.update(adhesive=_solid("adhesive", 1.5, 6.5), tile=_solid("tile", 6.5, 16.5))
+    assert all(c["status"] == "PASS" for c in spatial_checks(native, meshes))
+
+
+def test_layer_order_probes_follow_the_declared_faces():
+    from app.verification_probes import layer_order_probes, line_hits
+    native = _layer_program()
+    meshes = {"membrane": _solid("membrane", 0, 1.5), "adhesive": _solid("adhesive", 1.5, 6.5), "tile": _solid("tile", 6.5, 16.5)}
+    probes = {p["id"]: p for p in layer_order_probes(native, meshes)}
+    assert set(probes) == {"layer-order:membrane:adhesive", "layer-order:adhesive:tile"}
+    assert all(p["status"] == "PASS" and p["probes"] == 9 and p["axis"] == "y" for p in probes.values())
+    swapped = {**meshes, "membrane": _solid("membrane", 5, 6.5), "adhesive": _solid("adhesive", 0, 5)}
+    probes = {p["id"]: p for p in layer_order_probes(native, swapped)}
+    assert probes["layer-order:membrane:adhesive"]["status"] == "FAIL"
+    assert probes["layer-order:membrane:adhesive"]["violations"] == 9
+    assert probes["layer-order:adhesive:tile"]["status"] == "PASS"
+    apart = {**meshes, "membrane": _solid("membrane", 0, 1.5, z0=300, z1=400)}
+    probes = {p["id"]: p for p in layer_order_probes(native, apart)}
+    assert probes["layer-order:membrane:adhesive"]["status"] == "UNVERIFIED"
+    assert probes["layer-order:membrane:adhesive"]["probes"] == 0
+    # The declared faces fix the direction: a layer covering another along +x.
+    native.relations[0].constraints["axis"] = "x"
+    sideways = {**meshes, "membrane": _solid("membrane", 0, 100, x0=0, x1=10), "adhesive": _solid("adhesive", 0, 100, x0=10, x1=20)}
+    assert layer_order_probes(native, sideways)[0]["status"] == "PASS"
+    sideways["adhesive"] = _solid("adhesive", 0, 100, x0=-10, x1=0)
+    assert layer_order_probes(native, sideways)[0]["status"] == "FAIL"
+    # Lines parallel to a face never count it as a crossing.
+    along_y = line_hits(_solid("box", 0, 10), 1, [(25, 40), (500, 500)])
+    assert along_y[0] == pytest.approx([0, 10]) and along_y[1] == []
+    assert line_hits(_solid("box", 0, 10), 0, [(5, 40)])[0] == pytest.approx([0, 100])
+
+
+def test_slot_checks_follow_the_contract():
+    ontology = pytest.importorskip("app.ontology")
+    from app.verification_v3 import slot_checks
+    ont = ontology.load()
+    program = _layer_program()
+    unset = {c["id"]: c for c in slot_checks(program)}
+    assert list(unset) == ["assembly-class-unset"]
+    assert unset["assembly-class-unset"]["status"] == "UNVERIFIED" and not unset["assembly-class-unset"]["required"]
+    program.assembly_class = "not_an_assembly"
+    assert {c["id"]: c["status"] for c in slot_checks(program)} == {"assembly-class-unknown": "FAIL"}
+    program.assembly_class = None
+    program.parts[0].class_id = "not_a_class"
+    checks = {c["id"]: c for c in slot_checks(program)}
+    assert checks["class-unknown:membrane"]["status"] == "FAIL" and checks["class-unknown:membrane"]["required"]
+    assert checks["assembly-class-unset"]["status"] == "UNVERIFIED"
+    # A class whose role differs from the part's declared role (the tile is a finish).
+    program.parts[0].class_id = None
+    class_id = next(i for i in ont.component_ids() if ont.component(i).role not in ("object", program.parts[2].role))
+    program.parts[2].class_id = class_id
+    checks = {c["id"]: c for c in slot_checks(program)}
+    assert checks["class-role:tile"]["status"] == "FAIL" and checks["class-role:tile"]["class_role"] == ont.component(class_id).role
+
+
+@pytest.mark.parametrize("kind", ["hosted_in", "fixed_to", "abuts", "repeated_along"])
+def test_world_model_relation_kinds_are_reported_not_measured(kind):
+    from app.native_program import NativeRelation
+    from app.verification_probes import layer_order_probes
+    native = _layer_program()
+    native.relations.append(NativeRelation(source="tile", target="membrane", kind=kind, constraints=dict(
+        native.relations[0].constraints)))
+    meshes = {"membrane": _solid("membrane", 0, 1.5), "adhesive": _solid("adhesive", 1.5, 6.5), "tile": _solid("tile", 6.5, 16.5)}
+    checks = {c["id"]: c for c in spatial_checks(native, meshes)}
+    unmeasured = checks[f"assembly-2-{kind}"]
+    assert unmeasured["status"] == "UNVERIFIED" and not unmeasured["required"] and kind in unmeasured["reason"]
+    assert all(c["status"] == "PASS" for i, c in checks.items() if i != f"assembly-2-{kind}")
+    assert {p["id"] for p in layer_order_probes(native, meshes)} == {"layer-order:membrane:adhesive", "layer-order:adhesive:tile"}
+
+
+def test_class_claims_without_an_ontology_stay_unverified_and_block(monkeypatch):
+    from app import verification_v3
+    monkeypatch.setattr(verification_v3, "ontology_or_error", lambda: (None, "ontology unavailable: test"))
+    program = _layer_program()
+    program.assembly_class = "door_threshold"
+    program.parts[0].class_id = "membrane"
+    checks = {c["id"]: c for c in verification_v3.slot_checks(program)}
+    assert checks["assembly-class-unknown"]["status"] == "UNVERIFIED" and checks["assembly-class-unknown"]["required"]
+    assert checks["class-unknown:membrane"]["status"] == "UNVERIFIED" and checks["class-unknown:membrane"]["required"]

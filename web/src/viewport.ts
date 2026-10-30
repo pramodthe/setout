@@ -11,12 +11,14 @@ import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment
 import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import { SPECS, disposeTextures, makeMaterial, materialClassFor } from "./materials";
 import type { MaterialClass } from "./materials";
+import { partBadge, partOpacity } from "./provenance";
 import type { Scene as SceneData } from "./types";
 import { boxProjectUVs } from "./uv";
 
 const K = 0.01; // mm -> scene units (== app/units.py MM_PER_VIEW_UNIT)
 const INTRO_MS = 520; // drop-in time per component
-const GHOST = 0.12; // opacity of components outside an isolate() set
+const GHOST = 0.12; // opacity of components outside an isolate() set; inferred
+// parts sit above it (provenance.INFERRED_OPACITY), so they stay pickable
 
 /* Up to n points spread over a mesh's vertices (world space), each pulled 2%
    toward their centroid so a ray stops just short of the surface. */
@@ -285,12 +287,16 @@ export class Viewport3D {
       const mesh = new THREE.Mesh(g, mat);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
-      mesh.userData = { id: solid.id, cls, baseOpacity: SPECS[cls].opacity ?? 1 };
+      // An inferred part (filled in by a model or archetype, not read from the
+      // drawing) is ghosted; a confirmed one renders like any other.
+      mesh.userData = { id: solid.id, cls, baseOpacity: Math.min(SPECS[cls].opacity ?? 1, partOpacity(solid)) };
       this.meshes.set(solid.id, mesh);
       this.root.add(mesh);
       this.base.set(solid.id, pos.slice());
       const label = labelText(solid.id, solid.source_label);
-      mesh.add(this.makeTag(solid.id, solid.placeholder ? `${label} · placeholder (CAD ${solid.placeholder})` : label, solid.source_label));
+      const badge = partBadge(solid);
+      const text = solid.placeholder ? `${label} · placeholder (CAD ${solid.placeholder})` : badge ? `${label} · ${badge.short}` : label;
+      mesh.add(this.makeTag(solid.id, text, solid.source_label, badge?.text));
     }
     this.applyCutaway();
     const box = new THREE.Box3().setFromObject(this.root);
@@ -576,13 +582,16 @@ export class Viewport3D {
     }
   }
 
-  private makeTag(id: string, text: string, full: string | null): CSS2DObject {
+  /* full: the drawing's own label (the chip's title, and what marks it as
+     drawn); hint: extra title text, e.g. an inferred part's badge. */
+  private makeTag(id: string, text: string, full: string | null, hint?: string): CSS2DObject {
     const el = document.createElement("div");
     el.className = "tag";
     const chip = document.createElement("button");
     chip.className = "chip";
     chip.textContent = text;
-    if (full) chip.title = full;
+    const title = [full, hint].filter(Boolean).join(" — ");
+    if (title) chip.title = title;
     chip.addEventListener("click", (e) => {
       e.stopPropagation();
       this.onPick(id);

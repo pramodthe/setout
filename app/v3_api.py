@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 from typing import Literal
 
@@ -279,8 +280,13 @@ def scene(ident: str):
         if reports and reports[-1]["quality"].get("scene_artifact_id"):
             result = json.loads(repo.artifacts.read(reports[-1]["quality"]["scene_artifact_id"]))
             result["version_id"], result["manifest_sha"] = ident, reports[-1]["manifest_sha"]
+            # The outcome tier and the inferred part ids live in the quality dict.
+            result["quality"] = reports[-1]["quality"]
         else:
-            result = {**prepare_verification(repo, ident)["scene"], "version_id": ident}
+            staged = prepare_verification(repo, ident)
+            result = {**staged["scene"], "version_id": ident}
+            if staged.get("quality") is not None:
+                result["quality"] = staged["quality"]
         located = drawing_regions(repo, repo.get(d.versions, ident))
         if located:
             result.setdefault("context", {})["drawing_regions"] = located
@@ -328,6 +334,31 @@ def get_reviews(ident: str):
     return {"reviews": repository().list(d.reviews, d.reviews.c.version_id == ident, order=d.reviews.c.seq)}
 
 
+def confirm_inferred(program, part_ids):
+    """The program with the named inferred parts confirmed by the reviewer:
+    provenance user_input, confidence cleared, inferred_by kept as the record
+    of where the part came from. Sizes stay the assumptions they were."""
+    if not isinstance(part_ids, list) or not part_ids or any(not isinstance(p, str) for p in part_ids):
+        raise ValueError("confirm_inferred lists the ids of inferred parts")
+    revised = copy.deepcopy(program)
+    parts = {p["id"]: p for p in revised.get("parts", [])}
+    for ident in part_ids:
+        if parts.get(ident, {}).get("provenance") != "inferred":
+            raise ValueError(f"{ident} is not an inferred part of this version")
+        parts[ident].update(provenance="user_input", confidence=None)
+    return revised
+
+
+def confirmation_lesson(program, part_ids):
+    """A proposed lesson: the archetype's slot was right to call for these parts."""
+    parts = [p for p in program.get("parts", []) if p["id"] in part_ids]
+    named = ", ".join(f"{p['id']} ({p.get('class_id') or p['type']}, {p.get('inferred_by') or 'no slot recorded'})" for p in parts)
+    kind = program.get("kind") or "assembly"
+    return ("type", kind, f"On a {kind} drawing of assembly {program.get('assembly_class') or 'unknown'}, the reviewer "
+            f"confirmed the inferred part(s) {named}. Reuse them only as inferred placeholders whose sizes stay "
+            "assumptions, never as drawing values.", [p["id"] for p in parts])
+
+
 @router.post("/versions/{ident}/reviews")
 def write_review(ident: str, body: ReviewRequest):
     repo = repository()
@@ -340,7 +371,14 @@ def write_review(ident: str, body: ReviewRequest):
             if original["format_version"] != "3.0":
                 raise ValueError("convert archived detail to a native v3 program before editing")
             read = repo.get(d.reads, original["drawing_read_id"])
-            program, spec, _ = prepare(body.data["program"], original["program"]["source"], original["detail_id"],
+            proposed, confirmed = body.data.get("program"), body.data.get("confirm_inferred")
+            if proposed is None and confirmed is None:
+                raise ValueError("correct needs a program or confirm_inferred")
+            if proposed is None:
+                # Confirming inferred parts: the same immutable-version path as
+                # an edit, with only the parts' provenance changed.
+                proposed = confirm_inferred(original["program"], confirmed)
+            program, spec, _ = prepare(proposed, original["program"]["source"], original["detail_id"],
                                       read["response"], original["program"], human=True)
             revised = (program.model_dump(mode="json"), spec.model_dump(mode="json"),
                        kept_bindings(original["program"], original["bindings"], program))
@@ -365,6 +403,8 @@ def write_review(ident: str, body: ReviewRequest):
                 # A correction proposes lessons, never a new drawing value: the
                 # reviewer's own words if given, plus what the diff shows.
                 lessons = correction_lessons(original["program"], revised[0], original["detail_id"])
+                if body.data.get("confirm_inferred"):
+                    lessons.append(confirmation_lesson(revised[0], body.data["confirm_inferred"]))
                 if body.data.get("lesson"):
                     lessons.insert(0, ("type", original["program"].get("kind", "assembly"), body.data["lesson"], []))
                 for scope, key, text, tags in lessons:

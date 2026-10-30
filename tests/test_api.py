@@ -79,7 +79,9 @@ def _poll_done(job: str, tries: int = 100) -> dict:
 
 
 def test_build_produces_artifacts_and_report():
-    r = client.post("/api/builds", json={"detail_id": "conpro-door-sill-D3"})
+    # D4: the D3 seed carries a real 1.0 mm fillet/membrane gap that the per-pair
+    # contact tolerance now reports (pinned in tests/test_verify.py).
+    r = client.post("/api/builds", json={"detail_id": "conpro-subsill-D4"})
     assert r.status_code == 200, r.text
     assert r.json()["state"] == "queued"
     job = r.json()["id"]
@@ -92,7 +94,7 @@ def test_build_produces_artifacts_and_report():
     assert body["report"]["failed"] == []
     r = client.get(f"/api/builds/{job}/artifacts/scene.json")
     scene = r.json()
-    assert scene["detail_id"] == "conpro-door-sill-D3"
+    assert scene["detail_id"] == "conpro-subsill-D4"
     assert any(s["id"] == "membrane" and s["tri_count"] > 0
                for s in scene["solids"])
     r = client.get(f"/api/eval/{job}")

@@ -1,0 +1,24 @@
+id: sub_sill_flashing
+name: Sub-sill flashing
+status: draft
+definition: A formed metal or membrane tray under the sill that catches water passing the sill and directs it outward.
+function: water_barrier
+role: object
+shape_hint: cad
+form: shaped
+relations_allowed: [covers, laps_over, bonded_to, terminates_against, sealed_to, installed_before]
+dimension_slots:
+  - name: thickness
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+  - name: upstand_height
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+drawing_appearance: {}
+aliases: [sub-sill flashing, sub sill flashing, sill flashing, flashing, sill tray, sill pan, flashing tray]

@@ -16,10 +16,17 @@ import ViewportView from "./ViewportView";
 import JobPanel from "./JobPanel";
 import type { ViewPreset, Viewport3D } from "./viewport";
 
-import { badgeClass, badgeLabel, worstProv } from "./provenance";
+import { badgeClass, badgeLabel, partBadge, worstProv } from "./provenance";
+import type { PartOrigin } from "./types";
 
 function Badge({ prov }: { prov: string }): JSX.Element {
   return <span className={badgeClass(prov)}>{badgeLabel(prov)}</span>;
+}
+
+/* What a part is (inferred / confirmed), beside the badge for where its values come from. */
+function PartBadge({ part, full }: { part: PartOrigin; full?: boolean }): JSX.Element | null {
+  const pb = partBadge(part);
+  return pb ? <span className={pb.cls} title={pb.text}>{full ? pb.text : pb.short}</span> : null;
 }
 
 interface Variant {
@@ -629,6 +636,7 @@ export default function App(): JSX.Element {
                 />
                 <span className="sw" style={{ background: c.color }} />
                 <span>{c.id}</span>
+                <PartBadge part={c} />
                 <Badge prov={worstProv(c.params.map((p) => p.provenance))} />
               </div>
             ))}
@@ -810,6 +818,16 @@ export default function App(): JSX.Element {
                   {selComp.representation} · generator {selComp.generator.id}{" "}
                   {selComp.generator.version}
                 </div>
+                {selComp.class_id && (
+                  <div className="kv">
+                    <span className="k">class:</span> {selComp.class_id}
+                  </div>
+                )}
+                {partBadge(selComp) && (
+                  <div className="kv">
+                    <span className="k">part:</span> <PartBadge part={selComp} full />
+                  </div>
+                )}
                 {(() => {
                   const solid = scene?.solids.find((x) => x.id === selComp.id);
                   return solid && solid.tri_count ? (

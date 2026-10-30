@@ -10,9 +10,10 @@ from .geometry import Mesh, build_assembly, export_scene_json
 from .interfaces import measure_interface, matches_brep_planes
 from .native_program import NativeProgram
 from .program import evaluate, expr_names
-from .repository import VERIFIER_VERSION, canonical, sha
+from .repository import VERIFIER_VERSION, canonical, inferred_part_ids, outcome_tier, sha
 from .spec import DetailSpec
-from .verify import verify_all
+from .verification_probes import CONTACT_KINDS, layer_order_probes
+from .verify import CONTACT_TOL_MM, verify_all
 from .versioning import archive_scene
 
 
@@ -62,6 +63,90 @@ def object_form_check(part, measured):
     return check("object-form-"+part.id,"PASS" if 0 < ratio < .9 else "FAIL",
         "A shaped object cannot be a solid envelope block; visual form is also checked by the critic.",
         solid_fraction=ratio)
+
+
+def part_thickness(part, mesh, axis, env):
+    """A sheet's declared thickness; any other part's built extent along the
+    interface axis, the direction its gap is measured in."""
+    if part.shape == "sheet":
+        return evaluate(part.dim("thickness"), env)
+    bounds = mesh.bounds() if mesh else None
+    return bounds[axis + 3] - bounds[axis] if bounds else None
+
+
+def pair_tolerance(program, meshes, source, target, axis):
+    """Largest accepted contact gap for a pair: min(CONTACT_TOL_MM, half the
+    thinner part). A flat 2 mm band would hide a 1.5 mm membrane that is
+    floating, so a relation's declared gap band is capped by this."""
+    env = {p.name: p.value for p in program.params}
+    by_id = {p.id: p for p in program.parts}
+    known = [t for t in (part_thickness(by_id[k], meshes.get(k), axis, env) for k in (source, target)) if t]
+    return min([CONTACT_TOL_MM] + [0.5 * t for t in known])
+
+
+def ontology_or_error():
+    """The ontology library, or the reason it cannot be read."""
+    try:
+        from . import ontology
+        return ontology.load(), None
+    except (ImportError, ValueError, OSError) as error:
+        return None, f"ontology unavailable: {error}"
+
+
+def ontology_version():
+    ont, _ = ontology_or_error()
+    return ont.version if ont else None
+
+
+def slot_checks(program):
+    """Completeness against the ontology: the assembly class, each part's
+    class and every required slot. Keyed off class ids, declared roles and
+    library data only, never part names or labels (the engine stays
+    trade-agnostic; the library may name parts)."""
+    assembly_id = getattr(program, "assembly_class", None)
+    classed = [(part, getattr(part, "class_id", None)) for part in program.parts]
+    classed = [(part, class_id) for part, class_id in classed if class_id]
+    output = []
+    if assembly_id is None:
+        output.append(check("assembly-class-unset", "UNVERIFIED",
+                            "no assembly class declared, so required slots are not checked", required=False))
+        if not classed:
+            return output
+    ont, problem = ontology_or_error()
+    if ont is None:
+        # A claim nobody can read against the library is not verified, and it blocks completion.
+        if assembly_id is not None:
+            output.append(check("assembly-class-unknown", "UNVERIFIED", problem, assembly_class=assembly_id))
+        output += [check(f"class-unknown:{part.id}", "UNVERIFIED", problem, class_id=class_id) for part, class_id in classed]
+        return output
+    for part, class_id in classed:
+        component = ont.component(class_id)
+        if component is None:
+            output.append(check(f"class-unknown:{part.id}", "FAIL", f"{class_id!r} is not an ontology component class",
+                                class_id=class_id))
+        elif component.role != part.role:
+            output.append(check(f"class-role:{part.id}", "FAIL",
+                                f"class {class_id!r} has role {component.role!r}; the part declares {part.role!r}",
+                                class_id=class_id, class_role=component.role, declared_role=part.role))
+    if assembly_id is None:
+        return output
+    if ont.assembly(assembly_id) is None:
+        output.append(check("assembly-class-unknown", "FAIL", f"{assembly_id!r} is not an ontology assembly class",
+                            assembly_class=assembly_id))
+        return output
+    for slot in ont.required_slots(assembly_id):
+        fillers = [part for part, class_id in classed if class_id in slot.classes]
+        ids = [part.id for part in fillers]
+        if len(fillers) < slot.min:
+            output.append(check(f"slot-missing:{slot.id}", "FAIL",
+                                f"required slot {slot.id!r} needs {slot.min} of {', '.join(slot.classes)}; found {len(fillers)}",
+                                slot=slot.id, classes=list(slot.classes), min=slot.min, found=ids,
+                                section_visibility=slot.section_visibility))
+        elif all(getattr(part, "provenance", "drawing") == "inferred" for part in fillers):
+            output.append(check(f"slot-inferred:{slot.id}", "UNVERIFIED",
+                                f"required slot {slot.id!r} is filled only by inferred parts", required=False,
+                                slot=slot.id, parts=ids))
+    return output
 
 
 def assembly(repo, version):
@@ -120,8 +205,11 @@ def spatial_checks(program, meshes, exposed=None, cad_planes=None):
         if relation.kind == "installed_before":
             output.append(check(ident, "PASS" if _dependencies(program, relation.source, relation.target) else "FAIL"))
             continue
-        if relation.kind not in ("covers", "supported_by", "bonded_to", "sealed_to", "terminates_against", "laps_over"):
-            output.append(check(ident, "UNVERIFIED", "unsupported spatial interface"))
+        if relation.kind not in CONTACT_KINDS:
+            # hosted_in, fixed_to, abuts, repeated_along (ontology/relations.yaml):
+            # stored, shown, not yet measured. Informational until they are.
+            output.append(check(ident, "UNVERIFIED", "unsupported spatial interface: no geometric check for "
+                                f"{relation.kind} yet", required=False))
             continue
         settings = relation.constraints
         required_fields = {"axis", "source_face", "target_face", "min_gap", "max_gap", "min_coverage"}
@@ -132,6 +220,10 @@ def spatial_checks(program, meshes, exposed=None, cad_planes=None):
         if axis is None or settings["source_face"] not in ("min", "max") or settings["target_face"] not in ("min", "max"):
             output.append(check(ident, "FAIL", "invalid interface selector"))
             continue
+        # The declared gap band may be no wider than the pair's contact tolerance.
+        tolerance = pair_tolerance(program, meshes, relation.source, relation.target, axis)
+        min_gap, max_gap = max(settings["min_gap"], -tolerance), min(settings["max_gap"], tolerance)
+        band = dict(contact_tolerance=tolerance, gap_band=[min_gap, max_gap])
         if any(by_id[k].shape != "box" for k in (relation.source, relation.target)):
             if any(by_id[k].shape not in ("box","wedge","sheet","profile","cad") for k in (relation.source,relation.target)):
                 output.append(check(ident,"UNVERIFIED","interface requires supported planar primitives"))
@@ -149,10 +241,10 @@ def spatial_checks(program, meshes, exposed=None, cad_planes=None):
                 output.append(check(ident,"UNVERIFIED",str(error)))
                 continue
             ordering = _dependencies(program,relation.target,relation.source)
-            ok = (measurement["min_gap"] is not None and settings["min_gap"] <= measurement["min_gap"] + 1e-6
-                  and measurement["max_gap"] <= settings["max_gap"] + 1e-6
+            ok = (measurement["min_gap"] is not None and min_gap <= measurement["min_gap"] + 1e-6
+                  and measurement["max_gap"] <= max_gap + 1e-6
                   and measurement["coverage"] + 1e-6 >= settings["min_coverage"] and ordering)
-            output.append(check(ident,"PASS" if ok else "FAIL",**measurement,order_valid=ordering))
+            output.append(check(ident,"PASS" if ok else "FAIL",**measurement,order_valid=ordering,**band))
             continue
         a, b = meshes[relation.source].bounds(), meshes[relation.target].bounds()
         if a is None or b is None:
@@ -170,11 +262,11 @@ def spatial_checks(program, meshes, exposed=None, cad_planes=None):
             area *= max(0, base[j + 3] - base[j])
             overlap *= max(0, min(a[j + 3], b[j + 3]) - max(a[j], b[j]))
         coverage = overlap / area if area else 0
-        spatial = settings["min_gap"] <= gap <= settings["max_gap"] and coverage >= settings["min_coverage"]
+        spatial = min_gap <= gap <= max_gap and coverage >= settings["min_coverage"]
         ordering = (_dependencies(program, relation.target, relation.source) if relation.kind == "covers" else
                     _dependencies(program, relation.target, relation.source))
         output.append(check(ident, "PASS" if spatial and ordering else "FAIL", gap=gap,
-                            coverage=coverage, order_valid=ordering))
+                            coverage=coverage, order_valid=ordering, **band))
     for part in program.parts:
         if part.role == "covered_layer" and not any(r.target == part.id and r.kind in
                 ("covers", "terminates_against") for r in program.relations):
@@ -245,8 +337,10 @@ def prepare_verification(repo, version_id, candidate=None):
     version = candidate or repo.get(d.versions, version_id)
     spec, program, meshes = assembly(repo, version)
     if program is None:
-        return {"scene": spec, "checks": [check("legacy-format", "UNVERIFIED", "archived v2 version")],
-                "manifest": {"version_sha": version["content_sha"], "archive": version["bindings"]}}
+        legacy = [check("legacy-format", "UNVERIFIED", "archived v2 version")]
+        return {"scene": spec, "checks": legacy,
+                "manifest": {"version_sha": version["content_sha"], "archive": version["bindings"]},
+                "quality": {"outcome": outcome_tier(legacy, []), "inferred_parts": []}}
     read = repo.get(d.reads, version["drawing_read_id"])["response"]
     figure = repo.get(d.figures, version["figure_id"])
     document = repo.get(d.documents, figure["document_id"])
@@ -325,6 +419,12 @@ def prepare_verification(repo, version_id, candidate=None):
                     measured = [m for m in measured if m["id"] != feature.id]
                     measured.append(check(feature.id, "PASS" if ok else "FAIL", actual=actual, expected=expected,
                                           tolerance=feature.tolerance, source_dimension_id=feature.source_dimension_id))
+        if getattr(part, "provenance", "drawing") == "inferred":
+            # An inferred part fills a slot; its sizes are nobody's evidence
+            # until a reviewer confirms it, so a measured match is not a PASS.
+            measured = [{**m, "status": "UNVERIFIED", "required": False,
+                         "reason": "inferred part: dimensions are not verified until a reviewer confirms it"}
+                        if m["status"] == "PASS" else m for m in measured]
         for result in measured:
             checks.append({**result, "id": f"feature-{part.id}-{result['id']}"})
             if result.get("source_dimension_id"):
@@ -436,16 +536,25 @@ def prepare_verification(repo, version_id, candidate=None):
                 [face["center"][0]+offset[0],face["center"][2]+offset[1],-face["center"][1]+offset[2]])
                 for face in build["measured"].get("faces",[]) if face["kind"] == "PLANE"]
     checks += spatial_checks(program, meshes, exposed, cad_planes)
+    for probe in layer_order_probes(program, meshes):
+        checks.append(check(probe.pop("id"), probe.pop("status"), probe.pop("reason", None), **probe))
+    checks += slot_checks(program)
     checks = [{"stage": "B", "description": c["id"], **c} for c in checks]
+    # Completeness tier (repository.outcome_tier): stored in the verification's
+    # quality dict and shown on the scene; an inferred part never makes it verified.
+    inferred = inferred_part_ids(program.parts)
+    quality = {"outcome": outcome_tier(checks, inferred), "inferred_parts": inferred}
     scene = export_scene_json(spec, meshes)
     for solid in scene["solids"]:
         if solid["id"] in spec.context.get("placeholders", {}):
             solid["placeholder"] = spec.context["placeholders"][solid["id"]]
     scene["verification"] = checks
+    scene["quality"] = quality
     manifest = {"version_sha": version["content_sha"], "read_sha": sha(read), "bindings": version["bindings"],
                 "meshes": {key: sha(mesh.positions) for key, mesh in meshes.items()}, "policy": VERIFIER_VERSION,
+                "ontology": ontology_version(),
                 "review_resolution_ids": sorted(review["id"] for review in resolutions)}
-    return {"scene": scene, "checks": checks, "manifest": manifest}
+    return {"scene": scene, "checks": checks, "manifest": manifest, "quality": quality}
 
 
 def stage_verification(repo, version_id, candidate=None):

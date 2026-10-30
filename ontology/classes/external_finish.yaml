@@ -1,0 +1,18 @@
+id: external_finish
+name: External paving or deck
+status: draft
+definition: The exposed surface outside the door, such as pavers, tiles on pedestals or decking, laid over the external bedding or structure.
+function: finish
+role: finish
+shape_hint: box
+form: null
+relations_allowed: [covers, supported_by, bonded_to, abuts, terminates_against, installed_before]
+dimension_slots:
+  - name: thickness
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+drawing_appearance: {}
+aliases: [paving, pavers, deck, decking, external finish, balcony tiles, tiles on pedestals, pedestal paving]

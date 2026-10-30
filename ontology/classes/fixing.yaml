@@ -1,0 +1,30 @@
+id: fixing
+name: Fixing
+status: draft
+definition: A manufactured fastener such as a screw, bolt, anchor or threaded rod that holds one part to another.
+function: fixing
+role: object
+shape_hint: cad
+form: shaped
+relations_allowed: [fixed_to, repeated_along, bonded_to, installed_before]
+dimension_slots:
+  - name: diameter
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+  - name: embedment
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+  - name: spacing
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+drawing_appearance: {}
+aliases: [fixing, fixings, screw, screws, bolt, bolts, anchor, anchors, booker rod, threaded rod, rod, masonry anchor, fastener]

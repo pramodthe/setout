@@ -1,0 +1,24 @@
+id: door_sill
+name: Door sill
+status: draft
+definition: The manufactured section forming the bottom of a door opening, on which the leaf closes; it sheds water outward and carries the frame.
+function: opening_frame
+role: object
+shape_hint: cad
+form: shaped
+relations_allowed: [supported_by, bonded_to, sealed_to, fixed_to, abuts, installed_before]
+dimension_slots:
+  - name: depth
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+  - name: height
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+drawing_appearance: {}
+aliases: [sill, door sill, sill section, threshold, standard sill, sill extrusion, door frame sill]

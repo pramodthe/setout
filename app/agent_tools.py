@@ -4,10 +4,11 @@ from __future__ import annotations
 import copy
 import json
 import io
+import os
 
 import sqlalchemy as sa
 
-from . import cad_components, database as d, generate, meta_client, sam
+from . import cad_components, completion, database as d, generate, meta_client, ontology, sam
 from .model_gateway import ModelGateway
 from .native_program import kept_bindings, NativeProgram, prepare, expression_unit
 from .program import evaluate, expr_names
@@ -70,6 +71,30 @@ LABEL_RULES = ("LABELS: a part's label is exactly one READ label_verbatim, copie
                "of a split layer carries the same READ label; position words (wall, floor, left, upturn) go in "
                "id, type or note. Give every READ label with category layer, object or zone a part that carries it. ")
 
+# The critic may not undo the world model: an inferred part fills a required
+# slot the drawing cannot show, and only a reviewer decides its fate.
+RETENTION_RULE = ("RETENTION: a part whose provenance is inferred fills a required slot of the assembly class that "
+                  "the drawing does not show; it renders ghosted and is never counted as verified. Never propose "
+                  "deleting a part that fills a required slot, and 'not in the drawing' is never a reason to delete "
+                  "an inferred part. Judge inferred parts only where their placement contradicts what the drawing shows. ")
+
+
+def completion_mode():
+    """SETOUT_COMPLETION: off (the tool is not offered), suggest (default: the
+    tool proposes, the agent applies through the gate) or on (the tool applies)."""
+    mode = os.environ.get("SETOUT_COMPLETION", "suggest").strip().lower()
+    return mode if mode in ("off", "suggest", "on") else "suggest"
+
+
+def slot_brief(assembly_class):
+    """The required slots of an assembly class, for the critic and the agent."""
+    known = ontology.load()
+    if not assembly_class or known.assembly(assembly_class) is None:
+        return "No assembly class is set, so no required slots apply. "
+    return (f"Assembly class {assembly_class} requires these slots: " + "; ".join(
+        f"{s.id} (class {' or '.join(s.classes)}, min {s.min}, {s.section_visibility} in a section)"
+        for s in known.required_slots(assembly_class)) + ". ")
+
 
 class Tools:
     def __init__(self, repo, fence, gateway=None, renderer=None, cad_builder=None):
@@ -94,6 +119,11 @@ class Tools:
             "critic": ("Independently compare source and exact-version renders. Pass the latest render result's critic_args, containing all six render IDs (untagged and tagged).",
                        obj({**VERSION, "verification_id": STRING, "render_ids": {"type": "array", "items": STRING}})),
             "locate_on_drawing": ("Locate identifiable source parts with SAM.", obj(VERSION)),
+            "complete_assembly": ("Fill the required slots of the version's assembly_class that the drawing leaves empty "
+                                  "(parts beyond the section cut) with inferred placeholder parts: ghosted, never a PASS, "
+                                  "confirmed by a reviewer. Returns the proposal, suggestions for slots it cannot place, "
+                                  "and ready patch_program edits; in mode on it applies them as a successor version.",
+                                  obj(VERSION)),
             "remember": ("Propose a lesson; it cannot supply another drawing's dimensions.",
                          obj({"text": STRING, "scope": {"type": "string", "enum": ["global", "manufacturer", "type", "detail"]},
                               "scope_key": STRING, "tags": {"type": "array", "items": STRING}})),
@@ -103,6 +133,8 @@ class Tools:
                             "status": {"type": "string", "enum": ["done", "needs_review"]},
                             "summary": STRING, "open_issues": {"type": "array", "items": STRING}})),
         }
+        if completion_mode() == "off":
+            signatures.pop("complete_assembly")
         return [{"type": "function", "name": name, "description": description, "parameters": schema}
                 for name, (description, schema) in signatures.items()]
 
@@ -179,7 +211,9 @@ class Tools:
                 ("\nExisting program to revise: " + canonical(parent["program"]) if parent else ""),
                 [figure["artifact_id"]], program_schema([e.get("label_verbatim") for e in read.get("elements", [])],
                     ["drawing", "assumption"] + sorted({q["provenance"] for q in (parent or {}).get("program", {}).get("params", [])}
-                                                       & {"user_input", "manufacturer_doc"})),
+                                                       & {"user_input", "manufacturer_doc"}),
+                    ["drawing", "inferred"] + sorted({p.get("provenance") for p in (parent or {}).get("program", {}).get("parts", [])}
+                                                     & {"user_input"})),
                 "program", call_id)
             proposed = from_wire(raw)
             try:
@@ -393,6 +427,7 @@ class Tools:
             result = self.gateway.json("Independently compare the source installation drawing with the assembled renders. "
                      "Check dimension attribution, missing parts, layer placement/order and visible geometry. "
                      "Reject generic blocks standing in for recognisable objects, even if all dimension checks pass: each object must show the form the source shows (openings, cavities, bowls, flanges, legs, profiles, supports). A solid box standing in for a shaped object is a fidelity error. "
+                     + slot_brief(version["program"].get("assembly_class")) + RETENTION_RULE +
                      "Return fail for errors; inconclusive if evidence is insufficient. Never approve an empty or unreadable render. "
                      "Version/evidence: " + canonical({"program": version["program"], "checks": report["checks"],
                      "views": [{"id": r["id"], "view": r["view"], "tags": r["tags"]} for r in renders]}),
@@ -426,6 +461,22 @@ class Tools:
             found = sam.locate(png, [(p["id"], p["type"], p.get("label"), p.get("role", "object"))
                                      for p in version["program"]["parts"]], call=call)
             return {"regions": found}
+        if name == "complete_assembly":
+            version = self.working(args["version_id"])
+            program = NativeProgram.model_validate(version["program"])
+            read = self.repo.get(d.reads, version["drawing_read_id"])["response"] if version["drawing_read_id"] else None
+            proposal = completion.archetype_completion(program, ontology.load(), read)
+            edits = completion.edits(proposal)
+            mode = completion_mode()
+            summary = {**proposal.as_json(), "edits": edits, "assembly_class": program.assembly_class, "mode": mode,
+                       "note": "inferred parts are ghosted placeholders, never a verified PASS; a reviewer confirms them" +
+                               ("" if mode == "on" or not edits else ". Apply the edits with patch_program; the gate checks every claim")}
+            if mode == "on" and edits:
+                # The same path as patch_program, so the gate validates every
+                # inferred claim; a rejection comes back with its reason.
+                staged = self._prepare(call_id, "patch_program", {"edits": edits})
+                return staged if "tool_error" in staged else {**staged, "completion": summary}
+            return {"result": summary}
         if name == "finish":
             return {"result": args}
         raise ValueError("tool not implemented")
@@ -451,7 +502,7 @@ class Tools:
         con.execute(d.verifications.insert().values(id=ident, version_id=version_id,
                     manifest_sha=data["manifest_sha"], manifest_artifact_id=data["manifest_ref"]["id"],
                     verifier_version=VERIFIER_VERSION, checks=data["checks"],
-                    quality={"scene_artifact_id":data["scene_ref"]["id"]}, created_at=d.now(con)))
+                    quality={**data.get("quality", {}), "scene_artifact_id":data["scene_ref"]["id"]}, created_at=d.now(con)))
         self.repo.note_repeated_failures(con,version_id,data["checks"])
         return {"verification_id":ident, "manifest_sha":data["manifest_sha"], "checks":data["checks"]}
 
@@ -466,9 +517,10 @@ class Tools:
             con.execute(d.reads.insert().values(id=ident, figure_id=data["figure_id"], model=meta_client.default_model(),
                         response=data["read"], content_sha=sha(data["read"]), created_at=d.now(con)))
             return {"drawing_read_id": ident, "read": data["read"],**data.get("context",{})}
-        if name in ("author_program", "write_program", "patch_program"):
+        if name in ("author_program", "write_program", "patch_program") or (name == "complete_assembly" and "candidate_id" in data):
             return {**self._successor(con, data), "gate_notes": data["notes"],
-                    **({"program":data["program"]} if name == "author_program" or "brief" in args else {})}
+                    **({"program":data["program"]} if name == "author_program" or "brief" in args else {}),
+                    **({"completion": data["completion"]} if "completion" in data else {})}
         if name in ("model_component", "reuse_component"):
             version, component = data["version"], data["component"]
             if name == "model_component":
@@ -526,7 +578,9 @@ class Tools:
                 if result["version_id"] != run["working_version_id"]:
                     return {"error": {"code": "version_conflict"}}
                 try:
-                    errors = self.repo.completion_errors(con, result["version_id"], result["verification_id"], result["critic_verdict_id"])
+                    # Inferred parts must be named in the open issues: done never hides them.
+                    errors = self.repo.completion_errors(con, result["version_id"], result["verification_id"], result["critic_verdict_id"],
+                                                         open_issues=result.get("open_issues"))
                 except (KeyError, TypeError):
                     errors = ["missing_completion_evidence"]
                 if errors:

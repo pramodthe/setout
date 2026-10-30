@@ -18,6 +18,21 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
   return (await r.json()) as T;
 }
 
+/* A review event on a database version (v3_api.write_review). `correct`
+   makes a new version and returns its id; the others return the same id. */
+export interface VersionReview {
+  reviewer: string;
+  action: "accept" | "reject" | "resolve" | "correct" | "activate_memory";
+  data?: Record<string, unknown>;
+}
+
+const reviewVersion = (versionId: string, body: VersionReview): Promise<{ review_id: string; version_id: string }> =>
+  req(`/api/versions/${encodeURIComponent(versionId)}/reviews`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
 export const api = {
   uploadDocument: (file: File): Promise<Doc> => {
     const fd = new FormData();
@@ -58,6 +73,12 @@ export const api = {
     }),
   locate: (detailId: string): Promise<GenJob> =>
     req(`/api/specs/${encodeURIComponent(detailId)}/locate`, { method: "POST" }),
+  reviewVersion,
+  /** A reviewer confirms inferred parts: a new version in which they are
+      user_input (confidence cleared, inferred_by kept). Must target the
+      detail's current version, or the server answers 409. */
+  confirmInferred: (versionId: string, reviewer: string, partIds: string[]): Promise<{ review_id: string; version_id: string }> =>
+    reviewVersion(versionId, { reviewer, action: "correct", data: { confirm_inferred: partIds } }),
   library: (): Promise<{ details: LibraryEntry[]; components: ComponentGroup[] }> => req("/api/library"),
   scene: (detailId: string): Promise<Scene> => req(`/api/specs/${encodeURIComponent(detailId)}/scene`),
   thumbUrl: (detailId: string): string => `/api/specs/${encodeURIComponent(detailId)}/thumb`,

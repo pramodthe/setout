@@ -1,0 +1,24 @@
+id: screed
+name: Screed
+status: draft
+definition: A sand-cement layer laid over the substrate or membrane to level the floor or form falls to an outlet, covered by the finish.
+function: support
+role: covered_layer
+shape_hint: wedge
+form: null
+relations_allowed: [covers, supported_by, bonded_to, terminates_against, installed_before]
+dimension_slots:
+  - name: thickness
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+  - name: fall_ratio
+    unit: ratio
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+drawing_appearance: {}
+aliases: [screed, screed to falls, fall to outlet, topping]

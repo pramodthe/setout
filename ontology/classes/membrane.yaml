@@ -1,0 +1,24 @@
+id: membrane
+name: Waterproofing membrane
+status: draft
+definition: A thin continuous sheet or applied coating that keeps water out of the construction below it; it follows the substrate and is covered by other layers.
+function: water_barrier
+role: covered_layer
+shape_hint: sheet
+form: null
+relations_allowed: [covers, bonded_to, laps_over, terminates_against, installed_before]
+dimension_slots:
+  - name: thickness
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+  - name: upturn_height
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+drawing_appearance: {}
+aliases: [membrane, waterproof membrane, waterproofing membrane, sheet membrane, liquid membrane, membrane applied over angle, membrane shown blue]

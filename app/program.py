@@ -20,8 +20,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from .spec import (Component, DetailSpec, GeneratorRef, Param, PathPoint,
-                   ProductRef, Provenance, Relation, SourceDoc, Unresolved)
+from .spec import (Component, DetailSpec, GeneratorRef, Param, PartProvenance,
+                   PathPoint, ProductRef, Provenance, Relation, SourceDoc,
+                   Unresolved)
 
 PROGRAM_VERSION = "2.0"
 GEN = "setout-mesh-v0"
@@ -52,8 +53,10 @@ GENERATOR = {"box": "box", "sheet": "sheet_follow", "post": "post", "rod": "rod"
              "revolve": "revolve", "sweep": "sweep", "cad": "cad_mesh",
              "annotation": "annotation"}
 
+# Worst-input ordering for derived values: anything touched by an inferred
+# input is at best inferred; anything touched by an assumption is an assumption.
 _RANK = {Provenance.DRAWING: 0, Provenance.MANUFACTURER_DOC: 1,
-         Provenance.USER_INPUT: 2, Provenance.ASSUMPTION: 3}
+         Provenance.USER_INPUT: 2, Provenance.INFERRED: 3, Provenance.ASSUMPTION: 4}
 _ID = re.compile(r"^[a-z][a-z0-9_]{0,47}$")
 
 
@@ -82,6 +85,7 @@ class ProgPart(BaseModel):
     id: str
     type: str
     label: str | None = None  # EXACT drawing label, or null
+    class_id: str | None = None  # ontology component class id (app/ontology.py), or null
     shape: Shape
     dims: list[Dim] = Field(default_factory=list)
     path: list[PathXY] = Field(default_factory=list)  # sheet/profile/revolve/sweep
@@ -89,6 +93,11 @@ class ProgPart(BaseModel):
     cad_brief: str | None = None  # what to model when shape == "cad"
     install_after: list[str] = Field(default_factory=list)
     note: str | None = None
+    # Part-level provenance (app/spec.py PartProvenance). An inferred part names
+    # the slot that called for it: "archetype:<assembly>@<ontology version>:<slot>".
+    provenance: PartProvenance = "drawing"
+    confidence: float | None = Field(default=None, ge=0, le=1)
+    inferred_by: str | None = None
 
     def dim(self, name: str) -> str | None:
         for d in self.dims:
@@ -104,6 +113,7 @@ class DetailProgram(BaseModel):
     origin: str  # how it was made, e.g. "ai-generated:muse-spark-1.3 (unreviewed)"
     kind: Literal["section", "room", "assembly"] = "assembly"
     situation: list[str] = Field(default_factory=list)
+    assembly_class: str | None = None  # ontology assembly id, e.g. "door_threshold"
     source: SourceDoc
     params: list[ProgParam] = Field(default_factory=list)
     parts: list[ProgPart] = Field(default_factory=list)
@@ -271,6 +281,8 @@ def compile_program(p: DetailProgram) -> DetailSpec:
         color = next((c for k, c in COLORS.items() if k in part.type), "#9aa3ad")
         comps.append(Component(
             id=part.id, type=part.type, source_label=part.label,
+            class_id=part.class_id, provenance=part.provenance,
+            confidence=part.confidence, inferred_by=part.inferred_by,
             representation=rep,  # type: ignore[arg-type]
             generator=GeneratorRef(
                 id=f"fixture_{part.fixture}" if part.shape == "fixture"
@@ -293,7 +305,7 @@ def compile_program(p: DetailProgram) -> DetailSpec:
     return DetailSpec(
         detail_id=p.detail_id, title=p.title, origin=p.origin, source=p.source,
         context={"program_version": p.version, "kind": p.kind,
-                 "situation": p.situation,
+                 "situation": p.situation, "assembly_class": p.assembly_class,
                  "illustrative_extent_z_mm": max_z or 600,
                  "illustrative_extent_provenance": "assumption",
                  "drawing_params": drawing, "contact_checks": []},

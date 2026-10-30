@@ -2,8 +2,8 @@ import copy
 
 import pytest
 
-from app.seed import door_sill_d3
-from app.spec import DetailSpec
+from app.seed import door_sill_d3, door_subsill_d4
+from app.spec import Component, DetailSpec, Provenance
 
 
 def test_seed_validates():
@@ -11,6 +11,23 @@ def test_seed_validates():
     assert spec.spec_version == "1.0"
     assert spec.units == "mm"
     assert len(spec.components) >= 10
+
+
+def test_part_fields_default_so_seeds_and_old_specs_still_validate():
+    for seed in (door_sill_d3, door_subsill_d4):
+        spec = seed()
+        assert all(c.provenance == "drawing" and c.class_id is None and c.confidence is None
+                   and c.inferred_by is None for c in spec.components)
+        assert DetailSpec.model_validate(spec.model_dump(mode="json")) == spec
+    assert Provenance.INFERRED.value == "inferred"
+    frame = door_sill_d3().component("frame").model_dump()
+    inferred = Component.model_validate({**frame, "class_id": "door_sill", "provenance": "inferred",
+                                         "confidence": 0.5, "inferred_by": "archetype:door_threshold@2026.10.30:threshold"})
+    assert inferred.provenance == "inferred" and inferred.confidence == 0.5
+    with pytest.raises(ValueError):
+        Component.model_validate({**frame, "confidence": 1.5})
+    with pytest.raises(ValueError):
+        Component.model_validate({**frame, "provenance": "assumption"})  # parts are drawn, inferred or confirmed
 
 
 def test_duplicate_id_rejected():

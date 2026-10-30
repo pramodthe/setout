@@ -1,15 +1,17 @@
 /* Review an AI-generated detail before publishing: accept or fix each value
-   (printed values first), fix labels to ones printed on the drawing, see what
-   the gates and self-checks changed, then publish as reviewed. */
+   (printed values first), confirm or leave the parts an archetype filled in,
+   fix labels to ones printed on the drawing, see what the gates and
+   self-checks changed, then publish as reviewed. */
 
 import { useEffect, useState } from "react";
 import type { JSX } from "react";
 import { api } from "./api";
-import { badgeClass, badgeLabel } from "./provenance";
-import type { ReviewData, ReviewParam } from "./types";
+import { badgeClass, badgeLabel, inferredParts, partBadge } from "./provenance";
+import type { ReviewData, ReviewParam, Scene } from "./types";
 
 export default function ReviewPanel(p: {
   detailId: string;
+  scene: Scene | null; // the version under review: its inferred parts and version id
   onShow: (partIds: string[]) => void; // isolate parts a value drives
   onSaved: () => void; // geometry changed: reload the scene
 }): JSX.Element {
@@ -19,10 +21,13 @@ export default function ReviewPanel(p: {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [showAssumed, setShowAssumed] = useState(false);
+  const versionId = p.scene?.version_id ?? null;
 
   useEffect(() => {
     api.review(p.detailId).then(setData).catch((e: Error) => setErr(e.message));
-  }, [p.detailId]);
+  }, [p.detailId, versionId]);
+
+  const failed = (e: unknown) => setErr((e as Error).message.replace(/^POST [^:]+: \d+ /, "").slice(0, 220));
 
   const save = async (body: Parameters<typeof api.saveReview>[1], geometry: boolean) => {
     setBusy(true);
@@ -31,11 +36,30 @@ export default function ReviewPanel(p: {
       setData(await api.saveReview(p.detailId, body));
       if (geometry) p.onSaved();
     } catch (e) {
-      setErr((e as Error).message.replace(/^POST [^:]+: \d+ /, "").slice(0, 220));
+      failed(e);
     } finally {
       setBusy(false);
     }
   };
+
+  /* Confirming an inferred part makes a new version in which it is user_input
+     (never a drawing value). The server refuses if the detail has moved on. */
+  const confirm = async (partId: string) => {
+    if (!versionId) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.confirmInferred(versionId, reviewer.trim(), [partId]);
+      p.onSaved();
+    } catch (e) {
+      failed(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const inferred = p.scene ? inferredParts(p.scene) : [];
+  const solids = new Map((p.scene?.solids || []).map((s) => [s.id, s]));
 
   if (!data) return <aside className="guide review">{err ? <div className="liberr">{err}</div> : "loading…"}</aside>;
 
@@ -100,6 +124,34 @@ export default function ReviewPanel(p: {
           {showAssumed ? "▾" : "▸"} Assumed values · {other.length}
         </h3>
         {showAssumed && other.map(row)}
+        {inferred.length > 0 && (
+          <>
+            <h3 id="inferredParts">Inferred parts · {inferred.length}</h3>
+            <div className="k">
+              Filled in from the assembly's archetype, not read from the drawing; shown ghosted, never verified.
+              Confirming one puts your name on it. It never becomes a drawing value.
+            </div>
+            {inferred.map((id) => {
+              const s = solids.get(id);
+              const badge = s ? partBadge(s) : null;
+              return (
+                <div key={id} className="inf">
+                  <span className="id" onClick={() => p.onShow([id])} title="show this part">
+                    {id}
+                  </span>
+                  <span className={badge?.cls || "badge b-inferred"}>{badge?.text || "inferred"}</span>
+                  <button
+                    disabled={busy || !reviewer.trim() || !versionId}
+                    title={!reviewer.trim() ? "enter your reviewer name below first" : undefined}
+                    onClick={() => void confirm(id)}
+                  >
+                    Confirm
+                  </button>
+                </div>
+              );
+            })}
+          </>
+        )}
         <h3>Labels</h3>
         {data.parts
           .filter((x) => x.label || data.read_labels.length)

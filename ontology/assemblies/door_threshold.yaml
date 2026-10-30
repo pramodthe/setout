@@ -1,0 +1,162 @@
+id: door_threshold
+name: External door threshold
+status: draft
+definition: The junction where an external door stands on a floor edge, step or balcony; the sill, the frame around the opening and the floor build-up each side of it.
+# Cardinality: `min` is 1 or more only for parts a door threshold cannot exist
+# without. Everything the drawing may or may not show is optional (min 0).
+# section_visibility says what a section across the threshold shows of the
+# slot: the parts it cuts, the parts seen beyond the cut, and the parts that
+# are out of the plane altogether. Placement data is read by app/completion.py.
+slots:
+  - id: threshold
+    classes: [door_sill, sub_sill]
+    min: 1
+    max: 1
+    section_visibility: cut
+    placement: extrude_along_run
+    description: The sill or sub-sill section the leaf closes on; the opening's bottom and the anchor for the frame.
+  - id: substrate
+    classes: [slab]
+    min: 1
+    max: null
+    section_visibility: cut
+    placement: extrude_along_run
+    description: The slab, step or set-down the threshold is built on, inside and out.
+  - id: flashing
+    classes: [sub_sill_flashing, edge_angle]
+    min: 0
+    max: null
+    section_visibility: cut
+    placement: follow_layer
+    anchor: threshold
+    description: A tray or angle under or beside the sill that catches water and terminates the membrane.
+  - id: membrane
+    classes: [membrane]
+    min: 0
+    max: null
+    section_visibility: cut
+    placement: follow_layer
+    anchor: substrate
+    description: The waterproofing membrane over the substrate, turned up and terminated at the sill.
+  - id: protection
+    classes: [protection_sheet]
+    min: 0
+    max: null
+    section_visibility: cut
+    placement: follow_layer
+    anchor: membrane
+    description: Sheets protecting the membrane under the screed or beside the upstand.
+  - id: bedding
+    classes: [screed, bedding]
+    min: 0
+    max: null
+    section_visibility: cut
+    placement: extrude_along_run
+    description: Screed to falls or a bed under the finishes.
+  - id: floor_finish
+    classes: [floor_finish]
+    min: 0
+    max: null
+    section_visibility: cut
+    placement: extrude_along_run
+    description: The internal floor surface up to the sill.
+  - id: external_finish
+    classes: [external_finish]
+    min: 0
+    max: null
+    section_visibility: cut
+    placement: extrude_along_run
+    description: Paving or decking outside the sill.
+  - id: packer
+    classes: [packer]
+    min: 0
+    max: null
+    section_visibility: cut
+    placement: extrude_along_run
+    anchor: threshold
+    description: Packers that level the sill or sub-sill.
+  - id: joint
+    classes: [perimeter_joint, fillet]
+    min: 0
+    max: null
+    section_visibility: cut
+    placement: fillet_at_corner
+    description: Joint fillers and fillets at the step.
+  - id: sealant
+    classes: [sealant, backing_rod]
+    min: 0
+    max: null
+    section_visibility: cut
+    placement: extrude_along_run
+    description: Sealant beads and their backing rods at the sill joints.
+  - id: cover_trim
+    classes: [cover_angle]
+    min: 0
+    max: 1
+    section_visibility: cut
+    placement: extrude_along_run
+    description: A cover angle over the membrane upstand.
+  - id: fixing
+    classes: [fixing, washer, nut, chemical_grout]
+    min: 0
+    max: null
+    section_visibility: cut
+    placement: repeat_at_spacing
+    anchor: threshold
+    description: Rods, anchors, nuts, washers and grout that hold the sill down.
+  - id: jamb
+    classes: [door_jamb]
+    min: 2
+    max: 2
+    section_visibility: beyond
+    placement: fill_opening
+    anchor: threshold
+    position: side
+    description: The two upright frame members, one at each end of the sill; seen beyond the cut, never in it.
+  - id: head
+    classes: [door_head]
+    min: 1
+    max: 1
+    section_visibility: out_of_plane
+    placement: fill_opening
+    anchor: threshold
+    position: top
+    description: The frame member across the top of the opening; above the extent a threshold detail draws.
+  - id: leaf
+    classes: [door_leaf]
+    min: 1
+    max: 1
+    section_visibility: cut
+    placement: hosted_in_frame
+    anchor: threshold
+    position: infill
+    description: The door leaf in the frame; a threshold section cuts its bottom edge, though many details leave it out.
+  - id: weather_seal
+    classes: [weather_seal]
+    min: 0
+    max: null
+    section_visibility: cut
+    placement: posed_object
+    description: Seals between the leaf and the sill or frame.
+  - id: opening
+    classes: [weep_hole]
+    min: 0
+    max: null
+    section_visibility: cut
+    placement: null
+    description: Weep and drainage holes through the sill or joint.
+  - id: datum
+    classes: [datum]
+    min: 0
+    max: null
+    section_visibility: cut
+    placement: null
+    description: Levels and termination heights drawn on the detail.
+sequence_hints:
+  - substrate before membrane
+  - membrane before flashing, packers and sill
+  - sill before jambs
+  - jambs before head
+  - frame before leaf
+  - sealant after sill and trims
+  - finishes last

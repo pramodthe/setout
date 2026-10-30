@@ -34,7 +34,8 @@ def test_card_counts_printed_values_confirmed_against_the_drawing():
 
 
 def test_scene_endpoint_builds_and_verifies():
-    s = client.get("/api/specs/conpro-door-sill-D3/scene").json()
+    # D4: D3's real fillet/membrane gap is reported as a FAIL now (tests/test_verify.py).
+    s = client.get("/api/specs/conpro-subsill-D4/scene").json()
     assert s["solids"] and s["verification"]
     assert not any(c["status"] == "FAIL" for c in s["verification"])
     assert client.get("/api/specs/nope/scene").status_code == 404

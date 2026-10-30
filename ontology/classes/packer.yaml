@@ -1,0 +1,18 @@
+id: packer
+name: Packer
+status: draft
+definition: A manufactured shim placed under a sill or frame to set its height and level.
+function: support
+role: object
+shape_hint: cad
+form: block
+relations_allowed: [supported_by, bonded_to, installed_before]
+dimension_slots:
+  - name: height
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+drawing_appearance: {}
+aliases: [packer, packers, sill packer, cfc packers, cfc packer, shim, shims, packing]

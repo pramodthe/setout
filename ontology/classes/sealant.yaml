@@ -1,0 +1,24 @@
+id: sealant
+name: Sealant
+status: draft
+definition: A flexible sealing compound gunned into a joint between two parts to close it against water and air.
+function: water_barrier
+role: finish
+shape_hint: box
+form: null
+relations_allowed: [sealed_to, bonded_to, supported_by, abuts, installed_before]
+dimension_slots:
+  - name: width
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+  - name: depth
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+drawing_appearance: {}
+aliases: [sealant, sealant bead, mastic, silicone, caulking, sealant shown green, gap with backing rod and sealant]

@@ -1,0 +1,26 @@
+id: door_head
+name: Door head
+status: draft
+definition: The horizontal member of a door frame across the top of the opening, spanning between the jambs.
+function: opening_frame
+role: object
+shape_hint: cad
+form: shaped
+relations_allowed: [supported_by, fixed_to, sealed_to, abuts, installed_before]
+dimension_slots:
+  # height: the head's section depth seen from below; it is cut from the same
+  # stock as the jambs, so a placeholder takes the jamb width.
+  - name: height
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: jamb.width
+  - name: depth
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: threshold.depth
+drawing_appearance: {}
+aliases: [head, door head, head jamb, header, head member, frame head]

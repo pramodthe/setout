@@ -12,7 +12,7 @@ from __future__ import annotations
 from .geometry import Mesh
 from .spec import CheckResult, DetailSpec, Provenance, find_install_cycle
 
-CONTACT_TOL_MM = 2.0  # intended-contact gap tolerance (documented eval rule)
+CONTACT_TOL_MM = 2.0  # largest accepted contact gap; thin pairs get less (_pair_tolerance)
 
 
 def _c(cid, stage, desc, status, expected=None, actual=None, tolerance=None,
@@ -105,6 +105,25 @@ def _contact_gap(meshes: dict[str, Mesh], top_id: str, bottom_id: str,
     if not bearing:
         return None
     return y0 - max(bearing)
+
+
+def _thickness(spec: DetailSpec, meshes: dict[str, Mesh], cid: str) -> float | None:
+    """A sheet's physical thickness; any other part's built height, the
+    direction a contact gap is measured in."""
+    for p in spec.component(cid).params:
+        if p.name == "thickness_physical":
+            return p.value
+    b = _measure(meshes, cid)
+    return b[4] - b[1] if b else None
+
+
+def _pair_tolerance(spec: DetailSpec, meshes: dict[str, Mesh], top: str,
+                    bottom: str) -> float:
+    """min(CONTACT_TOL_MM, half the thinner part): a flat 2 mm band would
+    hide a 1.5 mm membrane that is floating or missing."""
+    known = [t for t in (_thickness(spec, meshes, top),
+                         _thickness(spec, meshes, bottom)) if t]
+    return min([CONTACT_TOL_MM] + [0.5 * t for t in known])
 
 
 def verify_dimensions(spec: DetailSpec, meshes: dict[str, Mesh]
@@ -284,8 +303,9 @@ def verify_meshes(spec: DetailSpec, meshes: dict[str, Mesh]) -> list[CheckResult
                           actual=m.tri_count if m else None))
     # intended contacts: bearing surface of `bottom` sampled under the
     # footprint of `top` (whole-mesh AABBs are meaningless for a sheet that
-    # runs upstand-to-slab). CONTACT_TOL_MM gap tolerance (eval rule).
-    # Pairs are declared per-detail in spec.context["contact_checks"].
+    # runs upstand-to-slab). The accepted gap is per pair: CONTACT_TOL_MM or
+    # half the thinner part, whichever is less, so a thin layer cannot float
+    # unseen. Pairs are declared per-detail in spec.context["contact_checks"].
     contacts = spec.context.get("contact_checks", [])
     for top, bottom, desc in contacts:
         gap = _contact_gap(meshes, top, bottom)
@@ -293,11 +313,13 @@ def verify_meshes(spec: DetailSpec, meshes: dict[str, Mesh]) -> list[CheckResult
             out.append(_c(f"B-contact-{top}", "B", desc, "UNVERIFIED",
                           evidence="no bearing surface under footprint"))
             continue
-        ok = -CONTACT_TOL_MM <= gap <= CONTACT_TOL_MM
+        tol = _pair_tolerance(spec, meshes, top, bottom)
+        ok = -tol <= gap <= tol
         out.append(_c(f"B-contact-{top}", "B", desc,
                       "PASS" if ok else "FAIL",
-                      expected=f"|gap| <= {CONTACT_TOL_MM}mm",
-                      actual=round(gap, 3)))
+                      expected=f"|gap| <= {tol:g}mm",
+                      actual=round(gap, 3), tolerance=tol,
+                      evidence=f"min({CONTACT_TOL_MM:g}mm, half the thinner part)"))
     out.append(_c("B-interference", "B",
                   "No unintended volumetric interference (AABB-level v0)",
                   "UNVERIFIED",

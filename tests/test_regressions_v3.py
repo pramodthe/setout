@@ -316,3 +316,20 @@ def test_tokens_held_by_an_interrupted_request_count_as_spent(source_repo):
     from app.worker import continue_if_cut_short
     job, _ = _cut_short(source_repo, tokens=175_000, reserved=60_000)
     assert continue_if_cut_short(source_repo, job["id"], limit=2)
+
+
+# A verification carries its completeness tier; a clean program with no
+# assembly class is verified, with the unchecked slots made visible.
+def test_verification_reports_its_outcome_tier(source_repo):
+    ontology = pytest.importorskip("app.ontology")
+    from app.verification_v3 import prepare_verification
+    version = _generated(source_repo)
+    report = prepare_verification(source_repo, version["id"])
+    assert report["quality"] == {"outcome": "verified", "inferred_parts": []}
+    assert report["scene"]["quality"] == report["quality"]
+    unset = next(c for c in report["checks"] if c["id"] == "assembly-class-unset")
+    assert unset["status"] == "UNVERIFIED" and not unset["required"]
+    assert report["manifest"]["ontology"] == ontology.load().version
+    critic = source_repo.list(d.critics)[0]
+    with d.transaction(source_repo.engine) as con:
+        assert source_repo.completion_errors(con, critic["version_id"], critic["verification_id"], critic["id"]) == []

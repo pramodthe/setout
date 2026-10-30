@@ -1,0 +1,36 @@
+id: door_jamb
+name: Door jamb
+status: draft
+definition: One of the two upright members of a door frame; it stands on the sill at each side of the opening and carries the leaf's hinges or stop.
+function: opening_frame
+role: object
+shape_hint: cad
+form: shaped
+relations_allowed: [supported_by, fixed_to, sealed_to, abuts, installed_before]
+dimension_slots:
+  # width: the face of the jamb seen in the opening, measured along the sill
+  # (the stock thickness). The one size read: a 92 x 18 mm pine jamb set.
+  - name: width
+    unit: mm
+    typical_min: 18
+    typical_max: 18
+    source: https://www.bunnings.com.au/2100-x-92-x-18mm-fj-primed-pine-single-door-jamb-set_p1038386
+    derive_from: null
+  # depth: across the wall, from inside face to outside face. A placeholder
+  # takes the sill's depth; the read size is the same jamb set's 92 mm.
+  - name: depth
+    unit: mm
+    typical_min: 92
+    typical_max: 92
+    source: https://www.bunnings.com.au/2100-x-92-x-18mm-fj-primed-pine-single-door-jamb-set_p1038386
+    derive_from: threshold.depth
+  # height: a placeholder uses the leaf height; the real reveal is taller by
+  # the head and the clearances, which only the drawing or a reviewer gives.
+  - name: height
+    unit: mm
+    typical_min: 1980
+    typical_max: 2040
+    source: https://archipro.com.au/article/standard-door-sizes-australia
+    derive_from: null
+drawing_appearance: {}
+aliases: [jamb, jambs, door jamb, side jamb, frame jamb, stile, door frame]
