@@ -1,7 +1,6 @@
 """Meta Model API client (Responses endpoint, streamed), stdlib only.
 
-Lifted from the request/stream code in ncc/extractor/extract.py and
-ncc/benchmark/run.py so the app has one tested path. Shapes verified against
+One tested path for every model call. Shapes verified against
 https://dev.meta.ai/docs/ (structured output, image understanding) 29 Oct 2026.
 The API key comes from the environment or the repo's .env; it is never logged.
 """

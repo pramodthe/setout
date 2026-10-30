@@ -34,7 +34,6 @@ Meta Global AI Developer Hackathon 2026 · Indie Developer Track · Build for Yo
 11. [Evaluation, performance and cost](#11-evaluation-performance-and-cost)
 12. [Known limitations and roadmap](#12-known-limitations-and-roadmap)
 13. [Source documents, licensing and scope](#13-source-documents-licensing-and-scope)
-14. [The NCC track](#14-the-ncc-track)
 
 ---
 
@@ -88,7 +87,7 @@ Open http://localhost:8000.
 | `MODEL_API_MODEL` | Model for read / compose / self-check / guide / CAD code | falls back to `META_MODEL` |
 | `META_MODEL` | Secondary model setting | `muse-spark-1.3` if neither is set |
 | `META_API_BASE` | API base URL | `https://api.meta.ai/v1` |
-| `META_SAM_MODEL` | SAM model for the NCC perception kill-check | `sam-3.1` |
+| `META_SAM_MODEL` | SAM model for linking parts to the drawing | `sam-3.1` |
 | `SETOUT_VAR` | Runtime storage (uploads, builds, library) | `var/` |
 
 For CAD parts, log in to Modal once: `.venv/bin/modal token new`. Without it, CAD
@@ -101,8 +100,7 @@ parts fall back to plain boxes with a note — nothing breaks.
 > **v3 (29 Oct 2026).** Sections 3–11 describe the v2 pipeline. Generation is now a
 > Muse agent with tools, persistent jobs and memory, over a database of immutable
 > versions; objects are AI-written parametric CAD measured independently. See
-> `CLAUDE.md` (architecture and rules), `docs/PLAN_V3.md`, `docs/V3_IMPLEMENTATION.md`
-> and `docs/V3_EVAL.md`.
+> `CLAUDE.md` (architecture and rules).
 
 ```mermaid
 flowchart LR
@@ -262,8 +260,6 @@ All calls go through one small stdlib client, `app/meta_client.py`.
 | **CAD code** | `generate.CAD_SCHEMA` | image + part brief + envelope | `{code, summary}` — CadQuery source |
 | **Critique** | `generate.CRITIQUE_SCHEMA` | drawing + 2 renders + current program + read | issues `{part_id, problem, fix}` + corrected program |
 | **Guide** | `guide.GUIDE_SCHEMA` | question + compact detail summary + history | steps `{say, actions[]}` + follow-up |
-
-The NCC track (§14) uses the same endpoint for rule extraction and the benchmark.
 
 ### 5.2 SAM 3.1 (Meta segmentation)
 
@@ -460,9 +456,12 @@ tests/                   pytest (no network)
 eval/agent_eval.py       run the v3 agent over every drawing in a PDF
 deploy/modal_app.py      hosted public demo on Modal
 e2e/drive.py             headless browser acceptance pass
-docs/                    plan, status log, earlier audit and architecture notes
-ncc/                     original NCC shower-details track (see §14)
-scripts/                 NCC regen / viewer helpers
+ontology/                component and assembly classes (library data)
+synthetic/               templates and styles for synthetic training drawings
+tools/                   DXF census, synthetic dataset builder
+training/                Modal training jobs, segmentation scorer
+dashboard/               local page for training runs and results
+scripts/                 Postgres test runner, own test drawings
 data/                    local manuals and footage (gitignored)
 ```
 
@@ -490,8 +489,7 @@ and the original spec, geometry, verification and API suites.
 
 ## 11. Evaluation, performance and cost
 
-**Batch evaluation, v2** (recorded with the v2 runner, since removed; details in
-`docs/EVAL.md`; the v3 rerun is in `docs/V3_EVAL.md`): the full AI
+**Batch evaluation, v2** (recorded with the v2 runner, since removed): the full AI
 pipeline on all 24 drawings of a 22-page wet-area waterproofing guide.
 
 | Measure | Result |
@@ -532,8 +530,7 @@ Measured on real drawings with `muse-spark-1.3`:
 - Product references are not assigned (no manufacturer system data yet).
 - Jobs run in-process; AI jobs are kept in memory and lost on restart (the
   generated details themselves are saved).
-- Later: AR on site (point a phone at a junction — SAM 3.1 perception is
-  prototyped in the NCC track) and photoreal renders.
+- Later: AR on site (point a phone at a junction) and photoreal renders.
 
 ---
 
@@ -546,26 +543,7 @@ labels are quoted in the evidence panel with their source. Full rule:
 `.claude/rules/source-documents.md`.
 
 Deliberately out of scope: measuring real installations from photos, compliance
-verdicts on real work, model training, IFC/BIM export, accounts and catalogues.
+verdicts on real work, IFC/BIM export, accounts and catalogues.
 
 Licence: Apache-2.0 (see `LICENSE`). Your own work only — the hackathon requires
 you to own everything you submit.
-
----
-
-## 14. The NCC track
-
-The original track encodes **31 rules from NCC 2022 Part 10.2** (wet areas) as
-structured data and generates three shower details from them, every solid carrying
-the rule id that set its size.
-
-```sh
-scripts/regen.sh                                              # rebuild NCC scenes
-scripts/regen.sh --violate membrane_return_onto_floor_mm=20   # demo a failing rule
-python3 ncc/extractor/validate_rules.py                       # schema lock
-python3 ncc/benchmark/run.py --dry-run                        # benchmark, no API calls
-```
-
-Then open `ncc/viewer/index.html` (works from `file://`). The benchmark asks a model
-31 code questions: with `muse-spark-1.3`, 35% correct from memory, 100% with the
-rules in context. See `ncc/SPEC.md`.

@@ -17,18 +17,17 @@ and is what every compliance tool does.
 - Figures or diagrams lifted from a manual or standard
 - Manual pages shown on screen in the demo video
 
-`data/manuals/` is gitignored. Keep it that way. If a tool wants to write extracted
-text, write it under `data/` — never under `ncc/rules/`, `ncc/` docs or the repo root.
+Everything under `data/` is gitignored. Keep it that way. If a tool wants to write
+extracted text, write it under `data/` — never in a tracked folder or the repo root.
 
 ## The pattern to use instead: paraphrase and cite
 
-Each rule in `ncc/rules/rules.json` must have:
+Anything we restate from a standard or manual must have:
 
 - `text` — a **short paraphrase in our own words** stating the requirement.
   One sentence. Not a copied clause.
-- `source` — an id resolving to an entry in the `sources` array
-- the `sources` entry carries the document title and a **public URL** so anyone can
-  check the original themselves
+- `source` — the document title and a **public URL**, so anyone can check the
+  original themselves
 
 Good:
 ```json
@@ -54,6 +53,5 @@ text back into the repo.
 
 ## Before adding a new source
 
-Add it to the `sources` array in `ncc/rules/rules.json` with a title and a public URL
-first. If there is no URL a reader can check, the citation is not verifiable and the
-rule should not ship.
+Give it a title and a public URL first. If there is no URL a reader can check, the
+citation is not verifiable and the value should not ship.
