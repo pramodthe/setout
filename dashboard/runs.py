@@ -35,10 +35,11 @@ GPU_PRICE_PER_S = {
 MODAL_BILL = {
     "date": "30 Oct 2026",
     "source": "Modal's billing report, as given in the training agent's report",
-    "gpu_usd": 16.70,
-    "cpu_memory_usd": 3.52,
-    "all_in_usd": 20.22,
-    "training": {"seg-synth-v1-seg-2xlarge-20261030T0431Z": {"gpu_usd": 16.16, "all_in_usd": 19.44}},
+    "gpu_usd": 25.17,
+    "cpu_memory_usd": 9.02,
+    "all_in_usd": 34.19,
+    "training": {"seg-synth-v1-seg-2xlarge-20261030T0431Z": {"gpu_usd": 16.16, "all_in_usd": 19.44},
+                 "seg-synth-v2-zoom-seg-2xlarge-20261030T1112Z": {"gpu_usd": 7.95, "all_in_usd": 13.13}},
 }
 
 VOLUME = "setout-seg-runs"
