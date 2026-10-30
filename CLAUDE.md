@@ -298,6 +298,10 @@ Cross-file contracts. These are not obvious from any single file:
   whatever the kinds, and a part measured against nothing stays open. A new kind must
   be classified in `tests/test_pass_marks.py`, or its hostile cases fail. Values come
   from measured runs; never change them to clear a check.
+- **A thickness is measured through a layer, not across it.** An `extent` reads a
+  part's whole span, so a bend or a fall would read as thickness. On a sheet the claim
+  is measured across a straight run, and on a profile at `THICKNESS_STATIONS` along it:
+  it stands only if the layer is that thick at every one, so a taper stays a FAIL.
 - **A drawing is looked at up close, never measured** (`app/close_up.py`). Before an
   object is modelled, two model calls place it and it is cut from the full-resolution
   figure; if they disagree the writer gets the whole drawing. A part narrower than

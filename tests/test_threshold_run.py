@@ -1422,6 +1422,59 @@ def test_a_sheet_with_no_straight_run_says_it_cannot_measure_a_thickness():
     assert result["status"] == "UNVERIFIED" and "no straight run" in result["reason"]
 
 
+LEVEL_Y, FALL, DEPTH = "structural_slab_top_level", "levelling_packer_stack_thickness", "track_section_height"
+
+
+def _profile_layer(path, claim=DEPTH):
+    raw = threshold()
+    raw["parts"] = raw["parts"][:2]
+    raw["parts"][1].update(shape="profile", dims=_dims(z0="0", z1="run_length"), path=[{"x": x, "y": y} for x, y in path],
+                           features=[{"id": "t", "kind": "extent", "selector": {"axis": "y"}, "expected_expr": claim, "tolerance": 0.05}])
+    raw["relations"] = []
+    return raw
+
+
+def _layer_check(repo, path, claim=DEPTH):
+    job, tools, written = _written(repo, _profile_layer(path, claim))
+    return {c["id"]: c for c in written["checks"]}["feature-layer-t"]
+
+
+# Bottom left, bottom right, top right, top left: a 70 mm layer falling 12 mm to the right.
+LAID_TO_A_FALL = [("0", f"{LEVEL_Y} + {FALL}"), ("slab_length", LEVEL_Y), ("slab_length", f"{LEVEL_Y} + {DEPTH}"), ("0", f"{LEVEL_Y} + {FALL} + {DEPTH}")]
+
+
+def test_a_layers_thickness_is_measured_through_it_not_across_its_fall(source_repo):
+    """Seen live: 43.24 against 39 mm pavers, a false FAIL, and face_distance has no plane to
+    read on a slope, so nothing the agent could write would have passed."""
+    check = _layer_check(source_repo, LAID_TO_A_FALL)
+    assert check["status"] == "PASS" and check["actual"] == pytest.approx(70)
+
+
+def test_a_taper_is_not_a_thickness_even_if_it_is_right_in_the_middle(source_repo):
+    tapered = [("0", LEVEL_Y), ("slab_length", LEVEL_Y), ("slab_length", f"{LEVEL_Y} + {DEPTH} + {FALL}"), ("0", f"{LEVEL_Y} + {DEPTH} - {FALL}")]
+    assert _layer_check(source_repo, tapered)["status"] == "FAIL"
+
+
+def test_a_layer_that_is_the_claimed_thickness_at_one_end_only_stays_a_fail(source_repo):
+    bent = [("0", LEVEL_Y), ("slab_length", LEVEL_Y), ("slab_length", f"{LEVEL_Y} + {DEPTH} + {DEPTH}"),
+            ("track_centre_offset", f"{LEVEL_Y} + {DEPTH} + {DEPTH}"), ("track_centre_offset", f"{LEVEL_Y} + {DEPTH}"), ("0", f"{LEVEL_Y} + {DEPTH}")]
+    assert _layer_check(source_repo, bent)["status"] == "FAIL"
+
+
+def test_a_layer_of_another_thickness_than_claimed_stays_a_fail(source_repo):
+    check = _layer_check(source_repo, LAID_TO_A_FALL, claim="slab_depth")
+    assert check["status"] == "FAIL" and check["actual"] == pytest.approx(82)
+
+
+def test_a_face_distance_on_a_slope_says_what_to_claim_instead(source_repo):
+    raw = _profile_layer(LAID_TO_A_FALL)
+    raw["parts"][1]["features"] = [{"id": "t", "kind": "face_distance", "expected_expr": DEPTH, "tolerance": 0.05,
+                                    "selector": {"axis": "y", "face": "max", "other_face": "max", "other_part": "slab"}}]
+    job, tools, written = _written(source_repo, raw)
+    check = {c["id"]: c for c in written["checks"]}["feature-layer-t"]
+    assert check["status"] == "UNVERIFIED" and "as an extent" in check["reason"]
+
+
 def test_a_feature_expecting_another_number_loses_its_claim_on_a_printed_dimension():
     """Seen live: every feature claimed d0, so the printed dimension had no single
     owner and stayed UNVERIFIED forever."""

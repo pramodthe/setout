@@ -42,6 +42,7 @@ COVER_FLOOR = 0.5
 # hand-modelled seeds, and all at full contact, so none needed this at all). No live
 # run has ever measured a lap. A printed lap width belongs in a measured feature.
 LAP_ROLES = ("covered_layer", "finish")
+THICKNESS_STATIONS = 5  # along a layer's run, where an extent claim is measured through it
 LAP_WIDTHS = 10
 
 
@@ -567,6 +568,24 @@ def sheet_thickness_claim(part, mesh, feature, measured, env):
             "status": "PASS" if abs(through[0] - measured["expected"]) <= measured["tolerance"] else "FAIL"}
 
 
+def layer_thickness_claim(mesh, feature, measured):
+    """An extent reads a part's whole span, so on a layer laid to a fall it reads the fall
+    too: seen live, 43 mm across 39 mm pavers, a false FAIL no author could clear. A claim
+    that fails that way is measured through the solid along the run, and it stands only
+    if the layer is that thick at every station, so a taper or a bend stays a FAIL."""
+    axis = {"x": 0, "y": 1}.get(feature.selector.get("axis"))
+    bounds = mesh.bounds()
+    if feature.kind != "extent" or axis is None or measured.get("status") != "FAIL" or not bounds:
+        return measured
+    along = 1 - axis
+    stations = [bounds[along] + (i + .5) / THICKNESS_STATIONS * (bounds[along + 3] - bounds[along]) for i in range(THICKNESS_STATIONS)]
+    lines = line_hits(mesh, axis, [(station, (bounds[2] + bounds[5]) / 2) for station in stations])
+    through = [sum(high - low for low, high in solid_spans(hits)) for hits in lines]
+    if not all(abs(value - measured["expected"]) <= measured["tolerance"] for value in through):
+        return measured
+    return {**measured, "actual": through[0], "reason": None, "status": "PASS"}
+
+
 def plane_coordinate(repo, version, part, mesh, axis, side, env):
     bounds = mesh.bounds()
     if bounds is None or side not in ("min", "max"):
@@ -608,7 +627,8 @@ def cross_part_feature(repo, version, program, meshes, part, feature, env):
     axis = {"x":0, "y":1, "z":2}.get(selector.get("axis"))
     by_id = {p.id: p for p in program.parts}
     other = by_id.get(selector.get("other_part"))
-    result = check(feature.id, "UNVERIFIED", "unsupported or missing planar face selector",
+    result = check(feature.id, "UNVERIFIED", "unsupported or missing planar face selector: a sloped face has no plane at its "
+                   "extreme, so claim a layer's thickness as an extent, which is measured through the layer",
                    source_dimension_id=feature.source_dimension_id)
     if axis is None or other is None or feature.kind != "face_distance":
         return result
@@ -703,6 +723,9 @@ def prepare_verification(repo, version_id, candidate=None):
                                  [f.model_dump(mode="json") for f in part.features], env)
                 if part.shape == "sheet":
                     measured = [sheet_thickness_claim(part, meshes[part.id], feature, result, env)
+                                for feature, result in zip(part.features, measured)]
+                if part.shape == "profile":
+                    measured = [layer_thickness_claim(meshes[part.id], feature, result)
                                 for feature, result in zip(part.features, measured)]
         cross_features = {f.id: f for f in part.features if f.selector.get("other_part")}
         measured = [m for m in measured if m["id"] not in cross_features]
