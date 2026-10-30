@@ -64,6 +64,18 @@ def _browser():
     return _local.browser
 
 
+def _open_page(**options):
+    """A page on this thread's browser. Playwright's sync API only learns that a
+    browser died when it is next called, so is_connected() says True and a crash
+    while idle first shows up here (seen 30 Oct: it failed a run at 0 FAILs). One
+    fresh browser, then the error stands."""
+    try:
+        return _browser().new_page(**options)
+    except Exception:  # noqa: BLE001 - playwright raises its own Error types
+        _local.browser = None
+        return _browser().new_page(**options)
+
+
 class Renderer:
     def __init__(self, repo, base_url=None):
         self.repo = repo
@@ -76,8 +88,7 @@ class Renderer:
         profile = {"width": 1280, "height": 960, "physical": True, "views": ["iso", "front", "top"]}
         output = []
         viewer = viewer_hash()
-        browser = _browser()
-        page = browser.new_page(viewport={"width": 1280, "height": 960}, device_scale_factor=1)
+        page = _open_page(viewport={"width": 1280, "height": 960}, device_scale_factor=1)
         try:
             page.goto(f"{self.base_url}/#/render/{version_id}", wait_until="networkidle", timeout=60000)
             page.wait_for_function("window.__ready || window.__renderError", timeout=60000)

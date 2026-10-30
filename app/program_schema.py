@@ -15,7 +15,8 @@ def program_schema(labels=None, provenance=("drawing", "assumption"), part_prove
     evidence; existing values of those kinds stay available in revisions).
     part_provenance: likewise for parts; an agent claims drawing or inferred
     (gated in native_program.prepare), never a reviewer's confirmation.
-    class_id and assembly_class are a choice from the ontology or null."""
+    class_id, assembly_class and inferred_by are a choice from the ontology or
+    null: inferred_by offers every required slot, so nobody guesses its format."""
     schema = NativeProgram.model_json_schema()
     known = ontology.load()
     definitions = schema.pop("$defs")
@@ -47,6 +48,10 @@ def program_schema(labels=None, provenance=("drawing", "assumption"), part_prove
     schema["properties"]["assembly_class"] = {"anyOf": [{"type": "string", "enum": known.assembly_ids()}, {"type": "null"}]}
     part["class_id"] = {"anyOf": [{"type": "string", "enum": known.component_ids()}, {"type": "null"}]}
     part["provenance"] = {"type": "string", "enum": list(part_provenance)}
+    part["inferred_by"] = {"anyOf": [{"type": "string", "enum": [f"archetype:{assembly}@{known.version}:{slot.id}"
+                                                                  for assembly in known.assembly_ids()
+                                                                  for slot in known.required_slots(assembly)]},
+                                     {"type": "null"}]}
     part["param_bindings"] = {"type":"array", "items":pair}
     part["placement"] = object_schema({axis:string for axis in ("x","y","z")})
     part["features"]["items"]["properties"]["selector"] = object_schema({

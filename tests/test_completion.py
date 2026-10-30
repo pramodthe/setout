@@ -81,7 +81,8 @@ def test_completion_proposes_the_parts_beyond_the_cut_and_they_build():
         slot = part.inferred_by.rsplit(":", 1)[1]
         assert part.provenance == "inferred" and part.confidence is None and part.label is None
         assert part.inferred_by == f"archetype:door_threshold@{ont.version}:{slot}" and slot in ("jamb", "head", "leaf")
-        assert part.role == "object" and part.shape == "cad" and part.form and part.param_bindings
+        # A box: a placeholder has no form to model, and spends no CAD call.
+        assert part.role == "object" and part.shape == "box" and part.form and not part.param_bindings
     # Every size with no derivation is a named assumption that says so; the
     # jamb depth and the head height derive from parts already in the program.
     assert {p.name: p.value for p in result.params} == {"jamb_width": 18, "jamb_height": 2010, "leaf_thickness": 40}
@@ -172,10 +173,15 @@ def test_an_agent_cannot_relabel_or_confirm_inferred_parts():
     inferred = inferred.model_dump(mode="json")
     relabelled = copy.deepcopy(inferred)
     next(p for p in relabelled["parts"] if p["id"] == "leaf").update(provenance="drawing", inferred_by=None)
+    with pytest.raises(ValueError, match="objects require parametric CAD"):  # a drawn object cannot be a box
+        _prepared(relabelled, inferred)
+    leaf = next(p for p in relabelled["parts"] if p["id"] == "leaf")
+    leaf.update(completion.cad_placeholder(leaf, ontology.load()))
     with pytest.raises(ValueError, match="claim the drawing shows it"):
         _prepared(relabelled, inferred)
     confirmed = copy.deepcopy(inferred)
-    next(p for p in confirmed["parts"] if p["id"] == "leaf").update(provenance="user_input")
+    leaf = next(p for p in confirmed["parts"] if p["id"] == "leaf")
+    leaf.update(completion.cad_placeholder(leaf, ontology.load()), provenance="user_input")
     with pytest.raises(ValueError, match="only a reviewer"):
         _prepared(confirmed, inferred)
     # A reviewer can confirm; then an agent can neither drop nor demote the part.
@@ -234,8 +240,9 @@ def test_complete_assembly_tool_suggests_and_the_gate_applies(source_repo, monke
     assert parts["head"]["provenance"] == "inferred" and parts["head"]["inferred_by"].endswith(":head")
     assert parts["head"]["class_id"] == "door_head" and parts["head"]["confidence"] is None
     assert parts["sill"]["provenance"] == "drawing" and parts["sill"]["class_id"] == "door_sill"
-    # Inferred objects are placeholders until modelled: never a PASS.
-    assert any(c["id"] == "cad-leaf" and c["status"] == "FAIL" for c in applied["checks"])
+    # A placeholder box raises no CAD FAIL, and is never a PASS either.
+    assert not [c for c in applied["checks"] if c["id"].startswith("cad-") and c["id"] != "cad-sill"]
+    assert next(c for c in applied["checks"] if c["id"] == "slot-inferred:leaf")["status"] == "UNVERIFIED"
     stored = source_repo.get(d.versions, applied["version_id"])["program"]
     assert stored["assembly_class"] == "door_threshold" and [p["provenance"] for p in stored["parts"]][-4:] == ["inferred"] * 4
 

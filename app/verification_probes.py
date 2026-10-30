@@ -68,9 +68,11 @@ def layer_order_probes(program, meshes):
     """One probe per ordered pair the relations imply: id, status, reason and
     the measurements, as plain dicts for `verification_v3.check`."""
     results, seen = [], set()
+    # A placeholder's position is not evidence of what lies where.
+    inferred = {part.id for part in program.parts if getattr(part, "provenance", "drawing") == "inferred"}
     for relation in program.relations:
         order = implied_order(relation)
-        if order is None:
+        if order is None or {relation.source, relation.target} & inferred:
             continue
         first, second, axis = order
         ident = f"layer-order:{first}:{second}"

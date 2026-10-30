@@ -3,6 +3,7 @@ import {
   INFERRED_OPACITY,
   badgeClass,
   badgeLabel,
+  framedParts,
   inferredBadge,
   inferredParts,
   outcomeOf,
@@ -13,6 +14,19 @@ import {
   worstProv,
 } from "./provenance";
 import type { CheckResult, Solid } from "./types";
+
+describe("framedParts", () => {
+  it("frames what the drawing shows, so a ghost frame cannot shrink the section", () => {
+    const parts = [{ id: "sill", provenance: "drawing" }, { id: "jamb_1", provenance: "inferred" }, { id: "old" }];
+    expect(framedParts(parts as Solid[])).toEqual(["sill", "old"]);
+  });
+  it("keeps a confirmed part in frame", () => {
+    expect(framedParts([{ id: "head", provenance: "user_input" }] as Solid[])).toEqual(["head"]);
+  });
+  it("falls back to every part when all are inferred", () => {
+    expect(framedParts([{ id: "leaf", provenance: "inferred" }] as Solid[])).toEqual(["leaf"]);
+  });
+});
 
 describe("worstProv", () => {
   it("returns the single provenance", () => {

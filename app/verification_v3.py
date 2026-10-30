@@ -6,9 +6,10 @@ import re
 
 from . import database as d
 from .cad_components import measure_features, check_component
+from .generate import _norm
 from .geometry import Mesh, build_assembly, export_scene_json
 from .interfaces import measure_interface, matches_brep_planes
-from .native_program import NativeProgram
+from .native_program import READ_ROLES, NativeProgram
 from .program import evaluate, expr_names
 from .repository import VERIFIER_VERSION, canonical, inferred_part_ids, outcome_tier, sha
 from .spec import DetailSpec
@@ -65,6 +66,19 @@ def object_form_check(part, measured):
         solid_fraction=ratio)
 
 
+def envelope_problem(actual, expected):
+    """How a built solid misses its envelope, in terms of what to change."""
+    if not actual:
+        return "the solid has no mesh"
+    span = lambda bounds: [round(bounds[i + 3] - bounds[i], 3) for i in range(3)]
+    if all(abs(a - b) <= .1 for a, b in zip(span(actual), span(expected))):
+        shift = dict(zip("xyz", (round(expected[i] - actual[i], 3) for i in range(3))))
+        return (f"the solid is the right size but sits off its envelope: add {shift} mm to the part's placement "
+                "with patch_program; the solid itself is fine, so do not remodel it")
+    return (f"the solid measures {span(actual)} mm along x,y,z and its envelope is {span(expected)} mm: fix the CAD "
+            "code or its param_bindings")
+
+
 def part_thickness(part, mesh, axis, env):
     """A sheet's declared thickness; any other part's built extent along the
     interface axis, the direction its gap is measured in."""
@@ -98,11 +112,13 @@ def ontology_version():
     return ont.version if ont else None
 
 
-def slot_checks(program):
+def slot_checks(program, read=None):
     """Completeness against the ontology: the assembly class, each part's
     class and every required slot. Keyed off class ids, declared roles and
-    library data only, never part names or labels (the engine stays
-    trade-agnostic; the library may name parts)."""
+    library data only, never part names (the engine stays trade-agnostic; the
+    library may name parts). A READ label is used only for what the READ says
+    of it: check_roles makes such a part take the READ's role, so a class that
+    disagrees is a difference to review, not a failure the author can fix."""
     assembly_id = getattr(program, "assembly_class", None)
     classed = [(part, getattr(part, "class_id", None)) for part in program.parts]
     classed = [(part, class_id) for part, class_id in classed if class_id]
@@ -119,15 +135,26 @@ def slot_checks(program):
             output.append(check("assembly-class-unknown", "UNVERIFIED", problem, assembly_class=assembly_id))
         output += [check(f"class-unknown:{part.id}", "UNVERIFIED", problem, class_id=class_id) for part, class_id in classed]
         return output
+    categories = {_norm(e["label_verbatim"]): e.get("category") for e in (read or {}).get("elements", [])
+                  if e.get("label_verbatim")}
     for part, class_id in classed:
         component = ont.component(class_id)
         if component is None:
             output.append(check(f"class-unknown:{part.id}", "FAIL", f"{class_id!r} is not an ontology component class",
                                 class_id=class_id))
         elif component.role != part.role:
-            output.append(check(f"class-role:{part.id}", "FAIL",
-                                f"class {class_id!r} has role {component.role!r}; the part declares {part.role!r}",
-                                class_id=class_id, class_role=component.role, declared_role=part.role))
+            category = categories.get(_norm(part.label or ""))
+            allowed = READ_ROLES.get(category, ())
+            if part.role in allowed and component.role not in allowed:
+                output.append(check(f"class-role:{part.id}", "UNVERIFIED",
+                                    f"the drawing reading classifies {part.label!r} as {category}, which sets role "
+                                    f"{part.role!r}; class {class_id!r} has role {component.role!r}. The drawing's role "
+                                    "stands; a reviewer settles the difference", required=False,
+                                    class_id=class_id, class_role=component.role, declared_role=part.role))
+            else:
+                output.append(check(f"class-role:{part.id}", "FAIL",
+                                    f"class {class_id!r} has role {component.role!r}; the part declares {part.role!r}",
+                                    class_id=class_id, class_role=component.role, declared_role=part.role))
     if assembly_id is None:
         return output
     if ont.assembly(assembly_id) is None:
@@ -204,6 +231,13 @@ def spatial_checks(program, meshes, exposed=None, cad_planes=None):
         ident = f"assembly-{i}-{relation.kind}"
         if relation.kind == "installed_before":
             output.append(check(ident, "PASS" if _dependencies(program, relation.source, relation.target) else "FAIL"))
+            continue
+        if any(getattr(by_id[k], "provenance", "drawing") == "inferred" for k in (relation.source, relation.target)):
+            # Where a placeholder sits is an assumption, so how it meets a part is
+            # no evidence either way: never a PASS, and no FAIL against a shape
+            # the archetype cannot know. It is measured once a reviewer confirms it.
+            output.append(check(ident, "UNVERIFIED", "an inferred part's interface is a placeholder: not measured "
+                                "until a reviewer confirms the part", required=False))
             continue
         if relation.kind not in CONTACT_KINDS:
             # hosted_in, fixed_to, abuts, repeated_along (ontology/relations.yaml):
@@ -371,7 +405,9 @@ def prepare_verification(repo, version_id, candidate=None):
         if part.shape == "cad":
             binding = version["bindings"].get(part.id)
             if not binding or binding.get("placeholder"):
-                checks.append(check(f"cad-{part.id}", "FAIL", "placeholder: CAD missing or failed"))
+                failure = (binding or {}).get("placeholder")
+                checks.append(check(f"cad-{part.id}", "FAIL", "placeholder: CAD missing or failed" +
+                                    (f": {failure}" if failure else "")))
                 continue
             build = repo.get(d.component_builds, binding["build_id"])
             component_code = repo.get(d.components,build["component_id"])["code"]
@@ -390,6 +426,7 @@ def prepare_verification(repo, version_id, candidate=None):
             expected_bounds = [dims[axis+side] for side in ("0","1") for axis in ("x","y","z")]
             envelope_ok = bool(actual_bounds) and all(abs(a-b) <= .1 for a,b in zip(actual_bounds, expected_bounds))
             checks.append(check(f"cad-envelope-{part.id}", "PASS" if envelope_ok else "FAIL",
+                                None if envelope_ok else envelope_problem(actual_bounds, expected_bounds),
                                 actual=actual_bounds, expected=expected_bounds))
             measured = build["checks"]
         else:
@@ -440,6 +477,8 @@ def prepare_verification(repo, version_id, candidate=None):
         maximum = bool(re.search(r"\bmax(?:imum)?\b|at most|not more than", quoted))
         printed_kind = "min" if minimum and not maximum else "max" if maximum and not minimum else "eq"
         status, reason = "UNVERIFIED", "source dimension must identify one measured feature"
+        if len(features) > 1:
+            reason += "; claimed by " + ", ".join(f"{part.id}.{result['id']}" for part, result in features)
         if len(features) == 1 and source_params:
             part, measurement = features[0]
             feature = next(f for f in part.features if f.id == measurement["id"])
@@ -538,7 +577,7 @@ def prepare_verification(repo, version_id, candidate=None):
     checks += spatial_checks(program, meshes, exposed, cad_planes)
     for probe in layer_order_probes(program, meshes):
         checks.append(check(probe.pop("id"), probe.pop("status"), probe.pop("reason", None), **probe))
-    checks += slot_checks(program)
+    checks += slot_checks(program, read)
     checks = [{"stage": "B", "description": c["id"], **c} for c in checks]
     # Completeness tier (repository.outcome_tier): stored in the verification's
     # quality dict and shown on the scene; an inferred part never makes it verified.

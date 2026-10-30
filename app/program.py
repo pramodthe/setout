@@ -151,6 +151,7 @@ class DetailProgram(BaseModel):
 # ------------------------------------------------------------ expressions
 
 _OPS = (ast.Add, ast.Sub, ast.Mult, ast.Div)
+MAX_EXPR = 240  # characters in an authored expression
 
 
 def expr_names(expr: str) -> set[str]:
@@ -158,8 +159,8 @@ def expr_names(expr: str) -> set[str]:
             and n.id not in ("min", "max")}
 
 
-def _parse(expr: str) -> ast.Expression:
-    if len(expr) > 240:
+def _parse(expr: str, limit: int = MAX_EXPR) -> ast.Expression:
+    if len(expr) > limit:
         raise ValueError(f"expression too long: {expr[:40]}…")
     try:
         return ast.parse(expr.strip() or "0", mode="eval")
@@ -167,8 +168,9 @@ def _parse(expr: str) -> ast.Expression:
         raise ValueError(f"bad expression {expr!r}") from e
 
 
-def evaluate(expr: str, env: dict[str, float]) -> float:
-    """Whitelisted arithmetic: numbers, names, + - * /, unary -, min, max."""
+def evaluate(expr: str, env: dict[str, float], limit: int = MAX_EXPR) -> float:
+    """Whitelisted arithmetic: numbers, names, + - * /, unary -, min, max.
+    `limit` is for values composed in code; authored expressions keep MAX_EXPR."""
 
     def ev(n: ast.AST) -> float:
         if isinstance(n, ast.Expression):
@@ -200,7 +202,7 @@ def evaluate(expr: str, env: dict[str, float]) -> float:
             return min(vals) if n.func.id == "min" else max(vals)
         raise ValueError(f"disallowed syntax in {expr!r}")
 
-    return ev(_parse(expr))
+    return ev(_parse(expr, limit))
 
 
 # ------------------------------------------------------------ compile

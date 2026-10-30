@@ -4,13 +4,17 @@ from __future__ import annotations
 import json
 
 from . import database as d, meta_client
-from .agent_tools import Tools
+from .agent_tools import AUTO_COMPLETION, Tools, model_view
 from .model_gateway import ModelGateway
-from .repository import TERMINAL, BudgetExceeded, canonical
+from .repository import TERMINAL, BudgetExceeded, canonical, inferred_part_ids, review_due, review_tail, tokens_left
 
 INSTRUCTIONS = """You build faithful construction installation details from a source drawing.
-Use read_drawing first, recall relevant lessons, then write_program with a concise
-modelling brief. This tool reliably authors complex programs with structured output.
+Use read_drawing first (a revision's request already has the READ), recall relevant
+lessons, then write_program with a concise modelling brief. This tool reliably authors
+complex programs with structured output.
+Model the section the drawing shows, shape by shape: a step or set-down is real geometry
+(a profile or two boxes at their levels), a bent plate or sheet follows the bends drawn.
+Sizes the drawing does not print are assumptions in the drawing's own proportions.
 Use named parameters with honest provenance; never invent a printed value or label.
 Define dimensions and datums once and derive coordinates with expressions; avoid
 dozens of independent absolute coordinates which disconnect source dimensions.
@@ -36,7 +40,8 @@ printed label as layer, object, zone or other; a part carrying that label must
 take the matching role.
 Shape dimensions are a dims ARRAY of {name,expr}, with expressions in mm:
 - box: x0,x1,y0,y1,z0,z1. Thin rectangular layers are boxes too.
-- sheet: thickness,z0,z1 and path [{x:expr,y:expr},...].
+- sheet: thickness,z0,z1 and path [{x:expr,y:expr},...]. A sheet is centred on its path:
+  to lie on a surface, offset the path half a thickness off it.
 - wedge: x0,x1,y_bottom,y_top_x0,fall_ratio,z0,z1.
 - profile: z0,z1 and a closed section outline path [{x:expr,y:expr},...].
 - post: cx,cz,r,y0,y1. rod: cx,cy,r,z0,z1. fillet: x,y,leg_x,leg_y,z0,z1.
@@ -46,7 +51,8 @@ Shape dimensions are a dims ARRAY of {name,expr}, with expressions in mm:
 Every part has id,type,label,shape,role,dims,path,install_after,note and features.
 Use boxes for planar layer interfaces this verifier supports; unsupported curved
 interfaces remain UNVERIFIED. Do not replace layers with CAD to evade these checks.
-Each READ dimension ID must own one measured feature via source_dimension_id.
+Each READ dimension ID must own one measured feature via source_dimension_id. Only
+that feature carries it; every other feature leaves source_dimension_id null.
 Drawing parameters must drive geometry itself, not only expected_expr.
 For a relative height, use top = other_top + printed_height in the dims expression.
 Share expressions between parts rather than duplicating independent coordinates.
@@ -61,6 +67,8 @@ measures this part's top minus the other part's top. Use comparison min/max as
 printed. This avoids mistaking overall component height for a relative height.
 Objects require CAD, explicit param_bindings and placement {x,y,z} expressions; build(p) uses CadQuery
 X width, Y depth, Z up, mapped to Setout x=X,y=Z,z=-Y without scaling.
+Placement carries the whole position: set it to the envelope corner {x: the x0 expression,
+y: the y0 expression, z: the z1 expression} and build(p) starts from the local origin.
 An object's default front is CadQuery negative Y / Setout positive z. Orient
 objects as the drawing shows them: the face a person uses toward the viewer or
 room, the back or fixing side against its support.
@@ -81,11 +89,19 @@ The independently measured solid, after placement, must match the native envelop
 Every part declares substrate/covered_layer/finish/object. Define covers/support
 relations and install_after paths. For planar box interfaces constraints name
 axis, source_face and target_face (min/max), min_gap, max_gap (mm) and min_coverage
-(a fraction from 0 to 1: 0.9 means 90%).
+(a fraction from 0 to 1: 0.9 means 90%). A relation is measured between faces that really
+touch, so name the parts and faces that meet. min_coverage is of the target's whole face
+for covers and laps_over, of the source's otherwise, and states the contact the drawing
+shows: never lower it or swap a relation's kind to clear a FAIL. Fix the geometry, or
+remove a relation between parts that do not touch.
+Relations on the fillet shape are not measured; a fillet that carries one is a triangular profile.
 Split a layer that turns a corner into separate wall/floor parts so each covering
 face can be measured. Renaming/splitting preserves material, source labels and
-printed feature ownership. Every covered layer needs a real covering relationship.
-Use model_component or reuse_component for each CAD object. Each edit or CAD
+printed feature ownership. Every covered layer needs a real covering relationship:
+covers reads "source lies over target", so a covered layer is the TARGET of a covers or
+terminates_against relation from what lies on it.
+Use model_component or reuse_component for each CAD object, one by one, before polishing
+relations: an unmodelled object FAILs and blocks everything else. Each edit or CAD
 binding creates a successor version; follow its returned version_id. Each mutation
 already returns its verification_id and checks; inspect those without rebuilding.
 Use patch_program with small JSON-pointer edits, not a full program rewrite.
@@ -100,18 +116,22 @@ or use only the tagged screenshots.
 Inspect tool feedback and images and fix concrete problems with patch_program.
 ASSEMBLY CLASS AND SLOTS: set assembly_class to the ontology archetype the drawing
 shows (the schema lists them) and class_id on every part (the schema lists the
-classes). A section cannot show every required slot (members out of its plane
-never appear in it). Once the drawn parts verify, call complete_assembly
-on that version: in suggest mode apply its edits with patch_program; its
-suggestions name slots it could not place. A part you fill in yourself that the
-drawing does not show carries provenance=inferred, class_id, and
-inferred_by=archetype:<assembly>@<version>:<slot>; never call it drawing, and its
-sizes are assumption params whose notes say there is no source. Inferred parts
-render ghosted and are never a verified PASS; a reviewer confirms them. Never
-delete an inferred part because it is not in the drawing; a slot-missing check
-means a required slot is empty, not that a part should go.
+classes). Author what the drawing shows: a part drawn without a label is still
+provenance=drawing, inferred_by=null, label=null. A section cannot show every required
+slot (members out of its plane never appear in it). complete_assembly fills those
+slots with inferred parts, before any CAD work: right after an accepted version it
+runs by itself and its result follows the tool result (with SETOUT_COMPLETION=suggest,
+call it yourself and apply its edits with patch_program). Its suggestions name slots
+it could not place. Follow the version_id it returns. A part you fill in yourself that
+the drawing does not show carries provenance=inferred, class_id, inferred_by from the
+schema's list and shape=box; never call it drawing, and its sizes are assumption params
+whose notes say there is no source. Inferred parts are boxes, even objects: never call
+model_component on one. They render ghosted and are never a verified PASS; a reviewer
+confirms them. Never delete an inferred part because it is not in the drawing; a
+slot-missing check means a required slot is empty, not that a part should go.
 Never remove source evidence to clear checks. Call finish(done) only with the
-matching passing verification and critic IDs. Otherwise finish(needs_review)
+matching passing verification and critic IDs, naming every inferred part in
+open_issues. Otherwise finish(needs_review)
 with a useful summary and unresolved issues. Do not publish or claim compliance.
 """
 
@@ -121,6 +141,16 @@ class Agent:
         self.repo, self.fence = repo, fence
         self.gateway = ModelGateway(repo, fence, responder)
         self.tools = Tools(repo, fence, self.gateway, renderer, cad_builder)
+
+    def stop_on_budget(self, error):
+        """A limit was hit. With a draft and tokens to see it, end on a review
+        and say why; otherwise the worker ends the job and records the limit."""
+        run = self.repo.run(self.fence.job_id)
+        tail = review_tail(run)
+        if not tail or tokens_left(run) < tail:
+            raise error
+        self.tools.stop_reason = "budget_floor" if str(error).startswith("tokens") else "budget_exhausted"
+        self.final_review(run)
 
     def final_review(self, run):
         """Spend the reserved tail on seeing the draft before the run stops."""
@@ -143,11 +173,13 @@ class Agent:
                 "verification_id":report["id"],"render_ids":[r["render_id"] for r in rendered["renders"]]})
         ready = bool(verdict and verdict.get("verdict") == "pass") and not any(
             c["status"] == "FAIL" or (c.get("required") and c["status"] != "PASS") for c in report["checks"])
+        inferred = inferred_part_ids(self.repo.get(d.versions, version_id)["program"]["parts"])
         args = {"version_id":version_id,"verification_id":report["id"],
                 "critic_verdict_id":verdict.get("critic_verdict_id") if verdict else None,
                 "status":"done" if ready else "needs_review",
                 "summary":"Final review completed within the run budget.",
-                "open_issues":[] if ready else ["The draft requires correction or human review; see verification and critic evidence."]}
+                "open_issues":[f"Inferred part {part} awaits a reviewer." for part in inferred] if ready else
+                              ["The draft requires correction or human review; see verification and critic evidence."]}
         result = self.tools.run("final-finish","finish",args)
         if result.get("error"):
             self.tools.run("final-needs-review","finish",{**args,"status":"needs_review",
@@ -168,11 +200,12 @@ class Agent:
             initial[0]["content"].append({"type":"input_text", "text":"Base version program: " +
                 canonical(base["program"] or base["spec"]) + "\nExisting component bindings: " + canonical(base["bindings"]) +
                 ("\nThis is an archived v2 detail. Use write_program to create a native v3 successor; replace all fixture objects with parametric CAD." if base["format_version"] == "legacy-v2" else "")})
+            if base["drawing_read_id"]:
+                initial[0]["content"].append({"type":"input_text","text":"The drawing's READ (read_drawing would return the same): " +
+                    canonical(self.repo.get(d.reads, base["drawing_read_id"])["response"])})
             if base["format_version"] == "3.0":
                 evidence = self.tools.run("initial-verification","build_and_verify",{"version_id":base["id"]})
-                initial[0]["content"].append({"type":"input_text","text":"Current verification: "+canonical({
-                    **{k:v for k,v in evidence.items() if k != "checks"},
-                    "checks":[c for c in evidence.get("checks",[]) if c["status"] != "PASS"]})})
+                initial[0]["content"].append({"type":"input_text","text":"Current verification: "+canonical(model_view("build_and_verify",evidence))})
                 prior_critics = self.repo.list(d.critics,d.critics.c.version_id == base["id"],
                     d.critics.c.created_at <= job["created_at"],order=d.critics.c.created_at)
                 if prior_critics:
@@ -196,7 +229,22 @@ class Agent:
             pending = []
             agent_turns = [s for s in steps if s["kind"] == "model" and s["request"].get("purpose") == "agent"
                            and s["state"] == "completed"]
-            for turn in agent_turns:
+            turn_ids = {s["id"] for s in agent_turns}
+            told = set()  # gate notes repeat on every write: each is said once
+            def shown(name, output):
+                view = model_view(name, output)
+                if "gate_notes" in view:
+                    view["gate_notes"] = [note for note in view["gate_notes"] if note not in told]
+                    told.update(view["gate_notes"])
+                return view
+            for turn in steps:
+                if turn["kind"] == "tool" and turn["call_id"].startswith(AUTO_COMPLETION):
+                    conversation.append({"role": "user", "content": [{"type": "input_text", "text":
+                        "complete_assembly ran by itself on the latest accepted version: " +
+                        canonical(shown("complete_assembly", turn["output"]))}]})
+                    continue
+                if turn["id"] not in turn_ids:
+                    continue
                 # Keep full responses in the trace; replay only public messages
                 # and tool calls. Native image/tool continuation supports this.
                 conversation += [item for item in turn["response"]["output"] if item.get("type") != "reasoning"]
@@ -205,15 +253,11 @@ class Agent:
                         continue
                     saved = completed_calls.get(call["call_id"])
                     if saved:
-                        output = dict(saved["output"])
-                        if "checks" in output:
-                            output["passed_check_ids"] = [c["id"] for c in output["checks"] if c["status"] == "PASS"]
-                            output["checks"] = [c for c in output["checks"] if c["status"] != "PASS"]
                         conversation.append({"type": "function_call_output", "call_id": call["call_id"],
-                                             "output": canonical(output)})
+                                             "output": canonical(shown(saved["tool_name"], saved["output"]))})
                         # Historical renders stay in the trace. Only the latest
                         # matching render is useful to this candidate's loop.
-                        images = output.get("images", []) if not any(
+                        images = saved["output"].get("images", []) if not any(
                             s["kind"] == "tool" and s["n"] > saved["n"] and s["tool_name"] == "render"
                             for s in steps) else []
                         if images:
@@ -232,25 +276,33 @@ class Agent:
                 except (ValueError, TypeError):
                     self.tools.error(call["call_id"], call["name"], call.get("arguments"), "Tool arguments must be a valid JSON object")
                     continue
-                self.tools.run(call["call_id"], call["name"], arguments)
+                try:
+                    self.tools.run(call["call_id"], call["name"], arguments)
+                except BudgetExceeded as error:
+                    self.stop_on_budget(error)
+                    return
                 continue
-            remaining = run["budget"]["tokens"]-run["consumed"].get("tokens",0)-run["reserved"].get("tokens",0)
-            if run["working_version_id"] and run["budget"]["tokens"] >= 120000 and remaining < 100000:
+            completion_call = self.tools.completion_call(run, steps)
+            if completion_call:
+                # No model turn: the empty slots are filled before CAD work starts.
+                self.tools.run(completion_call, "complete_assembly", {"version_id": run["working_version_id"]})
+                continue
+            if review_due(run):
+                self.tools.stop_reason = "budget_floor"
                 self.final_review(run)
                 return
             if agent_turns and not any(o.get("type") == "function_call" for o in agent_turns[-1]["response"]["output"]):
                 response = agent_turns[-1]["response"]
-                reason = "provider_output_limit" if response.get("status") == "incomplete" else "model stopped without finish"
+                reason, stop = (("provider_output_limit", "output_limit") if response.get("status") == "incomplete"
+                                else ("model stopped without finish", "model_stopped"))
                 self.repo.end(self.fence, "needs_review", {"version_id": run["working_version_id"],
-                              "detail_id": run["detail_id"], "open_issues": [reason]})
+                              "detail_id": run["detail_id"], "open_issues": [reason], "stop_reason": stop})
                 return
             try:
                 self.gateway.call({"model": meta_client.default_model(), "instructions": INSTRUCTIONS,
                                "reasoning": {"effort":"medium" if job["kind"] == "revise_detail" else "low"},
                                "max_output_tokens": 32768, "tools": self.tools.definitions(), "input": conversation},
                               "agent", f"turn-{len(agent_turns)}")
-            except BudgetExceeded:
-                if run["working_version_id"] and remaining >= 100000:
-                    self.final_review(run)
-                    return
-                raise
+            except BudgetExceeded as error:
+                self.stop_on_budget(error)
+                return

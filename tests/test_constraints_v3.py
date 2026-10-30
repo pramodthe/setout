@@ -458,6 +458,16 @@ def test_slot_checks_follow_the_contract():
     program.parts[2].class_id = class_id
     checks = {c["id"]: c for c in slot_checks(program)}
     assert checks["class-role:tile"]["status"] == "FAIL" and checks["class-role:tile"]["class_role"] == ont.component(class_id).role
+    # A role the READ set is not the author's to change: the class's disagreement
+    # is named and left to a reviewer. The same part without a label still FAILs.
+    read = {"elements": [{"label_verbatim": "TILE", "category": "layer"}]}
+    program.parts[2].class_id = next(i for i in ont.component_ids() if ont.component(i).role == "object")
+    assert {c["id"]: c for c in slot_checks(program, read)}["class-role:tile"]["status"] == "FAIL"  # unlabelled
+    program.parts[2].label = "TILE"
+    disagreement = {c["id"]: c for c in slot_checks(program, read)}["class-role:tile"]
+    assert disagreement["status"] == "UNVERIFIED" and not disagreement["required"]
+    assert "'TILE'" in disagreement["reason"] and "layer" in disagreement["reason"] and "'object'" in disagreement["reason"]
+    assert {c["id"]: c for c in slot_checks(program)}["class-role:tile"]["status"] == "FAIL"  # no reading to defer to
 
 
 @pytest.mark.parametrize("kind", ["hosted_in", "fixed_to", "abuts", "repeated_along"])
