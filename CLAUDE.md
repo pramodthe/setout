@@ -26,19 +26,24 @@ Built for the **Meta Global AI Developer Hackathon 2026**, Indie Developer track
   prep) until the user raises it: no questions, suggestions or status lines
   about it. User instruction, 29 Oct 2026.
 
-## Two tracks in one repo
+## Where things are
 
-| | **Playground** (primary) | **NCC track** (original) |
-|---|---|---|
-| What | Any drawing in a PDF → Muse agent (tools, memory, persistent jobs) → verified 3D versions in a database → library, 3D viewer, AI guide | NCC Part 10.2 rules → shower details → static Three.js viewer |
-| Code | `app/` (FastAPI, worker, agent), `migrations/`, `web/` (React+TS), `tests/`, `eval/`, `e2e/` | `ncc/` (everything) |
-| Source of numbers | `app/seed.py` (two hand-transcribed seeds) and AI-written programs gated against the drawing (database versions) | `ncc/rules/rules.json` (31 rules, 9 drive geometry) |
-| Plan docs | `docs/PLAN_V3.md` (the v3 design), `docs/V3_IMPLEMENTATION.md`, `docs/V3_EVAL.md`, `docs/MULTI_AGENT_SPEC.md` (next, not built), `docs/STATUS.md` | `ncc/SPEC.md` |
-| Deps | `requirements.txt` (pinned) | **Python stdlib only.** Keep it that way. |
+| | |
+|---|---|
+| What | Any drawing in a PDF → Muse agent (tools, memory, persistent jobs) → verified 3D versions in a database → library, 3D viewer, AI guide |
+| Code | `app/` (FastAPI, worker, agent), `migrations/`, `web/` (React+TS), `tests/`, `eval/`, `e2e/`. Drawing segmentation: `synthetic/`, `tools/`, `training/`, `dashboard/` |
+| Source of numbers | `app/seed.py` (two hand-transcribed seeds) and AI-written programs gated against the drawing (database versions) |
+| Deps | `requirements.txt` (pinned) |
 
-Read the plan doc for a track before you propose architecture changes to it.
-`docs/STATUS.md` is the running log, newest entry first. Check it for current
-state and add an entry when a milestone lands.
+**`docs/` is private.** It is gitignored and exists only on the owner's machine,
+so never commit it, and never quote it in a PR or any public file. It holds
+`PLAN_V3.md` (the v3 design), `V3_IMPLEMENTATION.md`, `V3_EVAL.md`,
+`MULTI_AGENT_SPEC.md` (next, not built), `DETAIL_WORLD_MODEL_SPEC.md`,
+`instruction.md` (how to build datasets and train) and `STATUS.md`.
+
+Read the plan doc before you propose architecture changes. `docs/STATUS.md` is
+the running log, newest entry first. Check it for current state and add an entry
+when a milestone lands.
 
 ## The invariant — do not break this
 
@@ -65,9 +70,6 @@ state and add an entry when a milestone lands.
   placeholder that can never PASS.
 - **No hand-modelled object in the registry.** The six v2 fixture generators
   (`LEGACY_FIXTURE_REGISTRY`) exist only to import archived v2 records.
-- **NCC:** every solid carries the `rule_id` that set its dimensions. A dimension
-  with no governing rule is a product dimension with `rule_id: null`, and the
-  code says so. Feeding a new manual must produce new details with no code changes.
 
 This is the answer to "what's actually hard here?" If it erodes, the project is a diorama.
 
@@ -116,7 +118,7 @@ Full rule: `.claude/rules/source-documents.md`
 
 ## Commands
 
-Playground (run from repo root, venv activated: `source .venv/bin/activate`):
+Run from repo root, venv activated (`source .venv/bin/activate`):
 
 ```sh
 pip install -r requirements.txt
@@ -160,25 +162,7 @@ AI features need `META_API_KEY` in `.env`. CAD objects also need a Modal login
 FAIL. Server-side renders need Chrome (macOS) or `python -m playwright install
 --with-deps chromium` (Linux), and `SETOUT_RENDER_URL` pointing at the API.
 
-NCC track:
-
-```sh
-scripts/regen.sh                                              # rebuild all NCC scenes from rules.json
-scripts/regen.sh --violate membrane_return_onto_floor_mm=20   # demo a failing rule
-python3 ncc/extractor/validate_rules.py                       # schema lock + benchmark cross-check
-python3 ncc/extractor/validate_rules.py --self-test           # negative fixtures must all fail
-python3 ncc/benchmark/run.py --dry-run                        # no API calls
-```
-
-(`scripts\regen.bat` on Windows.) Then open `ncc/viewer/index.html` (desktop) or
-`jarvis.html` (phone-first) directly. They load `scene.js` / `scenes.js` via
-`<script>`, so they work from `file://` with no server. Switching them to
-`fetch('scene.json')` breaks that. Use `scripts/run_viewer.sh` if you need a server.
-
-`regen.sh` overwrites the **tracked** `ncc/viewer/scene.json`, `scene.js` and
-`scenes.js`. Re-run it without `--violate` before you commit.
-
-## Playground architecture
+## Architecture
 
 Two kinds of detail. **Seeds** (`app/seed.py` `SEEDS`) are hand-transcribed
 reference specs served and corrected from code. **Everything AI-made** is an
@@ -289,31 +273,16 @@ Cross-file contracts. These are not obvious from any single file:
 - **Millimetres everywhere** in specs and rules. The viewer scales by 0.01 at render
   time only (`app/units.py` `MM_PER_VIEW_UNIT` == `K` in `web/src/viewport.ts`). GLB is
   SI metres. Conversions are tested in `tests/test_units.py`.
-- **Origins differ by track:**
-  - Playground: interior FFL on the step face. `+x` toward the exterior, `+y` up,
-    `+z` along the sill (an illustrative extent: an assumption, excluded from accuracy checks).
-  - NCC: outside face of the hob at finished floor level. `+x` away from the shower,
-    `+y` up, `+z` along the hob.
-- Component ids (playground) and rule ids (NCC, e.g. `NCC-10.2-hob-membrane-return`)
-  must stay stable. The viewer, GLB nodes, report and benchmark all key off them.
-- NCC rules pipeline: `ncc/extractor/extract.py` writes candidates only to
-  `data/candidates.json` (it refuses other paths). A human confirms every number
-  against the source. Then `merge.py --dry-run` / `--apply` assigns ids and
-  re-validates. The model never assigns rule ids.
+- **Origin:** interior FFL on the step face. `+x` toward the exterior, `+y` up,
+  `+z` along the sill (an illustrative extent: an assumption, excluded from accuracy checks).
+- Component ids must stay stable. The viewer, GLB nodes and report all key off them.
 - Meta API: `META_API_KEY` in `.env` (copy `.env.example`). The model is
   `MODEL_API_MODEL`, else `META_MODEL` (default muse-spark-1.3). The playground
   builds and verifies without a key. The SAM 3.1 call shape was verified 27 Oct (`/responses`,
   no separate endpoint). Re-check https://dev.meta.ai/docs/ before spending credits.
 
-## Hard dependency
-
-The perception / AR-overlay work (`ncc/perception/`, SAM tracks anchoring the
-overlay) needs real footage of a bathroom at membrane stage. Without it, that part
-is a toy. If the footage hasn't been confirmed, raise it before building anything
-that assumes it.
-
 ## Submission
 
 Public repo, Apache-2.0 (matches `LICENSE`), **own work only**. The hackathon
 requires the entrant to own everything submitted. Never show manual pages on
-screen in any video (`docs/DEMO.md`, `ncc/VIDEO.md`).
+screen in any video.

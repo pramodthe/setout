@@ -30,3 +30,7 @@ var/
 # Web build output and deps
 web/dist/
 web/node_modules/
+
+# Private plans and research stay on the owner's machine
+docs/
+research_notes/

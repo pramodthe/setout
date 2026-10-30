@@ -5,7 +5,7 @@ the drawing turned upright (SAM finds nothing in a sideways drawing). The
 best box above a confidence floor becomes a SourceRegion(kind="sam_mask")
 in fractions of the upright image, which the viewer draws and links to the
 3D. Parts SAM cannot find simply have no region: nothing is guessed.
-Request/stream shape as verified in ncc/perception/sam_killcheck.py.
+Request/stream shape verified 27 Oct 2026.
 """
 
 from __future__ import annotations

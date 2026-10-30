@@ -27,6 +27,9 @@ cross-file contracts. This file is the short version for any coding agent.
 
 ## Where the work is
 
+`docs/` is private: gitignored and only on the owner's machine. Never commit
+it, and never quote it in a PR or any public file.
+
 - `docs/PLAN_V3.md`: the v3 design (agent harness, database and persistent
   jobs, memory, AI-written CAD objects, renderer and critic, frontend). It is
   built: `docs/V3_IMPLEMENTATION.md` records how, `docs/V3_EVAL.md` the
@@ -47,7 +50,6 @@ SETOUT_WORKER=external python -m app.worker                 # separate workers (
 cd web && npm install && npm run build   # viewer -> web/dist, served at /
 cd web && npm test && npx tsc -b && npm run lint
 python e2e/drive.py                 # browser acceptance pass (see CLAUDE.md)
-scripts/regen.sh                    # NCC scenes (or scripts\regen.bat)
 ```
 
 AI features need `META_API_KEY` in `.env` (copy `.env.example`). CAD parts also
@@ -91,4 +93,3 @@ need a Modal login (`modal token new`).
 - `training/`: Modal training jobs and the segmentation scorer (they spend GPU
   money); `dashboard/`: builds the local results page into `data/dashboard/`
 - `scripts/demo_drawing.py`: draws our own test drawings into `data/demo/`
-- `ncc/`: the original NCC track (Python stdlib only)

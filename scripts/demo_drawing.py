@@ -4,9 +4,9 @@ bathroom elevation.
     python scripts/demo_drawing.py [out_dir]          # default data/demo/
 
 Made for the demo video and the public demo, so no third-party drawing is
-ever on screen. Every printed number is a minimum read from
-ncc/rules/rules.json (human-confirmed, cited to NCC 2022 Housing Provisions
-Part 10.2); nothing else carries a number, so the AI has to treat it as an
+ever on screen. Every printed number is a human-confirmed minimum from NCC
+2022 Housing Provisions Part 10.2 (the constants below); nothing else carries
+a number, so the AI has to treat it as an
 assumption. Not to scale. The elevation has recognisable fixtures because
 SAM 3.1 finds objects, not layers. Writes one PNG per drawing and a two-page
 PDF with each drawing embedded as an image, which is what the upload screen
@@ -15,7 +15,6 @@ extracts.
 
 from __future__ import annotations
 
-import json
 import random
 import sys
 from pathlib import Path
@@ -27,15 +26,9 @@ W, H = 2600, 1700
 INK, GREY, MEMBRANE = (25, 25, 25), (120, 120, 120), (30, 80, 160)
 
 
-def rule(rule_id: str) -> int:
-    rules = json.loads((ROOT / "ncc/rules/rules.json").read_text())["rules"]
-    value = next(r["value"] for r in rules if r["id"] == rule_id)
-    return int(value) if float(value).is_integer() else value
-
-
-STEP = rule("NCC-10.2-shower-stepdown")          # shower floor below FFL outside
-WALL = rule("NCC-10.2-membrane-wall-height")      # membrane above finished tile
-BASIN = rule("NCC-10.2-sink-wall-height")         # water resistant above a basin
+STEP = 25     # mm, shower floor below FFL outside
+WALL = 1800   # mm, membrane above finished tile
+BASIN = 150   # mm, water resistant above a basin
 
 
 def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
