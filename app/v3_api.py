@@ -11,7 +11,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from . import database as d, meta_client
+from . import completion, database as d, meta_client, ontology
 from .lessons import correction_lessons
 from .native_program import kept_bindings, prepare
 from .repository import Conflict, TERMINAL, canonical, row, sha, uid
@@ -337,7 +337,10 @@ def get_reviews(ident: str):
 def confirm_inferred(program, part_ids):
     """The program with the named inferred parts confirmed by the reviewer:
     provenance user_input, confidence cleared, inferred_by kept as the record
-    of where the part came from. Sizes stay the assumptions they were."""
+    of where the part came from. Sizes stay the assumptions they were. A box
+    standing in for an object becomes a CAD part with no model yet, so it is
+    labelled a placeholder and FAILs until modelled: confirming that a part
+    exists says nothing about its shape."""
     if not isinstance(part_ids, list) or not part_ids or any(not isinstance(p, str) for p in part_ids):
         raise ValueError("confirm_inferred lists the ids of inferred parts")
     revised = copy.deepcopy(program)
@@ -346,6 +349,8 @@ def confirm_inferred(program, part_ids):
         if parts.get(ident, {}).get("provenance") != "inferred":
             raise ValueError(f"{ident} is not an inferred part of this version")
         parts[ident].update(provenance="user_input", confidence=None)
+        if parts[ident].get("role") == "object" and parts[ident].get("shape") != "cad":
+            parts[ident].update(completion.cad_placeholder(parts[ident], ontology.load()))
     return revised
 
 

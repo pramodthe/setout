@@ -255,14 +255,15 @@ def test_budget_tail_is_spent_on_exact_version_render_and_critique(source_repo):
     version = repo.get(d.versions,repo.run(job["id"])["working_version_id"])
     revised = repo.enqueue("revise_detail",{"detail_id":version["detail_id"],"base_version_id":version["id"]})
     with d.transaction(repo.engine) as con:
-        con.execute(d.runs.update().where(d.runs.c.job_id == revised["id"]).values(consumed={"tokens":225000}))
+        con.execute(d.runs.update().where(d.runs.c.job_id == revised["id"]).values(consumed={"tokens":285000}))
     provider = ScriptedModel()
     Worker(repo,responder=provider,renderer=FakeRenderer(repo)).run_once()
     assert provider.agent_calls == 0
     final = repo.get(d.jobs,revised["id"])
     assert final["state"] == "succeeded",final
     assert final["result"]["version_id"] == version["id"]
-    assert repo.run(revised["id"])["consumed"]["tokens"] > 225000
+    assert final["result"]["stop_reason"] == "budget_floor"
+    assert repo.run(revised["id"])["consumed"]["tokens"] > 285000
 
 
 def test_resume_replays_the_same_initial_request_after_a_draft_exists(source_repo):

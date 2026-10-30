@@ -11,6 +11,10 @@ from .program import evaluate
 from .repository import canonical, sha
 
 TOOLCHAIN = "cadquery-2.8.0:component-measure-v1"
+# Why a literal is refused, and the way out, so one retry can fix it.
+LITERAL_HELP = ("Write every size and offset as an expression of p[...]; a fraction such as 0.5 * p['width'] is fine, "
+                "any other number except 0 is not. build(p) never positions the part: its rigid placement does, so "
+                "model it in its local frame and change the part's placement, not the code, to move it.")
 
 MEASURE = '''
 import base64, json, tempfile, os
@@ -69,7 +73,8 @@ def check_component(code):
         if isinstance(node, ast.BinOp):
             a,b = dimensional_value(node.left, seen), dimensional_value(node.right, seen)
             if isinstance(node.op, (ast.Add, ast.Sub)) and "length" in (a,b) and "literal" in (a,b):
-                raise cad_sandbox.CadCodeError("physical offsets must use named p parameters")
+                raise cad_sandbox.CadCodeError(f"physical offsets must use named p parameters: line {node.lineno} "
+                                               f"adds a number to a size in {ast.unparse(node)}. {LITERAL_HELP}")
             return "length" if "length" in (a,b) else "zero" if a == b == "zero" else "literal"
         return "unknown"
     dimensional = {"box", "circle", "hole", "fillet", "chamfer", "sphere", "cylinder",
@@ -85,8 +90,10 @@ def check_component(code):
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in dimensional:
             args = list(node.args[:solid_args.get(node.func.attr,len(node.args))])
             args += [keyword.value for keyword in node.keywords if keyword.arg in length_keys]
-            if any(dimensional_value(arg) == "literal" for arg in args if not isinstance(arg, ast.Constant) or not isinstance(arg.value, bool)):
-                raise cad_sandbox.CadCodeError("physical sizes must use named p parameters")
+            for arg in args:
+                if (not isinstance(arg, ast.Constant) or not isinstance(arg.value, bool)) and dimensional_value(arg) == "literal":
+                    raise cad_sandbox.CadCodeError(f"physical sizes must use named p parameters: line {node.lineno} "
+                                                   f"passes {ast.unparse(arg)} to {node.func.attr}(). {LITERAL_HELP}")
 
 
 def _result(output):

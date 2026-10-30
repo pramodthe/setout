@@ -11,23 +11,25 @@ from . import database as d
 from .agent import Agent
 from .agent_tools import Tools
 from .model_gateway import ProviderRejected
-from .repository import BudgetExceeded, LostLease, Repository
+from .repository import CUT_SHORT, BudgetExceeded, LostLease, Repository
 
 
 # A run that spends its budget with work left (CAD placeholders, FAILs)
 # continues in a fresh run, at most this many times per generation.
 AUTO_CONTINUE = int(os.environ.get("SETOUT_AUTO_CONTINUE", "2"))
-REVIEW_TAIL = 100_000  # tokens app/agent.py keeps for the final render and critique
-CONTINUE_REQUEST = ("Continue where the previous run stopped on its budget: model the remaining placeholder "
-                    "objects with CAD first, then fix the remaining FAILs. Keep everything that already passes.")
+CONTINUE_REQUEST = ("Continue where the previous run stopped on its budget. Any empty required slot (a slot-missing "
+                    "check) comes first: complete_assembly fills it. Then model the remaining placeholder objects with "
+                    "CAD, then fix the remaining FAILs. Keep everything that already passes.")
 
 
 def continue_if_cut_short(repo, job_id, limit=None):
-    """Continue a generation or revision that ran out of budget mid-work.
+    """Continue a generation or revision that was cut short mid-work.
 
-    Only when the run made a new version, that version is still the detail's
-    current one, its checks still have a FAIL (a CAD placeholder, a failed
-    measurement) and the chain hasn't hit its limit. Returns the new job id."""
+    The run says why it stopped (stop_reason, recorded when it stopped); this
+    never works that out again from what was spent afterwards. Only when the
+    run made a new version, that version is still the detail's current one, its
+    checks still block completion (a CAD placeholder, a failed measurement) and
+    the chain hasn't hit its limit. Returns the new job id."""
     limit = AUTO_CONTINUE if limit is None else limit
     job, run = repo.get(d.jobs, job_id), repo.run(job_id)
     step = int((job["payload"] or {}).get("continuation") or 0)
@@ -37,14 +39,9 @@ def continue_if_cut_short(repo, job_id, limit=None):
         return None
     if repo.get(d.details, run["detail_id"])["current_version_id"] != version_id:
         return None
-    used, held, budget = run["consumed"], run["reserved"], run["budget"]
-    # As app/agent.py counts it: tokens still reserved (e.g. by a request cut
-    # off by a crash) are spent as far as the budget is concerned.
-    cut_short = ((job["error"] or {}).get("code") == "budget_exhausted"
-                 or used.get("tokens", 0) + held.get("tokens", 0) + REVIEW_TAIL >= budget["tokens"]
-                 or used.get("cad_calls", 0) >= budget["cad_calls"])
     reports = repo.list(d.verifications, d.verifications.c.version_id == version_id, order=d.verifications.c.created_at)
-    if not cut_short or not reports or not any(c["status"] == "FAIL" for c in reports[-1]["checks"]):
+    if (job["result"] or {}).get("stop_reason") not in CUT_SHORT or not reports or not any(
+            c["status"] == "FAIL" or (c.get("required") and c["status"] != "PASS") for c in reports[-1]["checks"]):
         return None
     payload = {"detail_id": run["detail_id"], "base_version_id": version_id,
                "requested_changes": CONTINUE_REQUEST, "continuation": step + 1}
@@ -108,9 +105,8 @@ class Worker:
             code = "budget_exhausted" if isinstance(error, BudgetExceeded) else "provider_rejected"
             try:
                 run = self.repo.run(fence.job_id)
-                self.repo.end(fence, "needs_review", {"version_id": run["working_version_id"],
-                              "detail_id": run["detail_id"], "open_issues": [str(error)]},
-                              {"code": code, "message": str(error)[:500]})
+                self.repo.end(fence, "needs_review", {"version_id": run["working_version_id"], "detail_id": run["detail_id"],
+                              "open_issues": [str(error)], "stop_reason": code}, {"code": code, "message": str(error)[:500]})
             except LostLease:
                 pass
             else:

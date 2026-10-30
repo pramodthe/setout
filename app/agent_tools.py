@@ -5,17 +5,19 @@ import copy
 import json
 import io
 import os
+import re
+from collections import Counter
 
 import sqlalchemy as sa
 
-from . import cad_components, completion, database as d, generate, meta_client, ontology, sam
+from . import cad_components, cad_sandbox, completion, database as d, generate, meta_client, ontology, sam
 from .model_gateway import ModelGateway
 from .native_program import kept_bindings, NativeProgram, prepare, expression_unit
 from .program import evaluate, expr_names
 from .program_edits import apply_edits
 from .program_schema import program_schema, from_wire
 from .repository import BudgetExceeded, Conflict, LostLease, VERIFIER_VERSION, canonical, row, sha, uid, version_content
-from .verification_v3 import stage_verification
+from .verification_v3 import ontology_or_error, stage_verification
 
 
 def obj(properties, required=None):
@@ -76,14 +78,87 @@ LABEL_RULES = ("LABELS: a part's label is exactly one READ label_verbatim, copie
 RETENTION_RULE = ("RETENTION: a part whose provenance is inferred fills a required slot of the assembly class that "
                   "the drawing does not show; it renders ghosted and is never counted as verified. Never propose "
                   "deleting a part that fills a required slot, and 'not in the drawing' is never a reason to delete "
-                  "an inferred part. Judge inferred parts only where their placement contradicts what the drawing shows. ")
+                  "an inferred part. An inferred object is a plain box on purpose, so a box there is not a fidelity "
+                  "error. Judge inferred parts only where their placement contradicts what the drawing shows. ")
+
+# Call id prefix for the completion the harness runs by itself (app/agent.py).
+AUTO_COMPLETION = "auto-complete-"
 
 
 def completion_mode():
-    """SETOUT_COMPLETION: off (the tool is not offered), suggest (default: the
-    tool proposes, the agent applies through the gate) or on (the tool applies)."""
-    mode = os.environ.get("SETOUT_COMPLETION", "suggest").strip().lower()
-    return mode if mode in ("off", "suggest", "on") else "suggest"
+    """SETOUT_COMPLETION: on (default: the tool applies its own proposal through
+    the gate, and runs by itself right after a version is accepted), suggest (the
+    tool proposes, the agent applies) or off (the tool is not offered)."""
+    mode = os.environ.get("SETOUT_COMPLETION", "on").strip().lower()
+    return mode if mode in ("off", "suggest", "on") else "on"
+
+
+def compact_check(check):
+    """One check as the model needs it: what is wrong and by how much."""
+    return {key: value for key, value in check.items() if value is not None and key != "stage"
+            and not (key == "description" and value in (check.get("id"), check.get("reason")))}
+
+
+def model_checks(checks):
+    """What a model reads of a verification: the tally and what is not passing.
+    Checks that cannot block completion are named only, unless they list work
+    to do (label-coverage). Measured on a live run, they were 62% of the check
+    text, repeated every turn. Every check stays in the verification row."""
+    open_checks = [c for c in checks if c["status"] not in ("PASS", "N/A")]
+    actionable = [c for c in open_checks if c["status"] == "FAIL" or c.get("required") or c.get("missing")]
+    return {"checks": [compact_check(c) for c in actionable],
+            "informational": [c["id"] for c in open_checks if c not in actionable],
+            "check_counts": dict(sorted(Counter(c["status"] for c in checks).items()))}
+
+
+def rejected_write(error):
+    """A rejected write as the model reads it. The stored result keeps the whole
+    proposal, because patch_program resumes from it when no version exists yet."""
+    error, proposal = dict(error), error["proposal"]
+    del error["proposal"]
+    if error.get("working_version_id"):
+        # It came from a program the model has and edits it wrote.
+        return {**error, "note": "Nothing was applied: the working version is unchanged. Send the corrected edits."}
+    parts = proposal.get("parts", [])
+    named = [p for p in parts if re.search(rf"\b{re.escape(p['id'])}\b", error.get("message", ""))]
+    if not named:
+        # write_program authors in a nested call, so the model has never seen
+        # this program, and the message does not say where the fault is: the
+        # whole proposal is the only way to find it.
+        return {**error, "proposal": proposal}
+    return {**error, "named_parts": named, "part_ids": [p["id"] for p in parts],
+            "parameter_names": [p["name"] for p in proposal.get("params", [])],
+            "note": "The rejected program is kept. Repair it with patch_program (/parts/@id/...), which applies to it; "
+                    "do not call write_program again."}
+
+
+def completion_view(summary):
+    """A completion without what its edits or the new version already carry."""
+    view = {key: value for key, value in summary.items() if key not in ("parts", "params", "relations")}
+    if summary.get("mode") == "on":
+        view.pop("edits", None)
+    return {**view, "inferred_parts": [p["id"] for p in summary.get("parts", [])]}
+
+
+def model_view(name, output):
+    """A stored tool result as the model reads it. Only this view is compact:
+    the result in the trace stays whole."""
+    view = dict(output)
+    if "checks" in view:
+        view.update(model_checks(view["checks"]))
+    if view.get("component_checks"):
+        view["component_checks"] = [compact_check(c) for c in view["component_checks"] if c["status"] != "PASS"]
+    if isinstance(view.get("error"), dict) and "proposal" in view["error"]:
+        view["error"] = rejected_write(view["error"])
+    if name == "complete_assembly" and "parts" in view:
+        view = completion_view(view)
+    if isinstance(view.get("completion"), dict):
+        view["completion"] = completion_view(view["completion"])
+    unbuilt = [c["id"].removeprefix("cad-") for c in view.get("checks", []) if c["id"].startswith("cad-")
+               and (c.get("reason") or "").startswith("placeholder:")]
+    if unbuilt:
+        view["next_step"] = "Model these objects before any more patches: " + ", ".join(unbuilt)
+    return view
 
 
 def slot_brief(assembly_class):
@@ -102,6 +177,7 @@ class Tools:
         self.gateway = gateway or ModelGateway(repo, fence)
         self.renderer = renderer
         self.cad_builder = cad_builder or cad_components.build
+        self.stop_reason = None  # set by the agent when it stops a run on a limit
 
     def definitions(self):
         signatures = {
@@ -120,9 +196,10 @@ class Tools:
                        obj({**VERSION, "verification_id": STRING, "render_ids": {"type": "array", "items": STRING}})),
             "locate_on_drawing": ("Locate identifiable source parts with SAM.", obj(VERSION)),
             "complete_assembly": ("Fill the required slots of the version's assembly_class that the drawing leaves empty "
-                                  "(parts beyond the section cut) with inferred placeholder parts: ghosted, never a PASS, "
-                                  "confirmed by a reviewer. Returns the proposal, suggestions for slots it cannot place, "
-                                  "and ready patch_program edits; in mode on it applies them as a successor version.",
+                                  "(parts beyond the section cut) with inferred placeholder parts: ghosted boxes, never a "
+                                  "PASS, confirmed by a reviewer. In mode on it applies them as a successor version, and it "
+                                  "runs by itself after an accepted version, so call it only to retry. It reports slots it "
+                                  "cannot place; in mode suggest it returns patch_program edits for you to apply.",
                                   obj(VERSION)),
             "remember": ("Propose a lesson; it cannot supply another drawing's dimensions.",
                          obj({"text": STRING, "scope": {"type": "string", "enum": ["global", "manufacturer", "type", "detail"]},
@@ -143,6 +220,40 @@ class Tools:
         if requested is not None and requested != run["working_version_id"]:
             raise Conflict("tool must use this run's working version")
         return self.repo.get(d.versions, requested or run["working_version_id"])
+
+    def completion_call(self, run, steps):
+        """The call id to run complete_assembly under now, or None. Due in mode
+        on when the working version has empty required slots the archetype can
+        fill, once per version: a rejection is the model's to repair, and its
+        next version gets another try."""
+        if completion_mode() != "on" or not run["working_version_id"]:
+            return None
+        key = AUTO_COMPLETION + run["working_version_id"]
+        version = self.repo.get(d.versions, run["working_version_id"])
+        if version["format_version"] != "3.0" or any(s["call_id"] == key for s in steps):
+            return None
+        program = NativeProgram.model_validate(version["program"])
+        known, _ = ontology_or_error()
+        if known is None or not program.assembly_class or known.assembly(program.assembly_class) is None:
+            return None
+        read = self.repo.get(d.reads, version["drawing_read_id"])["response"] if version["drawing_read_id"] else None
+        try:
+            return key if completion.archetype_completion(program, known, read).parts else None
+        except ValueError:
+            return None  # nothing it can place; the slot-missing checks stay for the model to read
+
+    def _cad_code(self, prompt, call_id, figure_id):
+        """CadQuery from the model. Code the gate refuses gets one more try here
+        with the gate's reason: a small call, where going back through the agent
+        costs a large turn and then this call again."""
+        schema, images = obj({"code": STRING}), [self.repo.get(d.figures, figure_id)["artifact_id"]]
+        code = self.gateway.json(prompt, images, schema, "cad", call_id)["code"]
+        try:
+            cad_components.check_component(code)
+        except cad_sandbox.CadCodeError as error:
+            code = self.gateway.json(prompt + "\nThis code was rejected: " + str(error) + "\nRejected code:\n" + code,
+                                     images, schema, "cad", call_id + "-retry")["code"]
+        return code
 
     def _stage_successor(self, values, builds=None, components=None):
         ident = uid()
@@ -309,8 +420,8 @@ class Tools:
             else:
                 proposed = json_object(args["program"])
             try:
-                program, spec, notes = prepare(proposed, source, detail_id, read["response"],
-                                               parent["program"] if parent else None)
+                program, spec, notes = prepare(proposed, source, detail_id, read["response"], parent["program"] if parent else None,
+                                               bound={k for k, v in (parent or {"bindings": {}})["bindings"].items() if v.get("build_id")})
             except ValueError as error:
                 # Return the rejected proposal: with no working version yet,
                 # the next patch applies to it, so fixes accumulate instead of
@@ -328,7 +439,8 @@ class Tools:
             if part is None:
                 raise ValueError("unknown part_key; choose a part ID from the current program")
             if part.shape != "cad":
-                raise ValueError("part must use shape=cad")
+                raise ValueError("part must use shape=cad" + ("; an inferred placeholder stays a box until a reviewer "
+                                 "confirms it" if part.provenance == "inferred" else ""))
             env = {p.name: p.value for p in program.params}
             params = {key: evaluate(expression, env) for key, expression in part.param_bindings.items()}
             units = {p.name:p.unit for p in program.params}
@@ -337,29 +449,36 @@ class Tools:
                 raise ValueError("CAD needs explicit named parameter bindings")
             if name == "model_component":
                 reference = version
-                previous_code = ""
+                previous_code = previous_failure = ""
                 while reference:
                     previous_binding = reference["bindings"].get(part.id,{})
                     if previous_binding.get("component_id"):
                         previous_code = self.repo.get(d.components,previous_binding["component_id"])["code"]
+                        previous_failure = previous_binding.get("placeholder") or ""
                         break
                     reference = self.repo.get(d.versions,reference["parent_version_id"]) if reference["parent_version_id"] else None
                 dims = {item.name:evaluate(item.expr,env) for item in part.dims}
                 offset = {axis:evaluate(part.placement.get(axis,"0"),env) for axis in ("x","y","z")}
                 local_bounds = [dims["x0"]-offset["x"],offset["z"]-dims["z1"],dims["y0"]-offset["y"],
                                 dims["x1"]-offset["x"],offset["z"]-dims["z0"],dims["y1"]-offset["y"]]
-                code = self.gateway.json("Write CadQuery defining build(p) -> cq.Workplane. "
+                origin = all(abs(value) < 1e-6 for value in local_bounds[:3])
+                code = self._cad_code("Write CadQuery defining build(p) -> cq.Workplane. "
                        "Import only cadquery/math. All physical sizes use p[name], never size literals. "
-                       "Model the recognisable manufactured form the brief and drawing describe, not its bounding box: openings, cavities, bowls, flanges, legs and profiles where shown. "
+                       "The source drawing is attached: find this part in it and model the recognisable manufactured form the brief and drawing describe, not its bounding box: openings, cavities, bowls, flanges, legs and profiles where shown. "
                        "Axes X width, Y depth, Z up. Default FRONT is negative Y (Setout +z toward the viewer): the face a person uses faces negative Y; the back or fixing side is positive Y. Respect any explicit orientation in the brief. No scaling or fitting. Brief: " + args["brief"] +
                        "\nUse only the provided parameter keys. Keep the code concise. Build curved bowls directly with sized profiles/lofts/shells. "
                        "CadQuery workplane(offset) retains the projected origin; center() shifts are relative and accumulate. Do not apply the same XY center offset again to each loft profile; use explicit absolute origins or zero relative shift on subsequent profiles. "
                        "\nNamed params: " + canonical(params) + "\nUnits by key: " + canonical(bound_units) +
                        "\nRequired LOCAL CadQuery [xmin,ymin,zmin,xmax,ymax,zmax]: " + canonical(local_bounds) +
                        ". These target measurements describe the part's exact declared envelope after undoing rigid placement. "
-                       "Reach them through the named parameters and the actual fixture form. Do not clip/intersect with an envelope cage or add slivers just to reach bounds. " +
+                       "Reach them through the named parameters and the actual fixture form. Do not clip/intersect with an envelope cage or add slivers just to reach bounds. "
+                       "Every number in a size or offset is a fraction of p[...], such as 0.5 * p['width']; any other number except 0 is rejected. "
+                       "build(p) never positions the part: its rigid placement does, so never translate to a world position. " +
+                       ("The solid's minimum corner is the local origin: start from (0,0,0), for example box(..., centered=False). "
+                        "A section that runs along the part: draw it on Workplane('XZ') and extrude(-p['depth']) so it spans Y from 0 to depth. " if origin else "") +
+                       (f"\nThe previous attempt failed: {previous_failure}" if previous_failure else "") +
                        ("\nPrevious revision as repair context (fix rejected form, physical literals and axes; do not fit or preserve a rejected block):\n"+previous_code if previous_code else ""),
-                       [], obj({"code": STRING}), "cad", call_id)["code"]
+                       call_id, version["figure_id"])
                 component = {"id": uid(), "family_key": part.type, "code": code, "code_sha": sha(code),
                              "param_schema": {key: {"unit": "mm" if bound_units[key] == "zero" else bound_units[key]} for key in params},
                              "feature_schema": [f.model_dump(mode="json") for f in part.features], "brief": args["brief"]}
@@ -369,9 +488,11 @@ class Tools:
                     raise ValueError("component parameter schema mismatch")
                 if any(bound_units[key] not in ("zero",component["param_schema"][key].get("unit")) for key in params):
                     raise ValueError("component binding unit mismatch; preserve the component's declared units")
-            self.repo.reserve(self.fence, {"cad_calls": 1})
-            self.repo.settle(self.fence, {"cad_calls": 1}, {"cad_calls": 1})
             try:
+                # Code the gate refuses never reaches the sandbox, so it spends no CAD call.
+                cad_components.check_component(component["code"])
+                self.repo.reserve(self.fence, {"cad_calls": 1})
+                self.repo.settle(self.fence, {"cad_calls": 1}, {"cad_calls": 1})
                 with self.repo.resource(self.fence, "cad"):
                     result = self.cad_builder(component["code"], params,
                              [f.model_dump(mode="json") for f in part.features], measurement_params=env)
@@ -409,8 +530,15 @@ class Tools:
             if self.renderer is None:
                 from .render import Renderer
                 self.renderer = Renderer(self.repo)
-            with self.repo.resource(self.fence, "renderer"):
-                rendered = self.renderer.render(args["version_id"], reports[-1]["manifest_sha"])
+            try:
+                with self.repo.resource(self.fence, "renderer"):
+                    rendered = self.renderer.render(args["version_id"], reports[-1]["manifest_sha"])
+            except (BudgetExceeded, LostLease):
+                raise
+            except Exception as error:
+                # A broken browser is no reason to lose the run: the model can
+                # try again, and a final review ends as needs_review with its draft.
+                raise ValueError(f"the renderer failed: {error}") from error
             from .render import validate_image
             for image in rendered:
                 validate_image(self.repo.artifacts.read(image["artifact"]["id"]))
@@ -429,7 +557,7 @@ class Tools:
                      "Reject generic blocks standing in for recognisable objects, even if all dimension checks pass: each object must show the form the source shows (openings, cavities, bowls, flanges, legs, profiles, supports). A solid box standing in for a shaped object is a fidelity error. "
                      + slot_brief(version["program"].get("assembly_class")) + RETENTION_RULE +
                      "Return fail for errors; inconclusive if evidence is insufficient. Never approve an empty or unreadable render. "
-                     "Version/evidence: " + canonical({"program": version["program"], "checks": report["checks"],
+                     "Version/evidence: " + canonical({"program": version["program"], **model_checks(report["checks"]),
                      "views": [{"id": r["id"], "view": r["view"], "tags": r["tags"]} for r in renders]}),
                      [figure["artifact_id"]] + [r["artifact_id"] for r in renders if not r["tags"] or r["view"] == "iso"],
                      CRITIC_SCHEMA, "critic", call_id)
@@ -591,7 +719,9 @@ class Tools:
                                       .order_by(d.verifications.c.created_at.desc())).mappings().first()
                 issues += ([c["id"] for c in reports["checks"] if c["status"] == "FAIL" or
                             (c.get("required") and c["status"] != "PASS")] if reports else ["missing_verification"])
-            result = {**result, "open_issues": sorted(set(issues)), "version_id": run["working_version_id"], "detail_id": run["detail_id"]}
+            used_up = run["consumed"].get("cad_calls", 0) >= run["budget"]["cad_calls"]
+            result = {**result, "open_issues": sorted(set(issues)), "version_id": run["working_version_id"], "detail_id": run["detail_id"],
+                      "stop_reason": self.stop_reason or ("budget_exhausted" if used_up else "finished")}
             self.repo._end(con, self.fence.job_id, "succeeded" if result["status"] == "done" else "needs_review", result)
             return result
         return data["result"]

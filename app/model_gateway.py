@@ -7,7 +7,10 @@ import json
 import urllib.error
 
 from . import database as d, meta_client
-from .repository import canonical
+from .repository import BudgetExceeded, canonical, review_tail, tokens_left
+
+IMAGE_TOKENS = 2048  # seen live: about 1.3k for a page-sized figure or a render
+TURN_MIN_OUTPUT = 8192  # below this a turn cannot think and still call a tool
 
 
 class ProviderRejected(RuntimeError):
@@ -48,23 +51,26 @@ class ModelGateway:
 
     def call(self, payload, purpose, operation_key, responder=None):
         run = self.repo.run(self.fence.job_id)
-        matching = [s for s in self.repo.list(d.steps, d.steps.c.run_id == run["id"], order=d.steps.c.n)
-                    if s["kind"] == "model" and s["request"].get("purpose") == purpose
-                    and s["request"].get("operation_key") == operation_key]
+        steps = [s for s in self.repo.list(d.steps, d.steps.c.run_id == run["id"], order=d.steps.c.n)
+                 if s["kind"] == "model" and s["request"].get("purpose") == purpose]
+        matching = [s for s in steps if s["request"].get("operation_key") == operation_key]
         if matching and matching[-1]["state"] == "completed":
             return matching[-1]["response"]
         if matching:
             payload = matching[-1]["request"]["payload"]
-        image_count = canonical(payload).count('"input_image"')
         # Input tokenization is provider-specific. Reserve a conservative text/
         # image estimate and cap output to the remaining allowance; actual usage
-        # is settled atomically and any overrun stops further dispatch.
-        input_estimate = max(4096, len(canonical(payload)) // 3) + 8192 * image_count
-        remaining = run["budget"]["tokens"] - run["consumed"].get("tokens", 0) - run["reserved"].get("tokens", 0)
-        review_tail = 100000 if purpose == "agent" and run["working_version_id"] and run["budget"]["tokens"] >= 120000 else 0
-        output_cap = min(payload.get("max_output_tokens", 4096), remaining - input_estimate - review_tail)
-        if output_cap < 1024:
-            from .repository import BudgetExceeded
+        # is settled atomically and any overrun stops further dispatch. A turn's
+        # conversation repeats the last turn's, which the provider serves from
+        # its cache and the budget does not bill.
+        input_estimate = len(canonical(payload)) // 3 + IMAGE_TOKENS * canonical(payload).count('"input_image"')
+        if purpose == "agent" and steps and steps[-1]["state"] == "completed":
+            input_estimate -= (steps[-1]["tokens"] or {}).get("input_tokens", 0)
+        input_estimate = max(4096, input_estimate)
+        wanted = payload.get("max_output_tokens", 4096)
+        tail = review_tail(run) if purpose == "agent" else 0
+        output_cap = min(wanted, tokens_left(run) - input_estimate - tail)
+        if output_cap < (min(TURN_MIN_OUTPUT, wanted) if purpose == "agent" else 1024):
             raise BudgetExceeded("tokens budget exhausted")
         payload = {**payload, "max_output_tokens": output_cap}
         reservation = {"model_calls": 1, "tokens": input_estimate + output_cap}
@@ -103,12 +109,14 @@ class ModelGateway:
     def json(self, text, images, schema, purpose, operation_key, model=None):
         content = [{"type": "input_text", "text": text}]
         content += [{"type": "input_image", "image_url": "artifact:" + ident} for ident in images]
-        payload = {"model": model or meta_client.default_model(), "max_output_tokens": 32768 if purpose in ("program","cad") else 16384 if purpose == "read" else 8192,
+        # Reasoning counts as output: seen live, a critic spent all of 8192 thinking.
+        payload = {"model": model or meta_client.default_model(), "max_output_tokens": 32768 if purpose in ("program","cad") else 16384 if purpose in ("read","critic") else 8192,
                    "reasoning":{"effort":"low" if purpose == "read" else "medium"},
                    "input": [{"role": "user", "content": content}],
                    "text": {"format": {"type": "json_schema", "name": purpose,
                                         "schema": schema, "strict": True}}}
         response = self.call(payload, purpose, operation_key)
         if response.get("status") == "incomplete":
-            raise ValueError(f"{purpose} reached the provider output limit; simplify the request or finish needs_review")
+            # Not "finish": seen live, that advice ended a run with budget left and no review.
+            raise ValueError(f"{purpose} reached the provider output limit, so nothing came back; call the tool again")
         return structured(response)

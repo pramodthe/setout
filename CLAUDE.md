@@ -53,7 +53,7 @@ when a milestone lands.
 - **Every value is named and sourced.** Every param carries `provenance`
   (`drawing` / `manufacturer_doc` / `user_input` / `assumption`). Assumptions
   and unresolved items must **never** produce a verified PASS.
-- **Decided, not yet in code:** a fifth provenance, `inferred`, for parts a model
+- **`inferred`** is a fifth provenance, for parts a model or archetype
   fills in that the drawing does not show (e.g. the door frame behind a threshold
   section). It is labelled inference, never `drawing`: shown ghosted with its
   source and confidence, never a verified PASS, and user confirmation turns it
@@ -67,7 +67,10 @@ when a milestone lands.
   sandbox (`app/cad_components.py`, `app/cad_sandbox.py`). Every size the code
   uses is a named value. A separate trusted process measures the solid; it is
   never scaled or fitted. A measured mismatch is a FAIL, and failed CAD is a
-  placeholder that can never PASS.
+  placeholder that can never PASS. An inferred object is the one exception: it
+  may be an exact box, a ghosted placeholder that spends no CAD call, raises no
+  `cad-*` FAIL and can never PASS, and a reviewer's confirmation turns it into a
+  CAD part with no model, labelled a placeholder and FAILing until it is modelled.
 - **No hand-modelled object in the registry.** The six v2 fixture generators
   (`LEGACY_FIXTURE_REGISTRY`) exist only to import archived v2 records.
 
@@ -197,12 +200,36 @@ POST /api/versions/{id}/reviews  accept / correct / resolve / activate_memory ·
 GET/POST /api/memories           lessons (proposed until a reviewer activates them)
 ```
 
-A run that spends its budget while its draft still has FAILs (e.g. CAD
-placeholders) and made progress continues automatically as a `revise_detail`
-job, at most `SETOUT_AUTO_CONTINUE` times (default 2; `0` turns it off). The
-finished job records `continued_by`, and the workbench, detail page and trace
-follow the chain. A page reload picks a running job back up through
+The token budget counts what is paid for: uncached input plus output
+(`repository.billed_tokens`, settled into `consumed["tokens"]`; cached input is
+recorded as `consumed["cached_tokens"]`). Every check reads `tokens_left(run)`.
+An agent turn must leave `REVIEW_TAIL` (40k) and `REVIEW_CALLS` model calls for
+the final render and critique; `model_calls`, `tool_calls` and `seconds` are the
+hard limits on a run that is all cache hits.
+
+Tool results reach the model through `agent_tools.model_view`: `check_counts`,
+the checks that block completion or list work to do, the rest by id, and no
+rejected program it has already seen; `app/agent.py` says each gate note once.
+The stored step keeps the whole result, since `patch_program` resumes from a
+rejected `proposal` and the trace reads it. The full checks are in
+`verifications`. A failed render is tool feedback, never a lost run.
+
+A run records why it stopped when it stops, as `stop_reason` in the job result.
+One cut short (`repository.CUT_SHORT`) whose draft still has blocking checks
+(e.g. CAD placeholders) and made progress continues automatically as a
+`revise_detail` job, at most `SETOUT_AUTO_CONTINUE` times (default 2; `0` turns
+it off). The finished job records `continued_by`, and the workbench, detail page
+and trace follow the chain. A page reload picks a running job back up through
 `/api/jobs?detail_id=…&active=1`.
+
+`complete_assembly` runs by itself right after a version with an `assembly_class`
+is accepted, before CAD work and with no model turn (`SETOUT_COMPLETION=on`, the
+default), and applies its proposal through the normal gated path, once per
+version. `suggest` leaves applying to the agent; `off` removes the tool. Its
+coordinates stay expressions while short; a longer one becomes a named assumption
+whose note says it is a placeholder position. The viewer's default camera frames
+what the drawing shows (`provenance.framedParts`), so a 2 m ghost door frame
+cannot shrink the section it completes.
 
 The older routes stay for the UI and map onto jobs: `POST /api/generate`,
 `/api/specs/{id}/critique|cad|locate` enqueue jobs and are polled with
@@ -226,7 +253,9 @@ Cross-file contracts. These are not obvious from any single file:
   values. Never loosen this to make a demo look better.
 - **Roles come from the drawing, not our vocabulary.** The READ classifies each
   label as `layer`, `object`, `zone` or `other`; `check_roles` makes a part
-  carrying that label take the matching role. Objects declare `form` (`shaped` /
+  carrying that label take the matching role. An ontology class that disagrees
+  is then UNVERIFIED and not required (`class-role`), since the author cannot fix
+  it; an unlabelled part still FAILs. Objects declare `form` (`shaped` /
   `block`), and the verifier's form check reads the declaration. SAM chooses its
   prompts by role too. Never key a check off part names: the engine is
   trade-agnostic.

@@ -4,14 +4,17 @@ M1 of the detail world model, with no learning. For the program's assembly
 class, every required slot with too few parts is filled from the archetype.
 A new part carries provenance "inferred" (ghosted, never a verified PASS),
 confidence None (unmeasured in M1) and inferred_by
-"archetype:<assembly>@<ontology version>:<slot>". Every size it needs is a
-named parameter with provenance "assumption" and a note saying the drawing
-gave no value, unless its class derives the size from a part already in the
-program. Placement is written as expressions over the program's own
-parameters, anchored on the parts filling the slot's anchor: side members
-stand on the anchor's top face at the ends of its run, the top member spans
-the side members, the infill fills between them. A slot that cannot be
-placed safely becomes a suggestion with the reason, never a guessed part.
+"archetype:<assembly>@<ontology version>:<slot>". It is an exact box even when
+its class is an object: a placeholder has no form to model, spends no CAD call
+and cannot PASS. Every size it needs is a named parameter with provenance
+"assumption" and a note saying the drawing gave no value, unless its class
+derives the size from a part already in the program. Placement is written as
+expressions over the program's own parameters, anchored on the parts filling
+the slot's anchor: side members stand on the anchor's top face at the ends of
+its run, the top member spans the side members, the infill fills between them.
+A coordinate too long to stay an expression becomes a named assumption whose
+note says it is a placeholder position. A slot that cannot be placed safely
+becomes a suggestion with the reason, never a guessed part.
 
 Nothing here names a part. It reads slots, classes, placement families and
 dimension slots from the ontology (library data), so a new trade is new
@@ -29,6 +32,9 @@ from .ontology import Ontology
 from .program import evaluate
 
 MEASURES = ("depth", "width", "height", "top", "bottom", "x0", "x1", "z0", "z1")
+# Characters. A longer coordinate becomes a named value: two of them must still
+# fit one expression (a span x1 - x0) within the gate's limit of 240.
+MAX_COORDINATE = 110
 # The dimension slots each placement reads from the part's class.
 NEEDS = {("fill_opening", "side"): ("width", "depth", "height"),
          ("fill_opening", "top"): ("height", "depth"),
@@ -110,8 +116,14 @@ def _measure(envelope, measure):
     return e[{"top": "y1", "bottom": "y0"}.get(measure, measure)]
 
 
+def _value(expression, env):
+    """A composed expression's number. Composing a real program's anchors can
+    run past the authoring limit, which is exactly when it gets named."""
+    return evaluate(expression, env, limit=len(expression))
+
+
 def _centre(envelope, axis, env):
-    return (evaluate(envelope[axis + "0"], env) + evaluate(envelope[axis + "1"], env)) / 2
+    return (_value(envelope[axis + "0"], env) + _value(envelope[axis + "1"], env)) / 2
 
 
 # ---------------------------------------------------------------- filling
@@ -128,6 +140,13 @@ class _Filler:
 
     def fillers(self, slot):
         return [p for p in self.parts if p.class_id in slot.classes]
+
+    def anchor(self, slot_id):
+        """(part, envelope) a slot measures from: of the parts filling it, the
+        one with the highest top, since what stands on the slot stands on that."""
+        found = [(p, _envelope(p)) for p in self.fillers(self.archetype.slot(slot_id))]
+        found = [(p, e) for p, e in found if e]
+        return max(found, key=lambda item: _value(item[1]["y1"], self.env)) if found else None
 
     def members(self, anchor_id, position):
         """Parts of this assembly's slots that share the anchor and position."""
@@ -180,11 +199,10 @@ class _Filler:
             target = self.archetype.slot(source_slot)
             if target is None or measure not in MEASURES:
                 return None, f"{cls.id}.{name} derives from {dim.derive_from!r}, which names no slot measure"
-            sources = [_envelope(p) for p in self.fillers(target)]
-            sources = [e for e in sources if e]
-            if not sources:
+            source = self.anchor(source_slot)
+            if source is None:
                 return None, f"{cls.id}.{name} derives from {dim.derive_from}, and no readable part fills {source_slot!r}"
-            return _measure(sources[0], measure), None
+            return _measure(source[1], measure), None
         if dim.typical_min is None:
             return None, f"{cls.id}.{name} has neither a derivation nor a cited typical range"
         value = round((dim.typical_min + dim.typical_max) / 2, 1)
@@ -194,6 +212,22 @@ class _Filler:
         self.result.params.append(param)
         self.env[param.name] = value
         return param.name, None
+
+    def coordinate(self, expression, ident, name, anchor_part):
+        """An expression short enough to stay linked to the anchor, or a named
+        value in its place. The gate limits expressions to 240 characters and a
+        chain of datums passes that quickly; a placeholder's position does not
+        need the link, and its note says what it lost."""
+        expression = expression.strip()
+        if len(expression) <= MAX_COORDINATE:
+            return expression
+        value = round(_value(expression, self.env), 3)
+        param = NativeParam(name=self.unique_name(f"{ident}_{name}"), value=value, unit="mm", provenance="assumption",
+                            kind="exact", note=f"no source on this drawing: placeholder position of {ident} ({name}), "
+                            f"derived from {anchor_part.id} when the slot was filled; it does not follow later changes")
+        self.result.params.append(param)
+        self.env[param.name] = value
+        return param.name
 
     def sizes(self, slot, cls, needed):
         found = {}
@@ -257,11 +291,10 @@ class _Filler:
         needed = NEEDS.get((slot.placement, slot.position))
         if needed is None or not slot.anchor:
             return self.suggest(slot, f"placement {slot.placement or 'none'} needs coordinates only the drawing or a reviewer gives")
-        anchors = [(p, _envelope(p)) for p in self.fillers(self.archetype.slot(slot.anchor))]
-        anchors = [(p, e) for p, e in anchors if e]
-        if not anchors:
+        found = self.anchor(slot.anchor)
+        if found is None:
             return self.suggest(slot, f"no readable part fills its anchor slot {slot.anchor!r}")
-        anchor_part, anchor = anchors[0]
+        anchor_part, anchor = found
         cls = self.ont.component(slot.classes[0])
         sizes, problem = self.sizes(slot, cls, needed)
         if problem:
@@ -270,27 +303,21 @@ class _Filler:
         if problem:
             return self.suggest(slot, problem)
         for i, (envelope, rests_on) in enumerate(envelopes):
-            if any(len(e) > 240 for e in envelope.values()):
-                return self.suggest(slot, "the anchor's expressions are too long to place against")
             self.add(slot, cls, envelope, anchor_part, rests_on, i if need > 1 or len(envelopes) > 1 else None)
 
     def add(self, slot, cls, envelope, anchor_part, rests_on, index):
         ident = self.unique_id(slot.id if index is None else f"{slot.id}_{index + 1}")
+        envelope = {name: self.coordinate(value, ident, name, anchor_part) for name, value in envelope.items()}
         tag = f"archetype:{self.archetype.id}@{self.ont.version}:{slot.id}"
         shown = {"cut": "a section across this assembly would cut it", "beyond": "it lies beyond the section plane",
                  "out_of_plane": "it is out of the section plane"}[slot.section_visibility]
         note = (f"inferred from the {self.archetype.id} archetype (slot {slot.id}): the drawing does not show it, {shown}. "
-                "Placeholder sizes are named assumptions; confirm or correct in review.")
+                "A box stands in for its shape and its sizes are named assumptions; confirm or correct in review.")
         is_object = cls.role == "object"
         part = NativePart(
-            id=ident, type=cls.id, label=None, class_id=cls.id, shape="cad" if is_object else "box", role=cls.role,
+            id=ident, type=cls.id, label=None, class_id=cls.id, shape="box", role=cls.role,
             form=(cls.form or "shaped") if is_object else None,
             dims=[{"name": k, "expr": v} for k, v in envelope.items()],
-            param_bindings={"width": _measure(envelope, "depth"), "depth": _measure(envelope, "width"),
-                            "height": _measure(envelope, "height")} if is_object else {},
-            placement={"x": envelope["x0"], "y": envelope["y0"], "z": envelope["z1"]} if is_object else
-                      {"x": "0", "y": "0", "z": "0"},
-            cad_brief=f"{cls.name}: {cls.definition} Archetype placeholder; every size is a named value." if is_object else None,
             install_after=[anchor_part.id] + [p.id for p in rests_on if p.id != anchor_part.id],
             note=note, provenance="inferred", confidence=None, inferred_by=tag)
         self.parts.append(part)
@@ -317,6 +344,25 @@ def archetype_completion(program: NativeProgram, ont: Ontology, read=None) -> Co
     for slot in sorted(ont.required_slots(program.assembly_class), key=lambda s: ORDER.get(s.position, 0)):
         filler.fill(slot)
     return filler.result
+
+
+def cad_placeholder(part, ont: Ontology):
+    """The fields that make a reviewer-confirmed box object a CAD part with no
+    model yet. A confirmed part is real, so the rule for objects applies again:
+    it needs CadQuery. Until it has it, the verifier and the viewer treat it as
+    every unbuilt object: a placeholder shape, labelled, that FAILs. The sizes
+    stay the assumptions they were."""
+    dims = {d["name"]: d["expr"] for d in part["dims"]}
+    missing = [name for name in ("x0", "x1", "y0", "y1", "z0", "z1") if name not in dims]
+    if missing:
+        raise ValueError(f"{part['id']}: a placeholder needs its full envelope before it can be confirmed; missing {missing}")
+    cls = ont.component(part.get("class_id"))
+    return {"shape": "cad", "cad_brief": f"{cls.name}: {cls.definition}" if cls else part["type"],
+            "param_bindings": {"width": _sub(dims["x1"], dims["x0"]), "depth": _sub(dims["z1"], dims["z0"]),
+                               "height": _sub(dims["y1"], dims["y0"])},
+            "placement": {"x": dims["x0"], "y": dims["y0"], "z": dims["z1"]},
+            "note": ((part.get("note") or "") + " A reviewer confirmed the part exists; its shape is still a "
+                     "placeholder until it is modelled.").strip()}
 
 
 def edits(completion: Completion):

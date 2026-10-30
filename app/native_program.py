@@ -10,8 +10,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .generate import gate, _norm, _numbers
-from .program import DetailProgram, ProgPart, ProgParam, compile_program, expr_names
+from .program import DetailProgram, ProgPart, ProgParam, compile_program, evaluate, expr_names
 from .spec import Provenance
+
+# The roles each READ category allows a part carrying that label (check_roles).
+READ_ROLES = {"object": ("object",), "layer": ("substrate", "covered_layer", "finish"), "zone": ("zone",)}
 
 
 def expression_unit(expression, units):
@@ -122,8 +125,11 @@ class NativeProgram(DetailProgram):
         for part in self.parts:
             if part.fixture:
                 raise ValueError("fixtures cannot be authored in v3")
-            if part.role == "object" and part.shape != "cad":
-                raise ValueError(f"{part.id}: objects require parametric CAD")
+            # A box may stand in for an object only while it is an inferred
+            # placeholder: ghosted, never a PASS. Anything the drawing shows or a
+            # reviewer confirmed is modelled.
+            if part.role == "object" and part.shape != "cad" and not (part.provenance == "inferred" and part.shape == "box"):
+                raise ValueError(f"{part.id}: objects require parametric CAD (only an inferred placeholder may be a box)")
             if part.role != "object" and part.shape == "cad":
                 raise ValueError(f"{part.id}: layers/substrates use exact primitives, not CAD")
             if part.form and part.role != "object":
@@ -148,6 +154,31 @@ class NativeProgram(DetailProgram):
                     if expression and expression_unit(expression, units) not in ("mm", "zero"):
                         raise ValueError(f"{part.id}: path coordinates require named lengths")
         return self
+
+
+def anchor_placements(raw, bound=()):
+    """Give a CAD part with no model yet a placement build(p) can reach.
+
+    Placement moves the solid; build(p) models it in its own frame using only
+    named sizes. An envelope away from the origin with placement left at 0,0,0
+    asks build(p) for absolute coordinates, and the CAD gate rightly refuses
+    those as literals (seen 30 Oct: 2 of 3 attempts ended there). The part's own
+    envelope already names the right values, so its corner becomes the local
+    origin and build(p) can start from (0,0,0). An explicit placement stands,
+    and so does a part with a model, which was built against the placement it had."""
+    env = {p["name"]: p["value"] for p in raw["params"]}
+    for part in raw["parts"]:
+        if part["shape"] != "cad" or part["id"] in bound or any(
+                value.strip() not in ("", "0", "0.0") for value in part["placement"].values()):
+            continue
+        dims = {d["name"]: d["expr"] for d in part["dims"]}
+        try:
+            low = [evaluate(dims[axis + "0"], env) for axis in "xyz"]
+            high = [evaluate(dims[axis + "1"], env) for axis in "xyz"]
+        except (KeyError, ValueError):
+            continue  # the program contract reports a missing or bad dimension
+        if not all(a <= 0 <= b for a, b in zip(low, high)):  # origin inside: named sizes reach every face
+            part["placement"] = {"x": dims["x0"], "y": dims["y0"], "z": dims["z1"]}
 
 
 def normalize_identifiers(raw):
@@ -314,7 +345,9 @@ def check_provenance(program, base=None, human=False):
                              "reviewer confirmed; an inferred part cannot duplicate it")
 
 
-def prepare(raw, source, detail_id, read, base=None, human=False):
+def prepare(raw, source, detail_id, read, base=None, human=False, bound=()):
+    """Validate, gate and compile a program. `bound`: ids of the parts that
+    already have a CAD model, whose placement is theirs to keep."""
     raw = copy.deepcopy(raw)
     raw["version"] = "3.0"
     raw["detail_id"] = detail_id
@@ -328,6 +361,8 @@ def prepare(raw, source, detail_id, read, base=None, human=False):
     raw["parts"] = [NativePart.model_validate(p).model_dump(mode="json") for p in raw.get("parts", [])]
     raw["params"] = [NativeParam.model_validate(p).model_dump(mode="json") for p in raw.get("params", [])]
     raw = normalize_identifiers(raw)
+    if not human:
+        anchor_placements(raw, bound)
     previous = {p["name"]: p for p in (base or {}).get("params", [])}
     source_dimensions = {item.get("id", f"d{i}"): item for i, item in enumerate(read.get("dimensions", []))}
     native_notes = []
@@ -361,10 +396,17 @@ def prepare(raw, source, detail_id, read, base=None, human=False):
                     not new or (new["value"], new["provenance"]) != (old["value"], old["provenance"])):
                 raise ValueError(f"{name} is a reviewer's value ({old['value']:g}, {old['provenance']}); "
                                  "keep it and its provenance unchanged. Only a reviewer can change it.")
+    env = {p["name"]: p["value"] for p in raw["params"]}
     for part in raw["parts"]:
         for feature in part["features"]:
             evidence = source_dimensions.get(feature.get("source_dimension_id"))
-            if evidence:
+            if evidence and abs(abs(evaluate(feature["expected_expr"], env)) - evidence["value_mm"]) > 1e-6:
+                # A feature that expects another number does not measure this
+                # dimension. Claims like these left it with no single owner.
+                native_notes.append(f"{part['id']}.{feature['id']}: expects another value, so it cannot own "
+                                    f"{feature['source_dimension_id']} -> claim dropped")
+                feature["source_dimension_id"] = None
+            elif evidence:
                 text = evidence["quote_verbatim"].lower()
                 minimum = bool(re.search(r"\bmin(?:imum)?\b|at least|not less than", text))
                 maximum = bool(re.search(r"\bmax(?:imum)?\b|at most|not more than", text))

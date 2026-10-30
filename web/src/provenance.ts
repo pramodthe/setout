@@ -59,6 +59,14 @@ export function partOpacity(part: PartOrigin): number {
   return part.provenance === "inferred" ? INFERRED_OPACITY : 1;
 }
 
+/** The parts the camera frames by default: those the drawing shows. An inferred
+    part can dwarf the section it completes (a door frame over a sill), so it may
+    run out of frame; it stays in the scene. All parts when only inferred exist. */
+export function framedParts(parts: (PartOrigin & { id: string })[]): string[] {
+  const shown = parts.filter((p) => p.provenance !== "inferred");
+  return (shown.length ? shown : parts).map((p) => p.id);
+}
+
 /* ---------------------------------------------------- verification outcome */
 
 export const OUTCOME_TEXT: Record<Outcome, string> = {
