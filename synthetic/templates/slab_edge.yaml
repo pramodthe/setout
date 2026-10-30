@@ -1,0 +1,235 @@
+# Synthetic template: a section across a balcony slab edge with an edge trim.
+#
+# Library data for app/synthetic.py, written in our own words: a generic slab
+# edge where the floor build-up stops against a metal angle fixed to the slab
+# face. Not a manufacturer detail and not a copy of any drawing. Every range is
+# a synthetic sampling range, not a standard, for the owner to calibrate; every
+# sampled value becomes an `assumption`. Thin layers carry drawn thickness.
+# No ontology assembly describes a slab edge yet, so `assembly_class` is null.
+#
+# Coordinates (mm): +x toward the open edge, +y up, origin at the top of the
+# slab on its edge face. Grammar as in door_threshold.yaml: `<choice>_<option>`
+# and `has_<part>` are 1 or 0, a part is present when `when` > 0 and a draw of
+# `p` succeeds, and every constraint must be >= 0.
+id: slab_edge
+version: 1
+status: draft
+weight: 0.6
+assembly_class: null
+title: Balcony slab edge section
+x-basis: &basis synthetic sampling range, not a standard; owner to calibrate
+
+choices:
+  - {id: slab_form, options: {plain: 0.6, downturn: 0.4}}
+  - {id: layer, options: {screed: 0.6, bed: 0.4}}
+  - {id: falls, options: {slope: 0.65, flat: 0.35}}
+  - {id: joint, options: {none: 0.2, seal: 0.4, perim_seal: 0.4}}
+
+params:
+  - {name: run, range: [280, 650], step: 10, basis: *basis}
+  - {name: slab_t, range: [120, 220], step: 5, basis: *basis}
+  - {name: dt_h, range: [40, 120], step: 5, basis: *basis}
+  - {name: dt_w, range: [80, 200], step: 5, basis: *basis}
+  - {name: mem_t, range: [1.0, 4.0], step: 0.5, basis: *basis}
+  - {name: prot_t, range: [1.0, 5.0], step: 0.5, basis: *basis}
+  - {name: scr_t, range: [25, 70], step: 1, basis: *basis}
+  - {name: bed_t, range: [20, 50], step: 1, basis: *basis}
+  - {name: fin_t, range: [10, 45], step: 1, basis: *basis}
+  - {name: fall, range: [0.01, 0.025], step: 0.001, unit: ratio, basis: *basis}
+  - {name: ea_t, range: [1.5, 5.0], step: 0.5, basis: *basis}
+  - {name: ea_up_s, range: [40, 130], step: 5, basis: *basis}
+  - {name: ea_down_s, range: [30, 120], step: 5, basis: *basis}
+  - {name: ea_f, range: [12, 40], step: 2, basis: *basis}
+  - {name: mup, range: [0, 20], step: 1, basis: *basis}
+  - {name: fl, range: [8, 30], step: 2, basis: *basis}
+  - {name: seal_w, range: [6, 15], step: 1, basis: *basis}
+  - {name: seal_d, range: [6, 15], step: 1, basis: *basis}
+  - {name: pj_w, range: [8, 20], step: 1, basis: *basis}
+
+  - {name: mt, expr: "has_membrane * mem_t"}
+  - {name: pt, expr: "has_protection * prot_t"}
+  - {name: x_left, expr: "-run"}
+  - {name: pj, expr: "joint_perim_seal * pj_w"}
+  - {name: jw, expr: "joint_seal * seal_w + pj"}
+  - {name: xw, expr: "-mt - pj"}
+  - {name: xf, expr: "-mt - jw"}
+  - {name: y_b0, expr: "mt + pt"}
+  - {name: fall_on, expr: "falls_slope * fall"}
+  - {name: thick, expr: "layer_screed * scr_t + layer_bed * bed_t"}
+  - {name: y_t0, expr: "y_b0 + thick + fall_on * (xw - x_left)"}
+  - {name: y_tw, expr: "y_b0 + thick"}
+  - {name: y_tf, expr: "y_t0 - fall_on * (xf - x_left)"}
+  - {name: ftop_e, expr: "y_tf + fin_t"}
+  - {name: fl_eff, expr: "min(fl, 0.6 * thick)"}
+  - {name: y_cf, expr: "fl_eff + 0.4142 * mt + 0.5"}
+  - {name: x_cb, expr: "-(fl_eff + 0.4142 * mt - pt + 0.5)"}
+  - {name: x_p1, expr: "-(has_fillet * (fl_eff + 0.5 * mt + 1) + (1 - has_fillet) * mt)"}
+  - {name: m_top, expr: "ftop_e + mup"}
+  - {name: ea_up, expr: "max(ea_up_s, ftop_e + 5, m_top + 3)"}
+  - {name: depth, expr: "slab_t + slab_form_downturn * dt_h"}
+  - {name: ea_down, expr: "min(ea_down_s, depth - 15)"}
+  - {name: rod_r, expr: "pj_w / 2"}
+  - {name: rod_cy, expr: "ftop_e - seal_d - rod_r"}
+  - {name: y_jt, expr: "ftop_e - seal_d - has_backing_rod * pj_w"}
+  - {name: seal_y0, expr: "joint_seal * y_tf + joint_perim_seal * (ftop_e - seal_d)"}
+  - {name: seal_y1, expr: "joint_seal * (y_tw - y_tf)"}
+
+constraints:
+  - "has_fillet * (y_tw - y_cf - 3)"
+  - "joint_perim_seal * (y_jt - y_b0 - 5)"
+  - "ea_down - 15"
+
+parts:
+  - id: slab
+    class_id: slab
+    shape: profile
+    path:
+      - ["x_left", "-slab_t"]
+      - {x: "-dt_w", y: "-slab_t", when: "slab_form_downturn"}
+      - {x: "-dt_w", y: "-depth", when: "slab_form_downturn"}
+      - ["0", "-depth"]
+      - ["0", "0"]
+      - ["x_left", "0"]
+
+  - id: membrane
+    class_id: membrane
+    shape: sheet
+    p: 0.92
+    dims: {thickness: "mem_t"}
+    path:
+      - ["x_left", "mem_t / 2"]
+      - {x: "-mem_t / 2", y: "mem_t / 2", when: "1 - has_fillet"}
+      - {x: "-(fl_eff + 0.2071 * mem_t)", y: "mem_t / 2", when: "has_fillet"}
+      - {x: "-mem_t / 2", y: "fl_eff + 0.2071 * mem_t", when: "has_fillet"}
+      - ["-mem_t / 2", "m_top"]
+
+  - id: fillet
+    class_id: fillet
+    shape: profile
+    when: "has_membrane * (joint_none + joint_seal)"
+    p: 0.45
+    path:
+      - ["0", "0"]
+      - ["0", "fl_eff"]
+      - ["-fl_eff", "0"]
+
+  - id: protection
+    class_id: protection_sheet
+    shape: sheet
+    when: "has_membrane"
+    p: 0.5
+    dims: {thickness: "prot_t"}
+    path:
+      - ["x_left", "y_b0 - prot_t / 2"]
+      - ["x_p1", "y_b0 - prot_t / 2"]
+
+  - id: edge_angle
+    class_id: edge_angle
+    shape: profile
+    path:
+      - ["0", "-ea_down"]
+      - ["ea_f", "-ea_down"]
+      - ["ea_f", "-ea_down + ea_t"]
+      - ["ea_t", "-ea_down + ea_t"]
+      - ["ea_t", "ea_up"]
+      - ["0", "ea_up"]
+
+  - id: screed
+    class_id: screed
+    shape: profile
+    when: "layer_screed"
+    path: &layer_path
+      - ["x_left", "y_b0"]
+      - {x: "x_cb", y: "y_b0", when: "has_fillet"}
+      - {x: "xw", y: "y_cf", when: "has_fillet"}
+      - {x: "xw", y: "y_b0", when: "1 - has_fillet"}
+      - ["xw", "y_tw"]
+      - {x: "xf", y: "y_tf", when: "joint_seal"}
+      - ["x_left", "y_t0"]
+
+  - id: bed
+    class_id: bedding
+    shape: profile
+    when: "layer_bed"
+    path: *layer_path
+
+  - id: finish
+    class_id: external_finish
+    shape: profile
+    path:
+      - ["x_left", "y_t0"]
+      - ["xf", "y_tf"]
+      - ["xf", "y_tf + fin_t"]
+      - ["x_left", "y_t0 + fin_t"]
+
+  - id: perim_joint
+    class_id: perimeter_joint
+    shape: box
+    when: "joint_perim_seal"
+    dims: {x0: "xf", x1: "-mt", y0: "y_b0", y1: "y_jt"}
+
+  - id: sealant
+    class_id: sealant
+    shape: profile
+    when: "joint_seal + joint_perim_seal"
+    path:  # a sealant-only joint follows the fall: its right side is seal_y1 lower
+      - ["xf", "seal_y0"]
+      - ["-mt", "seal_y0 + seal_y1"]
+      - ["-mt", "ftop_e + seal_y1"]
+      - ["xf", "ftop_e"]
+
+  - id: backing_rod
+    class_id: backing_rod
+    shape: profile
+    when: "joint_perim_seal"
+    p: 0.6
+    circle: {cx: "xf + rod_r", cy: "rod_cy", r: "rod_r", n: 24}
+
+relations:
+  - [membrane, covers, slab]
+  - [membrane, covers, fillet]
+  - [fillet, supported_by, slab]
+  - [protection, covers, membrane]
+  - [edge_angle, fixed_to, slab]
+  - [membrane, terminates_against, edge_angle]
+  - [screed, covers, protection]
+  - [bed, covers, protection]
+  - [screed, covers, membrane]
+  - [bed, covers, membrane]
+  - [finish, covers, screed]
+  - [finish, covers, bed]
+  - [perim_joint, abuts, membrane]
+  - [sealant, sealed_to, finish]
+  - [sealant, sealed_to, edge_angle]
+  - [backing_rod, supported_by, perim_joint]
+
+labels:
+  slab: [CONCRETE SLAB, BALCONY SLAB, RC SLAB, SLAB, CANTILEVER SLAB]
+  screed: [SCREED TO FALL, SAND CEMENT SCREED, SCREED LAID TO FALL, BONDED SCREED]
+  bedding: [MORTAR BED, BEDDING, ADHESIVE BED, SAND BED]
+  membrane: [WATERPROOF MEMBRANE, MEMBRANE, LIQUID MEMBRANE, MEMBRANE TURNED UP, SHEET MEMBRANE]
+  protection_sheet: [PROTECTION SHEET, SLIP SHEET, PROTECTION BOARD, SEPARATION LAYER]
+  external_finish: [TILES, PAVERS, EXTERNAL TILES, PAVING, STONE PAVING]
+  edge_angle: [EDGE ANGLE, EDGE TRIM, STOP ANGLE, METAL ANGLE, DRIP ANGLE]
+  sealant: [SEALANT, SEALANT BEAD, FLEXIBLE SEALANT, MASTIC]
+  backing_rod: [BACKING ROD, BACKER ROD, FOAM ROD]
+  fillet: [FILLET, BOND BREAKER, COVE FILLET]
+  perimeter_joint: [PERIMETER JOINT, COMPRESSIBLE FILLER, MOVEMENT JOINT, JOINT FILLER]
+
+titles: [BALCONY EDGE DETAIL, SLAB EDGE SECTION, SECTION B-B, DETAIL 2, EDGE TRIM DETAIL, TYPICAL EDGE SECTION]
+
+notes:
+  - ALL DIMENSIONS IN MILLIMETRES.
+  - DO NOT SCALE FROM THIS DRAWING.
+  - CHECK DIMENSIONS ON SITE BEFORE STARTING WORK.
+  - REFER TO SPECIFICATION FOR MATERIALS.
+  - LAYERS SHOWN EXAGGERATED FOR CLARITY.
+  - SCREED LAID TO FALL TOWARD THE EDGE.
+
+levels:
+  - {y: "ftop_e", text: [FINISHED LEVEL, FL, F.L.]}
+  - {y: "0", text: [TOP OF SLAB, SSL, STRUCTURAL SLAB LEVEL]}
+
+# The drawing stops inside the slab only; the edge itself is real.
+breaks:
+  - {x: "x_left"}

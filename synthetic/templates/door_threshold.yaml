@@ -1,0 +1,432 @@
+# Synthetic template: a section across an external door threshold.
+#
+# Library data for app/synthetic.py, written in our own words. It is a generic
+# stepped threshold, not a manufacturer detail and not a copy of any drawing.
+# Every range below is a synthetic sampling range, not a standard, for the owner
+# to calibrate against their own drawings; every value a sample takes becomes an
+# `assumption` in the program it writes. Thin layers carry their drawn
+# thickness: drafters exaggerate membranes and flashings, so these ranges are
+# about how the drawing looks, not about the product.
+#
+# Coordinates (mm): +x toward the exterior, +y up, origin at the interior
+# finished floor level on the slab set-down face. Expressions use the program
+# grammar (app/program.py): numbers, names, + - * /, min, max. The flag
+# `<choice>_<option>` is 1 for the option drawn and 0 otherwise; `has_<part>` is
+# 1 when the part is present. A part is present when its `when` is > 0 and a
+# draw of probability `p` succeeds. A constraint must be >= 0, else the sample
+# is drawn again.
+id: door_threshold
+version: 1
+status: draft
+weight: 1.0
+assembly_class: door_threshold
+title: External door threshold section
+x-basis: &basis synthetic sampling range, not a standard; owner to calibrate
+
+choices:
+  - {id: int_layer, options: {screed: 0.5, bed: 0.5}}
+  - {id: seat, options: {packer: 0.35, sub_sill: 0.35, bed: 0.3}}
+  - {id: route, options: {under_sill: 0.55, angle: 0.2, face: 0.25}}
+  - {id: joint, options: {none: 0.15, seal: 0.25, perim: 0.25, perim_seal: 0.35}}
+  - {id: ext_layer, options: {screed: 0.5, bed: 0.5}}
+  - {id: falls, options: {flat: 0.6, slope: 0.4}}
+  - {id: sill_top, options: {sloped: 0.6, stepped: 0.4}}
+  - {id: flash_back, options: {up: 0.8, flat: 0.2}}
+  - {id: ws_pos, options: {under: 0.5, stop: 0.5}}
+
+params:
+  # extents and build-ups
+  - {name: int_run, range: [120, 320], step: 10, basis: *basis}
+  - {name: ext_ext, range: [200, 460], step: 10, basis: *basis}
+  - {name: ext_slab_t, range: [100, 200], step: 5, basis: *basis}
+  - {name: int_fin_t, range: [8, 25], step: 1, basis: *basis}
+  - {name: int_bed_t, range: [15, 60], step: 1, basis: *basis}
+  - {name: ext_fin_t, range: [10, 45], step: 1, basis: *basis}
+  - {name: ext_bed_t, range: [20, 75], step: 1, basis: *basis}
+  - {name: ext_gap, range: [8, 60], step: 1, basis: *basis}
+  # thin layers (drawn thickness)
+  - {name: mem_t, range: [1.0, 4.0], step: 0.5, basis: *basis}
+  - {name: prot_t, range: [1.0, 5.0], step: 0.5, basis: *basis}
+  - {name: flash_t, range: [0.8, 3.0], step: 0.2, basis: *basis}
+  - {name: fl, range: [10, 40], step: 5, basis: *basis}
+  # sill, seat and leaf
+  - {name: up_w, range: [8, 22], step: 1, basis: *basis}
+  - {name: leaf_clear, range: [2, 8], step: 1, basis: *basis}
+  - {name: leaf_t, range: [35, 55], step: 1, basis: *basis}
+  - {name: front_land, range: [8, 60], step: 1, basis: *basis}
+  - {name: sill_over, range: [0, 30], step: 5, basis: *basis}
+  - {name: sill_rise, range: [0, 30], step: 1, basis: *basis}
+  - {name: front_r, range: [0.25, 0.55], step: 0.05, unit: ratio, basis: *basis}
+  - {name: slope_r, range: [0.1, 0.35], step: 0.05, unit: ratio, basis: *basis}
+  - {name: packer_h, range: [3, 12], step: 1, basis: *basis}
+  - {name: pk_in, range: [0, 15], step: 1, basis: *basis}
+  - {name: pk_out, range: [0, 15], step: 1, basis: *basis}
+  - {name: subsill_h, range: [10, 30], step: 1, basis: *basis}
+  - {name: sillbed_h, range: [8, 25], step: 1, basis: *basis}
+  - {name: leaf_gap, range: [5, 15], step: 1, basis: *basis}
+  - {name: leaf_vis, range: [80, 260], step: 10, basis: *basis}
+  - {name: ws_w, range: [8, 16], step: 1, basis: *basis}
+  - {name: ws_off, range: [0.1, 0.7], step: 0.05, unit: ratio, basis: *basis}
+  - {name: ws_up, range: [15, 40], step: 1, basis: *basis}
+  # joints, trims and flashing
+  - {name: int_seal_w, range: [6, 12], step: 1, basis: *basis}
+  - {name: seal_w, range: [6, 15], step: 1, basis: *basis}
+  - {name: seal_d, range: [6, 15], step: 1, basis: *basis}
+  - {name: pj_w, range: [8, 20], step: 1, basis: *basis}
+  - {name: ea_t, range: [2, 6], step: 0.5, basis: *basis}
+  - {name: ea_h_s, range: [25, 60], step: 5, basis: *basis}
+  - {name: ea_f, range: [20, 50], step: 5, basis: *basis}
+  - {name: ca_t, range: [1.5, 3], step: 0.5, basis: *basis}
+  - {name: ca_h_s, range: [20, 60], step: 5, basis: *basis}
+  - {name: ca_f, range: [15, 40], step: 5, basis: *basis}
+  - {name: fd_s, range: [8, 30], step: 1, basis: *basis}
+  - {name: fup, range: [10, 35], step: 1, basis: *basis}
+  - {name: fall, range: [0.008, 0.025], step: 0.001, unit: ratio, basis: *basis}
+
+  # derived: evaluated in order, after the optional parts are drawn
+  - {name: mt, expr: "has_membrane * mem_t"}
+  - {name: pt, expr: "has_protection * prot_t"}
+  - {name: ft, expr: "has_flashing * flash_t"}
+  - {name: int_slab_top, expr: "-(int_fin_t + int_bed_t)"}
+  - {name: ext_fin_top, expr: "int_slab_top - ext_gap"}
+  - {name: ext_slab_top, expr: "ext_fin_top - ext_fin_t - ext_bed_t - pt - mt"}
+  - {name: slab_bot, expr: "ext_slab_top - ext_slab_t"}
+  - {name: set_down, expr: "int_slab_top - ext_slab_top"}
+  - {name: ea_h, expr: "min(ea_h_s, 0.6 * ext_gap)"}
+  - {name: mem_under, expr: "has_membrane * route_under_sill"}
+  - {name: y_f0, expr: "int_slab_top + mem_under * mem_t + has_edge_angle * ea_t"}
+  - {name: seat_h, expr: "seat_packer * packer_h + seat_sub_sill * subsill_h + seat_bed * sillbed_h"}
+  - {name: y_sb, expr: "y_f0 + ft + seat_h"}
+  - {name: sill_h, expr: "sill_rise - y_sb"}
+  - {name: sill_d, expr: "up_w + leaf_clear + leaf_t + front_land"}
+  - {name: sill_x1, expr: "sill_over"}
+  - {name: sill_x0, expr: "sill_over - sill_d"}
+  - {name: x_left, expr: "sill_x0 - int_run"}
+  - {name: front_h, expr: "front_r * sill_h"}
+  - {name: back_h, expr: "front_h + slope_r * sill_h"}
+  - {name: x_up, expr: "sill_x0 + up_w"}
+  - {name: tread, expr: "y_sb + sill_top_sloped * back_h + sill_top_stepped * front_h"}
+  - {name: back_on, expr: "has_flashing * flash_back_up"}
+  - {name: x_i1, expr: "sill_x0 - back_on * flash_t"}
+  - {name: x_fin1, expr: "x_i1 - has_int_sealant * int_seal_w"}
+  - {name: ea_f_eff, expr: "min(ea_f, sill_d - sill_over - 2)"}
+  - {name: face_t, expr: "max(mt, has_edge_angle * ea_t)"}
+  - {name: f_up, expr: "min(fup, sill_rise - y_f0 - 3)"}
+  - {name: fx_back, expr: "sill_x0 - flash_t / 2"}
+  - {name: fy, expr: "y_f0 + flash_t / 2"}
+  - {name: fx_front, expr: "max(sill_x1, face_t) + flash_t / 2"}
+  - {name: ca_h, expr: "min(ca_h_s, 0.5 * ext_gap)"}
+  - {name: fd, expr: "min(fd_s, ext_gap - 3 - has_cover_angle * (ca_h + 1))"}
+  - {name: pj, expr: "(joint_perim + joint_perim_seal) * pj_w"}
+  - {name: jw, expr: "joint_seal * seal_w + pj"}
+  - {name: x_b0, expr: "mt + pj"}
+  - {name: x_f0, expr: "mt + jw"}
+  - {name: y_bed0, expr: "ext_slab_top + mt + pt"}
+  - {name: y_bed1, expr: "ext_fin_top - ext_fin_t"}
+  - {name: drop_end, expr: "falls_slope * fall * (ext_ext - x_f0)"}
+  - {name: fl_eff, expr: "min(fl, 0.5 * set_down, 0.6 * ext_bed_t)"}
+  - {name: y_cf, expr: "ext_slab_top + fl_eff + 0.4142 * mt + 0.5"}
+  - {name: x_cb, expr: "fl_eff + 0.4142 * mt - pt + 0.5"}
+  - {name: x_p0, expr: "has_fillet * (fl_eff + 0.5 * mt + 1) + (1 - has_fillet) * mt"}
+  - {name: seal_y0, expr: "joint_seal * y_bed1 + joint_perim_seal * (ext_fin_top - seal_d)"}
+  - {name: rod_r, expr: "pj_w / 2"}
+  - {name: rod_cy, expr: "ext_fin_top - seal_d - rod_r"}
+  - {name: y_jt, expr: "ext_fin_top - joint_perim_seal * (seal_d + has_backing_rod * pj_w)"}
+  - {name: y_l0, expr: "tread + leaf_gap"}
+  - {name: x_l0, expr: "x_up + leaf_clear"}
+  - {name: ws_h, expr: "leaf_gap - 1.5"}
+  - {name: x_ws0, expr: "x_l0 + ws_off * (leaf_t - ws_w)"}
+
+constraints:
+  - "set_down - 30"
+  - "sill_h - 20"
+  - "130 - sill_h"
+  - "y_bed1 - drop_end - y_bed0 - 12"
+  - "has_fillet * (y_bed1 - y_cf - 3)"
+  - "(joint_perim + joint_perim_seal) * (y_jt - y_bed0 - 5)"
+  - "has_flashing * (fd - 3)"
+  - "back_on * (f_up - 5)"
+  - "has_edge_angle * (ea_h - 12)"
+  - "has_cover_angle * (ca_h - 10)"
+
+parts:
+  - id: slab
+    class_id: slab
+    shape: profile
+    path:
+      - ["x_left", "slab_bot"]
+      - ["ext_ext", "slab_bot"]
+      - ["ext_ext", "ext_slab_top"]
+      - ["0", "ext_slab_top"]
+      - ["0", "int_slab_top"]
+      - ["x_left", "int_slab_top"]
+
+  - id: membrane
+    class_id: membrane
+    shape: sheet
+    p: 0.92
+    dims: {thickness: "mem_t"}
+    path:
+      - ["ext_ext", "ext_slab_top + mem_t / 2"]
+      - {x: "mem_t / 2", y: "ext_slab_top + mem_t / 2", when: "1 - has_fillet"}
+      - {x: "fl_eff + 0.2071 * mem_t", y: "ext_slab_top + mem_t / 2", when: "has_fillet"}
+      - {x: "mem_t / 2", y: "ext_slab_top + fl_eff + 0.2071 * mem_t", when: "has_fillet"}
+      - {x: "mem_t / 2", y: "int_slab_top + mem_t / 2", when: "route_under_sill"}
+      - {x: "x_i1", y: "int_slab_top + mem_t / 2", when: "route_under_sill"}
+      - {x: "mem_t / 2", y: "int_slab_top - ea_h", when: "route_angle"}
+      - {x: "mem_t / 2", y: "int_slab_top", when: "route_face"}
+
+  # A part's `when` may read `has_<part>` only for parts declared above it.
+  - id: fillet
+    class_id: fillet
+    shape: fillet
+    when: "has_membrane * (joint_none + joint_seal)"
+    p: 0.5
+    dims: {x: "0", y: "ext_slab_top", leg_x: "fl_eff", leg_y: "fl_eff"}
+
+  - id: protection
+    class_id: protection_sheet
+    shape: sheet
+    when: "has_membrane"
+    p: 0.45
+    dims: {thickness: "prot_t"}
+    path:
+      - ["x_p0", "y_bed0 - prot_t / 2"]
+      - ["ext_ext", "y_bed0 - prot_t / 2"]
+
+  - id: edge_angle
+    class_id: edge_angle
+    shape: profile
+    when: "route_angle"
+    path:
+      - ["0", "int_slab_top - ea_h"]
+      - ["ea_t", "int_slab_top - ea_h"]
+      - ["ea_t", "int_slab_top + ea_t"]
+      - ["-ea_f_eff", "int_slab_top + ea_t"]
+      - ["-ea_f_eff", "int_slab_top"]
+      - ["0", "int_slab_top"]
+
+  - id: flashing
+    class_id: sub_sill_flashing
+    shape: sheet
+    p: 0.55
+    dims: {thickness: "flash_t"}
+    path:
+      - {x: "fx_back", y: "y_f0 + f_up", when: "flash_back_up"}
+      - {x: "fx_back", y: "fy", when: "flash_back_up"}
+      - {x: "sill_x0", y: "fy", when: "flash_back_flat"}
+      - ["fx_front", "fy"]
+      - ["fx_front", "y_f0 - fd"]
+
+  - id: int_screed
+    class_id: screed
+    shape: box
+    when: "int_layer_screed"
+    dims: {x0: "x_left", x1: "x_i1", y0: "int_slab_top", y1: "-int_fin_t"}
+
+  - id: int_bed
+    class_id: bedding
+    shape: box
+    when: "int_layer_bed"
+    dims: {x0: "x_left", x1: "x_i1", y0: "int_slab_top", y1: "-int_fin_t"}
+
+  - id: int_sealant
+    class_id: sealant
+    shape: box
+    p: 0.4
+    dims: {x0: "x_fin1", x1: "x_i1", y0: "-int_fin_t", y1: "0"}
+
+  - id: floor_finish
+    class_id: floor_finish
+    shape: box
+    dims: {x0: "x_left", x1: "x_fin1", y0: "-int_fin_t", y1: "0"}
+
+  - id: packer
+    class_id: packer
+    shape: box
+    when: "seat_packer"
+    dims: {x0: "sill_x0 + pk_in", x1: "sill_x1 - pk_out", y0: "y_f0 + ft", y1: "y_sb"}
+
+  - id: sub_sill
+    class_id: sub_sill
+    shape: box
+    when: "seat_sub_sill"
+    dims: {x0: "sill_x0", x1: "sill_x1", y0: "y_f0 + ft", y1: "y_sb"}
+
+  - id: sill_bed
+    class_id: bedding
+    shape: box
+    when: "seat_bed"
+    dims: {x0: "sill_x0", x1: "sill_x1", y0: "y_f0 + ft", y1: "y_sb"}
+
+  - id: sill
+    class_id: door_sill
+    shape: profile
+    path:
+      - ["sill_x0", "y_sb"]
+      - ["sill_x1", "y_sb"]
+      - ["sill_x1", "y_sb + front_h"]
+      - {x: "x_up", y: "y_sb + back_h", when: "sill_top_sloped"}
+      - {x: "x_up", y: "y_sb + front_h", when: "sill_top_stepped"}
+      - ["x_up", "sill_rise"]
+      - ["sill_x0", "sill_rise"]
+
+  - id: leaf
+    class_id: door_leaf
+    shape: box
+    p: 0.75
+    dims: {x0: "x_l0", x1: "x_l0 + leaf_t", y0: "y_l0", y1: "y_l0 + leaf_vis"}
+
+  - id: ws_under
+    class_id: weather_seal
+    shape: box
+    when: "has_leaf * ws_pos_under"
+    p: 0.65
+    dims: {x0: "x_ws0", x1: "x_ws0 + ws_w", y0: "y_l0 - ws_h", y1: "y_l0"}
+
+  - id: ws_stop
+    class_id: weather_seal
+    shape: box
+    when: "has_leaf * ws_pos_stop"
+    p: 0.65
+    dims: {x0: "x_up", x1: "x_l0", y0: "y_l0", y1: "y_l0 + ws_up"}
+
+  - id: ext_screed
+    class_id: screed
+    shape: profile
+    when: "ext_layer_screed"
+    path: &ext_layer_path
+      - ["x_b0", "y_bed1"]
+      - {x: "x_b0", y: "y_cf", when: "has_fillet"}
+      - {x: "x_cb", y: "y_bed0", when: "has_fillet"}
+      - {x: "x_b0", y: "y_bed0", when: "1 - has_fillet"}
+      - ["ext_ext", "y_bed0"]
+      - ["ext_ext", "y_bed1 - drop_end"]
+      - {x: "x_f0", y: "y_bed1", when: "joint_seal"}
+
+  - id: ext_bed
+    class_id: bedding
+    shape: profile
+    when: "ext_layer_bed"
+    path: *ext_layer_path
+
+  - id: ext_finish
+    class_id: external_finish
+    shape: profile
+    path:
+      - ["x_f0", "y_bed1"]
+      - ["ext_ext", "y_bed1 - drop_end"]
+      - ["ext_ext", "y_bed1 - drop_end + ext_fin_t"]
+      - ["x_f0", "ext_fin_top"]
+
+  - id: perim_joint
+    class_id: perimeter_joint
+    shape: box
+    when: "joint_perim + joint_perim_seal"
+    dims: {x0: "mt", x1: "mt + pj_w", y0: "y_bed0", y1: "y_jt"}
+
+  - id: ext_sealant
+    class_id: sealant
+    shape: box
+    when: "joint_seal + joint_perim_seal"
+    dims: {x0: "mt", x1: "mt + jw", y0: "seal_y0", y1: "ext_fin_top"}
+
+  - id: backing_rod
+    class_id: backing_rod
+    shape: profile
+    when: "joint_perim_seal"
+    p: 0.6
+    circle: {cx: "mt + rod_r", cy: "rod_cy", r: "rod_r", n: 24}
+
+  - id: cover_angle
+    class_id: cover_angle
+    shape: profile
+    when: "has_membrane * route_face"
+    p: 0.35
+    path:
+      - ["mt", "ext_fin_top"]
+      - ["mt + ca_f", "ext_fin_top"]
+      - ["mt + ca_f", "ext_fin_top + ca_t"]
+      - ["mt + ca_t", "ext_fin_top + ca_t"]
+      - ["mt + ca_t", "ext_fin_top + ca_h"]
+      - ["mt", "ext_fin_top + ca_h"]
+
+# How present parts relate (kinds from ontology/relations.yaml). Recorded in
+# the program; a relation is kept only when both its parts are present.
+relations:
+  - [membrane, covers, slab]
+  - [membrane, covers, fillet]
+  - [fillet, supported_by, slab]
+  - [protection, covers, membrane]
+  - [edge_angle, fixed_to, slab]
+  - [membrane, terminates_against, edge_angle]
+  - [flashing, supported_by, slab]
+  - [flashing, covers, membrane]
+  - [int_screed, supported_by, slab]
+  - [int_bed, supported_by, slab]
+  - [floor_finish, covers, int_screed]
+  - [floor_finish, covers, int_bed]
+  - [int_sealant, sealed_to, sill]
+  - [packer, supported_by, flashing]
+  - [sub_sill, supported_by, flashing]
+  - [sill_bed, supported_by, flashing]
+  - [sill, supported_by, packer]
+  - [sill, supported_by, sub_sill]
+  - [sill, supported_by, sill_bed]
+  - [leaf, hosted_in, sill]
+  - [ws_under, sealed_to, sill]
+  - [ws_stop, sealed_to, sill]
+  - [ext_screed, covers, protection]
+  - [ext_bed, covers, protection]
+  - [ext_screed, covers, membrane]
+  - [ext_bed, covers, membrane]
+  - [ext_finish, covers, ext_screed]
+  - [ext_finish, covers, ext_bed]
+  - [perim_joint, abuts, membrane]
+  - [ext_sealant, sealed_to, ext_finish]
+  - [backing_rod, supported_by, perim_joint]
+  - [cover_angle, covers, membrane]
+
+# Words a drawing may print, per class: our own generic wording, no product
+# names, no approvals, no numbers.
+labels:
+  slab: [CONCRETE SLAB, RC SLAB, STRUCTURAL SLAB, SLAB, SLAB SET DOWN, SUSPENDED SLAB]
+  screed: [SAND CEMENT SCREED, SCREED, SCREED TO FALL, BONDED SCREED, LEVELLING SCREED]
+  bedding: [MORTAR BED, BEDDING, ADHESIVE BED, SAND BED, BEDDING MORTAR]
+  membrane: [WATERPROOF MEMBRANE, MEMBRANE, LIQUID MEMBRANE, SHEET MEMBRANE, WATERPROOFING, MEMBRANE TURNED UP]
+  protection_sheet: [PROTECTION SHEET, SLIP SHEET, PROTECTION BOARD, SEPARATION LAYER]
+  floor_finish: [FLOOR TILES, TILE FINISH, TIMBER FLOOR, FLOOR FINISH, VINYL FLOORING, STONE FLOOR]
+  external_finish: [PAVERS, EXTERNAL TILES, PAVING, TILES ON BED, STONE PAVING]
+  door_sill: [DOOR SILL, SILL, ALUMINIUM SILL, THRESHOLD SECTION, SILL EXTRUSION]
+  sub_sill: [SUB-SILL, SUB SILL, SUB-SILL SECTION]
+  sub_sill_flashing: [SILL FLASHING, FLASHING, SILL TRAY, FLASHING TRAY, SUB-SILL FLASHING]
+  packer: [PACKER, PACKERS, SILL PACKER, PACKING]
+  door_leaf: [DOOR LEAF, DOOR, DOOR PANEL, SLIDING DOOR, HINGED DOOR]
+  weather_seal: [WEATHER SEAL, SEAL, WEATHER STRIP, BRUSH SEAL, DOOR SEAL]
+  sealant: [SEALANT, SEALANT BEAD, FLEXIBLE SEALANT, SILICONE SEALANT, MASTIC]
+  backing_rod: [BACKING ROD, BACKER ROD, FOAM ROD]
+  fillet: [FILLET, BOND BREAKER, COVE FILLET, FILLET BEAD]
+  perimeter_joint: [PERIMETER JOINT, EXPANSION JOINT, COMPRESSIBLE FILLER, MOVEMENT JOINT, JOINT FILLER]
+  edge_angle: [EDGE ANGLE, STOP ANGLE, WATER STOP, ANGLE]
+  cover_angle: [COVER ANGLE, TRIM ANGLE, CAPPING, COVER TRIM]
+
+titles: [SECTION A-A, THRESHOLD DETAIL, DETAIL 1, DOOR SILL SECTION, TYPICAL SECTION, SECTION THROUGH THRESHOLD, DETAIL B]
+
+notes:
+  - ALL DIMENSIONS IN MILLIMETRES.
+  - DO NOT SCALE FROM THIS DRAWING.
+  - CHECK DIMENSIONS ON SITE BEFORE STARTING WORK.
+  - REFER TO SPECIFICATION FOR MATERIALS.
+  - LAYERS SHOWN EXAGGERATED FOR CLARITY.
+  - SET OUT FROM FINISHED FLOOR LEVEL.
+
+# Levels a drawing may mark (drawn, never annotated as parts).
+levels:
+  - {y: "0", text: [FFL, F.F.L., FINISHED FLOOR LEVEL, INTERNAL FFL]}
+  - {y: "ext_fin_top", text: [EXTERNAL FINISHED LEVEL, EXT. FL, BALCONY LEVEL]}
+
+# Where the drawing cuts parts off: a break line is drawn across them.
+breaks:
+  - {x: "x_left"}
+  - {x: "ext_ext"}
+  - {y: "y_l0 + leaf_vis", when: "has_leaf"}

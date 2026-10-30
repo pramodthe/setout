@@ -1,0 +1,72 @@
+# Drafting style for synthetic drawings: fine ISO-like linework.
+#
+# Generic conventions written for synthetic data, not the owner's house style.
+# Sizes are paper millimetres; app/synthetic.py turns them into drawing units
+# with each drawing's sampled paper scale. A list is picked from uniformly, a
+# mapping by weight, and a two-number list is a uniform range. Hatches are
+# [ISO pattern, paper-scale low, paper-scale high] or none.
+id: iso_fine
+version: 1
+status: draft
+weight: 1.0
+basis: generic drafting conventions written for synthetic data; not the owner's house style
+scan_dpi: [200, 300]
+nts: {p_true: 0.5, range: [0.8, 1.3]}
+text:
+  height: [2.0, 2.5]
+  fonts: [Arial.ttf, Arial Narrow.ttf, Helvetica.ttc]
+  upper: 0.9
+weights:
+  fine: [0.13, 0.18]
+  medium: [0.25, 0.35]
+  heavy: [0.5, 0.7]
+hatch_weight: [0.09, 0.13]
+linetypes:  # paper mm: dash > 0, gap < 0
+  dashed: [3.0, -1.5]
+  hidden: [1.5, -1.0]
+  dotted: [0.2, -0.8]
+  centre: [10.0, -2.0, 2.0, -2.0]
+default: {weight: [medium], linetype: [continuous], hatch: [none]}
+classes:
+  slab: {weight: [heavy], hatch: [[CONCRETE1, 0.5, 0.9], [AR-CONC, 0.04, 0.07], [ANSI31, 0.8, 1.4]], angle: [0, 45]}
+  screed: {weight: [medium], hatch: [[AR-SAND, 0.04, 0.07], [DOTS, 0.6, 1.0], none]}
+  bedding: {weight: [medium], hatch: [[AR-SAND, 0.03, 0.05], [SAND, 0.4, 0.7], none]}
+  floor_finish: {weight: [medium], hatch: [[ANSI37, 0.5, 0.9], [ANSI31, 0.4, 0.8], none], angle: [0, 45]}
+  external_finish: {weight: [medium], hatch: [[CONCRETE1, 0.4, 0.7], [ANSI37, 0.6, 1.0], none]}
+  door_sill: {weight: [medium, heavy], hatch: [[ANSI32, 0.4, 0.7], none]}
+  sub_sill: {weight: [medium], hatch: [[ANSI32, 0.3, 0.6], none]}
+  packer: {weight: [fine, medium], hatch: [[ANSI31, 0.3, 0.6], none], angle: [45, 135]}
+  door_leaf: {weight: [medium], hatch: [[WOOD1, 0.6, 1.2], [ANSI31, 0.8, 1.2], none]}
+  weather_seal: {weight: [fine], hatch: [none, [ANSI37, 0.2, 0.4]]}
+  sealant: {weight: [fine, medium], hatch: [[ANSI37, 0.2, 0.4], [DOTS, 0.3, 0.5], none]}
+  backing_rod: {weight: [fine], hatch: [none, [DOTS, 0.3, 0.5]]}
+  fillet: {weight: [fine], hatch: [none, [ANSI31, 0.2, 0.4]]}
+  perimeter_joint: {weight: [fine], hatch: [[INSUL, 0.3, 0.6], [ANSI37, 0.3, 0.5], none]}
+  edge_angle: {weight: [medium], hatch: [none, [ANSI32, 0.2, 0.4]]}
+  cover_angle: {weight: [medium], hatch: [none]}
+  membrane: {weight: [fine], hatch: [none]}
+  protection_sheet: {weight: [fine], hatch: [none]}
+  sub_sill_flashing: {weight: [fine], hatch: [none]}
+thin:  # parts drawn as sheets
+  modes: {outline: 0.45, line: 0.25, dashed_line: 0.15, filled: 0.15}
+  weight: [fine]
+  dashed: [dashed, hidden]
+  max_line_px: 9
+labels:
+  share: [0.5, 1.0]
+  sides: {left: 0.3, right: 0.3, both: 0.4}
+  ends: {arrow: 0.5, dot: 0.3, none: 0.2}
+  end_size: [1.5, 2.5]
+  offset: [12, 30]
+  weight: [fine]
+dims:
+  arrows: {"": 0.3, ARCHTICK: 0.3, OBLIQUE: 0.3, DOT: 0.1}
+  text_height: [1.8, 2.5]
+  arrow_size: [1.5, 2.5]
+  offset: [8, 14]
+  spacing: [6, 9]
+  chains: 0.8
+  overall: 0.5
+  extra: [0, 3]
+  weight: [fine]
+clutter: {title: 0.8, notes: 0.4, break_lines: 0.6, levels: 0.5}

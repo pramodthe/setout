@@ -1,0 +1,70 @@
+# Drafting style for synthetic drawings: classic engineering linework.
+#
+# Generic conventions written for synthetic data, not the owner's house style:
+# medium lines, line hatches at varied angles for most materials, closed
+# arrows, serif or monospaced text in mixed case. Sizes are paper millimetres.
+# See iso_fine.yaml for the schema.
+id: engineering_classic
+version: 1
+status: draft
+weight: 1.0
+basis: generic drafting conventions written for synthetic data; not the owner's house style
+scan_dpi: [150, 250]
+nts: {p_true: 0.6, range: [0.8, 1.25]}
+text:
+  height: [2.0, 3.0]
+  fonts: [Times New Roman.ttf, Courier New.ttf, Georgia.ttf]
+  upper: 0.4
+weights:
+  fine: [0.13, 0.18]
+  medium: [0.25, 0.35]
+  heavy: [0.35, 0.5]
+hatch_weight: [0.13, 0.18]
+linetypes:
+  dashed: [3.0, -1.5]
+  hidden: [1.5, -0.75]
+  centre: [8.0, -1.5, 1.5, -1.5]
+default: {weight: [medium], linetype: [continuous], hatch: [none]}
+classes:
+  slab: {weight: [heavy], hatch: [[ANSI31, 0.8, 1.6], [ANSI33, 0.8, 1.4]], angle: [0, 90]}
+  screed: {weight: [medium], hatch: [[ANSI31, 0.5, 0.9], [DOTS, 0.6, 1.0]], angle: [90]}
+  bedding: {weight: [medium], hatch: [[ANSI37, 0.4, 0.7], [SAND, 0.4, 0.7]]}
+  floor_finish: {weight: [medium], hatch: [[ANSI31, 0.3, 0.6], [LINE, 0.3, 0.5], none], angle: [0, 90]}
+  external_finish: {weight: [medium], hatch: [[ANSI32, 0.5, 0.9], [ANSI31, 0.6, 1.0]], angle: [90]}
+  door_sill: {weight: [heavy], hatch: [[ANSI32, 0.3, 0.6], [ANSI31, 0.3, 0.5]], angle: [0, 90]}
+  sub_sill: {weight: [medium], hatch: [[ANSI31, 0.3, 0.5]], angle: [90]}
+  packer: {weight: [medium], hatch: [[ANSI37, 0.2, 0.4], none]}
+  door_leaf: {weight: [medium], hatch: [[ANSI31, 1.0, 1.6], none], angle: [0, 90]}
+  weather_seal: {weight: [fine], hatch: [[ANSI37, 0.15, 0.3], none]}
+  sealant: {weight: [fine], hatch: [[ANSI37, 0.15, 0.3], [SOLID, 1, 1]]}
+  backing_rod: {weight: [fine], hatch: [none]}
+  fillet: {weight: [fine], hatch: [[ANSI31, 0.15, 0.3], none], angle: [90]}
+  perimeter_joint: {weight: [fine], hatch: [[ANSI37, 0.2, 0.4], [CROSS, 0.2, 0.3]]}
+  edge_angle: {weight: [medium], hatch: [[ANSI32, 0.15, 0.3], none]}
+  cover_angle: {weight: [medium], hatch: [none]}
+  membrane: {weight: [fine], linetype: [continuous]}
+  protection_sheet: {weight: [fine], linetype: [continuous, dashed]}
+  sub_sill_flashing: {weight: [fine], linetype: [continuous]}
+thin:
+  modes: {outline: 0.55, line: 0.2, dashed_line: 0.15, filled: 0.1}
+  weight: [fine]
+  dashed: [dashed, centre]
+  max_line_px: 8
+labels:
+  share: [0.4, 0.9]
+  sides: {left: 0.4, right: 0.4, both: 0.2}
+  ends: {arrow: 0.8, none: 0.2}
+  end_size: [2.0, 3.0]
+  offset: [10, 25]
+  weight: [fine]
+dims:
+  arrows: {"": 0.6, CLOSED: 0.2, OPEN: 0.2}
+  text_height: [2.0, 2.5]
+  arrow_size: [2.0, 2.5]
+  offset: [8, 12]
+  spacing: [6, 8]
+  chains: 0.7
+  overall: 0.4
+  extra: [1, 3]
+  weight: [fine]
+clutter: {title: 0.7, notes: 0.5, break_lines: 0.4, levels: 0.6}

@@ -1,0 +1,69 @@
+# Drafting style for synthetic drawings: loose, scanned-sheet look.
+#
+# Generic conventions written for synthetic data, not the owner's house style:
+# some classes outlined dashed or dotted, sparse hatching, large text, simple
+# ticks. Sizes are paper millimetres. See iso_fine.yaml for the schema.
+id: sketch_scan
+version: 1
+status: draft
+weight: 1.0
+basis: generic drafting conventions written for synthetic data; not the owner's house style
+scan_dpi: [150, 220]
+nts: {p_true: 0.3, range: [0.7, 1.4]}
+text:
+  height: [2.8, 4.0]
+  fonts: [Verdana.ttf, Tahoma.ttf, Trebuchet MS.ttf]
+  upper: 0.7
+weights:
+  fine: [0.18, 0.25]
+  medium: [0.3, 0.45]
+  heavy: [0.5, 0.7]
+hatch_weight: [0.13, 0.18]
+linetypes:
+  dashed: [3.5, -2.0]
+  hidden: [2.0, -1.2]
+  dotted: [0.3, -1.2]
+default: {weight: [medium], linetype: [continuous], hatch: [none]}
+classes:
+  slab: {weight: [heavy, medium], hatch: [[CONCRETE1, 0.6, 1.2], none, [ANSI31, 1.2, 2.0]], angle: [45, 135]}
+  screed: {weight: [medium], linetype: [continuous, dashed], hatch: [none, [DOTS, 1.0, 1.6]]}
+  bedding: {weight: [medium], linetype: [continuous, dotted], hatch: [none, [AR-SAND, 0.06, 0.1]]}
+  floor_finish: {weight: [medium], hatch: [none, [ANSI37, 0.8, 1.2]]}
+  external_finish: {weight: [medium], hatch: [none, [CONCRETE1, 0.5, 0.8]]}
+  door_sill: {weight: [heavy], hatch: [none]}
+  sub_sill: {weight: [medium], linetype: [continuous, hidden], hatch: [none]}
+  packer: {weight: [medium], hatch: [none, [ANSI31, 0.3, 0.5]]}
+  door_leaf: {weight: [medium], hatch: [none, [WOOD1, 0.8, 1.2]]}
+  weather_seal: {weight: [medium], hatch: [none]}
+  sealant: {weight: [medium], hatch: [none, [DOTS, 0.4, 0.6]]}
+  backing_rod: {weight: [fine], hatch: [none]}
+  fillet: {weight: [fine], hatch: [none]}
+  perimeter_joint: {weight: [fine], linetype: [continuous, dotted, hidden], hatch: [none, [INSUL, 0.4, 0.7]]}
+  edge_angle: {weight: [medium], hatch: [none]}
+  cover_angle: {weight: [medium], hatch: [none]}
+  membrane: {weight: [medium], linetype: [continuous, dashed]}
+  protection_sheet: {weight: [fine], linetype: [dashed, dotted]}
+  sub_sill_flashing: {weight: [medium], linetype: [continuous, hidden]}
+thin:
+  modes: {outline: 0.3, line: 0.25, dashed_line: 0.35, filled: 0.1}
+  weight: [fine, medium]
+  dashed: [dashed, hidden, dotted]
+  max_line_px: 10
+labels:
+  share: [0.3, 0.8]
+  sides: {left: 0.35, right: 0.35, both: 0.3}
+  ends: {arrow: 0.4, tick: 0.2, dot: 0.2, none: 0.2}
+  end_size: [2.5, 4.0]
+  offset: [12, 30]
+  weight: [fine, medium]
+dims:
+  arrows: {OBLIQUE: 0.5, ARCHTICK: 0.3, "": 0.2}
+  text_height: [2.5, 3.5]
+  arrow_size: [2.5, 3.5]
+  offset: [10, 16]
+  spacing: [8, 11]
+  chains: 0.6
+  overall: 0.3
+  extra: [0, 2]
+  weight: [fine]
+clutter: {title: 0.6, notes: 0.3, break_lines: 0.5, levels: 0.3}
