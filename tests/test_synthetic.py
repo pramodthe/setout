@@ -1,6 +1,8 @@
 """Synthetic drawings: templates sample and build, masks sit on the ink, tiles and COCO are valid."""
 import dataclasses
+import hashlib
 import importlib.util
+import io
 import json
 import math
 import random
@@ -9,10 +11,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 import yaml
+from ezdxf.fonts import fonts
 
 from app import ontology
 from app import synthetic as syn
 from app.program import SHAPE_DIMS
+from training import eval_seg
 
 ROOT = Path(__file__).resolve().parents[1]
 # Small sheets keep each drawing well under a second.
@@ -281,3 +285,162 @@ def test_cli_refuses_paths_outside_data(tmp_path):
     assert not (ROOT / "app" / "seg-x").exists() and not (ROOT / "tests" / "seg-x").exists()
     assert cli.allowed_output(ROOT / "data" / "datasets" / "seg-x")
     assert cli.allowed_output(tmp_path / "elsewhere")  # outside the repository, as tools/dxf_census.py allows
+
+
+# ---------------------------------------------------------------- zoom
+
+ZOOM = dataclasses.replace(FAST, zoom=2.0)
+# Frozen from the generator before `zoom` existed (commit d1100a2, macOS): FAST, 8 drawings, seed 5,
+# which reaches every kind of damage, rotation, widening and padding. That same code reproduced
+# seg-synth-v1 tile for tile.
+ZOOM_ONE_DIGEST = "2cc93a119345c9d12e621fc958f805f8e3dff09ee58ffaacfda8b6dceb0e5af5"
+
+
+def _dataset_digest(root):
+    """Every output byte but run.json's timings and the manifest's hashes of our own code."""
+    digest = hashlib.sha256()
+    for path in sorted(p for p in Path(root).rglob("*") if p.is_file() and p.name != "run.json"):
+        data = path.read_bytes()
+        if path.name == "manifest.json":
+            manifest = json.loads(data)
+            manifest["generator"].pop("code_sha256")
+            data = json.dumps(manifest, sort_keys=True).encode()
+        digest.update(f"{path.relative_to(root).as_posix()}\0{len(data)}\0".encode())
+        digest.update(data)
+    return digest.hexdigest()
+
+
+def _style_fonts_installed(styles):
+    names = {font for style in styles for font in style.data["text"]["fonts"]}
+    return all(fonts.font_manager.has_font(name) for name in names)
+
+
+def test_zoom_one_is_byte_identical_to_the_generator_before_zoom(library, tmp_path):
+    if not _style_fonts_installed(library[1]):
+        pytest.skip("the frozen digest was made with the macOS fonts the styles name; other fonts draw other glyphs")
+    _cli().build(tmp_path / "ds", drawings=8, seed=5, cfg=FAST, log=lambda *_: None)
+    assert _dataset_digest(tmp_path / "ds") == ZOOM_ONE_DIGEST
+
+
+def test_zoom_one_reproduces_seg_synth_v1_when_it_is_here(library):
+    v1 = ROOT / "data" / "datasets" / "seg-synth-v1"
+    if not (v1 / "manifest.json").exists():
+        pytest.skip("seg-synth-v1 is not on this machine")
+    index = _cli().selected(1000, 1, {"train": 0, "valid": 0})[0]  # the first test drawing
+    cfg = syn.Config()
+    drawing = syn.make_drawing(index, 1, *library, cfg)
+    tiles = syn.tiles(drawing, cfg, random.Random(f"tiles:1:{index}"))
+    assert tiles
+    for tile in tiles:
+        buffer = io.BytesIO()
+        tile.image.save(buffer, format="PNG")
+        name = f"{drawing.drawing_id}_x{tile.x0:05d}_y{tile.y0:05d}.png"
+        assert buffer.getvalue() == (v1 / "test" / name).read_bytes(), name
+
+
+@pytest.fixture(scope="module")
+def zoomed_pair(library):
+    """The same rotated drawing at zoom 1 and 2, with no part widened at zoom 1."""
+    cfg = dataclasses.replace(FAST, rotate_p=1.0)
+    index = next(i for i in range(40) if not any(
+        p["widened"] for p in syn.make_drawing(i, 7, *library, cfg).record["parts"]))
+    return (syn.make_drawing(index, 7, *library, cfg),
+            syn.make_drawing(index, 7, *library, dataclasses.replace(cfg, zoom=2.0)))
+
+
+def test_a_zoomed_drawing_is_the_same_drawing_scaled(zoomed_pair):
+    one, two = zoomed_pair
+    for key in ("template", "style", "attempts", "choices", "values", "damage"):
+        assert two.record[key] == one.record[key], key
+    assert two.record["zoom"] == 2.0 and "zoom" not in one.record
+    assert two.record["sheet"]["rotation_deg"] == one.record["sheet"]["rotation_deg"] != 0
+    assert two.record["sheet"]["size"] == [2 * s for s in one.record["sheet"]["size"]]
+    assert two.record["sheet"]["offset"] == [2 * s for s in one.record["sheet"]["offset"]]
+    assert two.image.size == two.clean.size == tuple(2 * s for s in one.image.size)
+    for a, b in zip(one.instances, two.instances):
+        assert (a.part_id, a.class_id, a.mode) == (b.part_id, b.class_id, b.mode)
+        assert b.min_width_px == pytest.approx(2 * a.min_width_px, abs=0.005)
+        for ra, rb in zip(a.rings, b.rings):
+            assert np.abs(rb - 2 * ra).max() < 1e-6
+
+
+def test_zoomed_masks_sit_on_the_ink(zoomed_pair):
+    continuous = [a for a in zoomed_pair[1].record["alignment"].values() if a["linetype"] == "continuous"]
+    assert len(continuous) >= 5
+    assert np.mean([a["r2"] for a in continuous]) >= 0.97
+
+
+def test_zoom_scales_the_strokes_too(library):
+    """Ink is drawn in plotted mm, so it must widen with the masks or thin parts lose their edges."""
+    def ink_share(cfg):
+        d = syn.make_drawing(3, 2, *library, dataclasses.replace(cfg, rotate_p=0.0, clean_p=1.0))
+        return float((np.asarray(d.clean) < 128).mean())
+    assert ink_share(ZOOM) == pytest.approx(ink_share(FAST), rel=0.25)
+
+
+def test_a_fractional_zoom_keeps_the_masks_on_the_ink(library):
+    d = syn.make_drawing(1, 3, *library, dataclasses.replace(FAST, zoom=1.5))
+    continuous = [a for a in d.record["alignment"].values() if a["linetype"] == "continuous"]
+    assert np.mean([a["r2"] for a in continuous]) >= 0.97
+
+
+def test_zoomed_tiles_stay_tile_sized_and_there_are_more_of_them(library):
+    one = syn.make_drawing(1, 3, *library, FAST)
+    two = syn.make_drawing(1, 3, *library, ZOOM)
+    few, many = syn.tiles(one, FAST, random.Random(0)), syn.tiles(two, ZOOM, random.Random(0))
+    assert len(many) > len(few)
+    assert all(t.image.size == (FAST.tile, FAST.tile) for t in many)
+    assert {i.part_id for i in one.instances} == {a["attributes"]["part_id"] for t in many for a in t.annotations}
+
+
+def test_a_limit_skips_drawings_and_never_moves_one():
+    cli = _cli()
+    splits = cli.split_of(1000, 1)
+    kept = cli.selected(1000, 1, {"train": 10, "valid": 5})
+    assert cli.selected(1000, 1) == list(range(1000))
+    assert [splits[i] for i in kept].count("train") == 10 and [splits[i] for i in kept].count("valid") == 5
+    assert {i for i in kept if splits[i] == "test"} == {i for i, s in splits.items() if s == "test"}
+
+
+def test_a_limited_zoomed_build_records_how_it_was_made(tmp_path):
+    cfg = dataclasses.replace(ZOOM, drop_empty_masks=True)
+    info = _cli().build(tmp_path / "ds", drawings=5, seed=2, cfg=cfg, log=lambda *_: None, limits={"train": 1})
+    assert info["splits"]["train"]["drawings"] == 1
+    assert info["command"] == {"drawings": 5, "seed": 2, "zoom": 2.0, "limits": {"train": 1}}
+    assert info["config"]["zoom"] == 2.0 and info["config"]["drop_empty_masks"] is True
+    default = _cli().config_record(syn.Config())
+    assert "zoom" not in default and "drop_empty_masks" not in default
+
+
+def test_cli_refuses_a_zoom_under_one(tmp_path):
+    with pytest.raises(SystemExit) as stop:
+        _cli().main(["--out", str(tmp_path / "ds"), "--drawings", "1", "--seed", "1", "--zoom", "0.5"])
+    assert "--zoom" in str(stop.value)
+
+
+# ---------------------------------------------------------------- empty masks
+
+def _sliver():
+    """A strip with real area that misses every pixel centre once the tile edge clips it."""
+    ring = np.array([(100.0, 1007.6), (400.0, 1007.6), (400.0, 1030.0), (100.0, 1030.0)])
+    return syn.Instance("p", "c", [ring], 22.4, False, False, "outline", "continuous")
+
+
+def test_a_clipped_piece_with_no_pixel_is_dropped_only_when_asked():
+    kept = syn._clip_instance(_sliver(), 0, 0, 1008, 1008, syn.Config())
+    assert kept and kept["area"] >= syn.Config().min_remnant_px2  # v1 keeps it, and no model can ever match it
+    assert not eval_seg.segmentation_mask(kept["segmentation"], 1008, 1008).any()
+    assert syn._clip_instance(_sliver(), 0, 0, 1008, 1008, syn.Config(drop_empty_masks=True)) is None
+
+
+def test_a_piece_with_pixels_survives_the_drop():
+    ring = np.array([(100.0, 900.0), (400.0, 900.0), (400.0, 1030.0), (100.0, 1030.0)])
+    inst = syn.Instance("p", "c", [ring], 130.0, False, False, "outline", "continuous")
+    assert syn._clip_instance(inst, 0, 0, 1008, 1008, syn.Config(drop_empty_masks=True))
+
+
+def test_no_annotation_of_a_new_dataset_has_an_empty_mask(library):
+    cfg = dataclasses.replace(ZOOM, drop_empty_masks=True)
+    for tile in syn.tiles(syn.make_drawing(0, 4, *library, cfg), cfg, random.Random(0)):
+        for ann in tile.annotations:
+            assert eval_seg.segmentation_mask(ann["segmentation"], cfg.tile, cfg.tile).any()
