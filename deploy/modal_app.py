@@ -29,7 +29,7 @@ GUIDE = os.environ.get("SETOUT_DEMO_GUIDE") == "1"
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
-    .pip_install("fastapi==0.162.0", "pydantic==2.14.1", "pypdf==6.21.3",
+    .pip_install("fastapi==0.162.0", "pydantic==2.14.1", "pypdf==6.21.3", "pypdfium2==5.14.0",
                  "pillow==13.0.0", "python-multipart==0.0.32", "SQLAlchemy==2.0.55",
                  "alembic==1.20.1", "psycopg[binary]==3.3.6")
     .env({"SETOUT_VAR": "/data", "SETOUT_PUBLIC": "1", "SETOUT_GUIDE_PER_HOUR": "60",

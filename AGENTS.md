@@ -71,6 +71,8 @@ need a Modal login (`modal token new`).
   assembly and source checks
 - `app/cad_components.py`, `app/cad_sandbox.py`: AI-written CadQuery objects in
   the Modal sandbox, measured by a trusted process
+- `app/close_up.py`: finds a part on its drawing and cuts an enlarged crop for
+  the CAD writer and the critic (shape only, never measured)
 - `app/render.py`: headless renders of the real viewer (`#/render/<version>`)
 - `app/review_v3.py`, `app/lessons.py`: the review screen on versions; lessons
   a correction teaches

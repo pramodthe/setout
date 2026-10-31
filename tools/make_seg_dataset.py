@@ -2,6 +2,8 @@
 """Synthetic drawing-segmentation dataset: section drawings with exact masks.
 
     python tools/make_seg_dataset.py --out data/datasets/seg-synth-v1 --drawings 1000 --seed 1 [--workers 8]
+    python tools/make_seg_dataset.py --out data/datasets/seg-synth-v2-zoom --drawings 1000 --seed 1 --zoom 2 \
+        [--max-train-drawings 400] [--max-valid-drawings 50]
 
 Writes the Roboflow / RF-DETR COCO layout: train/, valid/ and test/, each with
 `_annotations.coco.json` and 1008 x 1008 PNG tiles, plus `manifest.json`,
@@ -9,6 +11,11 @@ Writes the Roboflow / RF-DETR COCO layout: train/, valid/ and test/, each with
 are by drawing, never by tile. The same seed writes byte-identical files
 whatever the worker count; only run.json changes from run to run. Everything is synthetic: our own templates and generic styles
 (app/synthetic.py); nothing is derived from anyone's drawings.
+
+--zoom multiplies the render resolution. The same seed and --drawings give the same drawings in the
+same splits at every zoom, and with --max-train-drawings / --max-valid-drawings: those skip drawings,
+they never move one. A zoomed dataset also drops clipped pieces whose mask has no pixel
+(--drop-empty-masks); only a zoom 1 run without that flag reproduces seg-synth-v1's bytes.
 
 The output must be under data/ (gitignored) or outside the repository: a
 dataset never lands in tracked files.
@@ -52,6 +59,27 @@ def split_of(n: int, seed: int) -> dict[int, str]:
     random.Random(f"split:{seed}").shuffle(order)
     cut1, cut2 = round(n * SHARES[0]), round(n * (SHARES[0] + SHARES[1]))
     return {i: SPLITS[0] if k < cut1 else SPLITS[1] if k < cut2 else SPLITS[2] for k, i in enumerate(order)}
+
+
+def selected(n: int, seed: int, limits: dict[str, int] | None = None) -> list[int]:
+    """The drawing indices to make: all of them, or the first few of each limited split.
+
+    Which split a drawing is in comes from `n` and `seed` alone, so a limit
+    leaves every other drawing where it was.
+    """
+    taken, keep = Counter(), []
+    for index, split in sorted(split_of(n, seed).items()):
+        if taken[split] < (limits or {}).get(split, n):
+            taken[split] += 1
+            keep.append(index)
+    return keep
+
+
+def config_record(cfg: synthetic.Config) -> dict:
+    """The config as a manifest shows it. Knobs newer than v1 appear only when
+    set, so a default build still writes v1's manifest."""
+    return {k: v for k, v in asdict(cfg).items()
+            if k not in ("zoom", "drop_empty_masks") or v != getattr(synthetic.Config, k)}
 
 
 # ---------------------------------------------------------------- workers
@@ -159,7 +187,7 @@ def alignment_summary(records: list[dict]) -> dict:
             "lowest": [{"r1": r[0], "r2": r[1], "mode": r[2], "drawing": r[3], "part": r[4]} for r in rows[:10]]}
 
 
-def manifest(name, args, cfg, templates, styles, cats, datasets, records) -> dict:
+def manifest(name, args, cfg, templates, styles, cats, datasets, records, limits=None) -> dict:
     by_class = defaultdict(lambda: {"parts": 0, "thin_parts": 0, "widths": []})
     for rec in records:
         for p in rec["parts"]:
@@ -191,7 +219,8 @@ def manifest(name, args, cfg, templates, styles, cats, datasets, records) -> dic
                       "code_sha256": {p: sha(ROOT / p) for p in ("app/synthetic.py", "app/section_cut.py",
                                                                  "app/dxf_ingest.py", "app/program.py",
                                                                  "app/geometry.py", "tools/make_seg_dataset.py")}},
-        "command": {"drawings": args.drawings, "seed": args.seed},
+        "command": {"drawings": args.drawings, "seed": args.seed}
+                   | ({"zoom": cfg.zoom} if cfg.zoom != 1.0 else {}) | ({"limits": limits} if limits else {}),
         "ontology_version": ontology.load().version,
         "templates": [{"id": t.id, "version": t.version, "sha256": t.sha256, "assembly_class": t.assembly_class,
                        "weight": t.weight, "drawings": used_t[t.id]} for t in templates],
@@ -218,7 +247,7 @@ def manifest(name, args, cfg, templates, styles, cats, datasets, records) -> dic
         "tiles": {"size": cfg.tile, "stride": cfg.stride, "overlap": cfg.tile - cfg.stride,
                   "min_remnant_px2": cfg.min_remnant_px2, "keep_empty_p": cfg.keep_empty_p,
                   "padding": "sheets smaller than a tile are padded with paper before damage"},
-        "config": asdict(cfg),
+        "config": config_record(cfg),
         "splits": {s: {"drawings": sum(1 for r in records if r["split"] == s),
                        "images": len(datasets[s]["images"]),
                        "images_without_instances": len({i["id"] for i in datasets[s]["images"]}
@@ -251,8 +280,11 @@ def run_info(results: list[dict], wall: float, workers: int) -> dict:
 # ---------------------------------------------------------------- main
 
 def build(out: Path, drawings: int, seed: int, workers: int = 1, cfg: synthetic.Config | None = None,
-          args=None, log=print) -> dict:
-    """Generate the dataset into `out` (which must not hold a dataset yet)."""
+          args=None, log=print, limits: dict[str, int] | None = None) -> dict:
+    """Generate the dataset into `out` (which must not hold a dataset yet).
+
+    `limits` caps the drawings of a split, {"train": 400}: see `selected`.
+    """
     cfg = cfg or synthetic.Config()
     for split in SPLITS:
         (out / split).mkdir(parents=True, exist_ok=True)
@@ -260,15 +292,16 @@ def build(out: Path, drawings: int, seed: int, workers: int = 1, cfg: synthetic.
     started = time.perf_counter()
     results = []
     init = (str(out), seed, drawings, asdict(cfg))
+    indices = selected(drawings, seed, limits)
     if workers > 1:
         with mp.get_context("spawn").Pool(workers, initializer=_init, initargs=init) as pool:
-            for k, res in enumerate(pool.imap_unordered(_one, range(drawings), chunksize=2), 1):
+            for k, res in enumerate(pool.imap_unordered(_one, indices, chunksize=2), 1):
                 results.append(res)
-                if k % 50 == 0 or k == drawings:
-                    log(f"  {k}/{drawings} drawings, {time.perf_counter() - started:.0f}s")
+                if k % 50 == 0 or k == len(indices):
+                    log(f"  {k}/{len(indices)} drawings, {time.perf_counter() - started:.0f}s")
     else:
         _init(*init)
-        for i in range(drawings):
+        for i in indices:
             results.append(_one(i))
     seconds = time.perf_counter() - started
     cats = categories(templates)
@@ -281,7 +314,7 @@ def build(out: Path, drawings: int, seed: int, workers: int = 1, cfg: synthetic.
         for rec in records:
             fh.write(json.dumps(rec, sort_keys=True) + "\n")
     args = args or argparse.Namespace(drawings=drawings, seed=seed, workers=workers)
-    info = manifest(name, args, cfg, templates, styles, cats, datasets, records)
+    info = manifest(name, args, cfg, templates, styles, cats, datasets, records, limits)
     (out / "manifest.json").write_text(json.dumps(info, indent=2, sort_keys=False))
     run = run_info(results, seconds, workers)
     (out / "run.json").write_text(json.dumps(run, indent=2))
@@ -294,6 +327,11 @@ def main(argv=None):
     ap.add_argument("--drawings", type=int, required=True, help="number of drawings to generate")
     ap.add_argument("--seed", type=int, required=True, help="seed: the same seed writes the same dataset")
     ap.add_argument("--workers", type=int, default=1, help="processes (default 1)")
+    ap.add_argument("--zoom", type=float, default=1.0, help="render resolution multiplier, at least 1 (default 1)")
+    ap.add_argument("--max-train-drawings", type=int, help="make only the first N of the train split's drawings")
+    ap.add_argument("--max-valid-drawings", type=int, help="make only the first N of the valid split's drawings")
+    ap.add_argument("--drop-empty-masks", action="store_true",
+                    help="drop clipped pieces whose mask has no pixel (always on when --zoom is not 1)")
     ap.add_argument("--overwrite", action="store_true", help="replace a dataset already in --out")
     args = ap.parse_args(argv)
     out = Path(args.out)
@@ -302,14 +340,21 @@ def main(argv=None):
                  "Datasets are data: they must never land in tracked files.")
     if args.drawings < 1 or args.workers < 1:
         sys.exit("--drawings and --workers must be at least 1")
+    if args.zoom < 1:
+        sys.exit("--zoom must be at least 1")
+    limits = {s: n for s, n in (("train", args.max_train_drawings), ("valid", args.max_valid_drawings))
+              if n is not None}
+    if any(n < 1 for n in limits.values()):
+        sys.exit("--max-train-drawings and --max-valid-drawings must be at least 1")
     existing = [p for p in OUTPUTS if (out / p).exists()]
     if existing and not args.overwrite:
         sys.exit(f"{out} already holds {existing}; pass --overwrite to replace them")
     for p in existing:  # only what this tool writes
         target = out / p
         shutil.rmtree(target) if target.is_dir() else target.unlink()
-    print(f"seg-synth: {args.drawings} drawings, seed {args.seed}, {args.workers} worker(s) -> {out}")
-    info = build(out, args.drawings, args.seed, args.workers, args=args)
+    print(f"seg-synth: {args.drawings} drawings, seed {args.seed}, zoom {args.zoom:g}, {args.workers} worker(s) -> {out}")
+    cfg = synthetic.Config(zoom=args.zoom, drop_empty_masks=args.drop_empty_masks or args.zoom != 1.0)
+    info = build(out, args.drawings, args.seed, args.workers, cfg, args=args, limits=limits or None)
     for s in SPLITS:
         sp = info["splits"][s]
         print(f"  {s}: {sp['drawings']} drawings, {sp['images']} tiles, {sp['instances']} instances "

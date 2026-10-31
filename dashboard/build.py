@@ -52,9 +52,9 @@ def gallery_columns(models, dataset):
         for word in ("before", "after"):
             run = group[word]
             if run and run.dataset == dataset and run.predictions:
-                columns.append(tiles.Column(run.run_id, f"{name} {word}", run.predictions))
+                columns.append(tiles.Column(run.run_id, f"{group['model']} {word}", run.predictions))
             else:
-                columns.append(tiles.Column(f"{name}-{word}", f"{name} {word}"))
+                columns.append(tiles.Column(f"{name}-{word}", f"{group['model']} {word}"))
     return columns
 
 

@@ -11,7 +11,7 @@ import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment
 import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
 import { SPECS, disposeTextures, makeMaterial, materialClassFor } from "./materials";
 import type { MaterialClass } from "./materials";
-import { partBadge, partOpacity } from "./provenance";
+import { framedParts, partBadge, partOpacity } from "./provenance";
 import type { Scene as SceneData } from "./types";
 import { boxProjectUVs } from "./uv";
 
@@ -84,6 +84,7 @@ export class Viewport3D {
   private env: THREE.Texture;
   private clipPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), 1e9);
   private meshes = new Map<string, THREE.Mesh>();
+  private framed: string[] = []; // what frame(null) looks at: provenance.framedParts
   private baseY = new Map<string, number>();
   private ray = new THREE.Raycaster();
   private ndc = new THREE.Vector2();
@@ -298,6 +299,7 @@ export class Viewport3D {
       const text = solid.placeholder ? `${label} · placeholder (CAD ${solid.placeholder})` : badge ? `${label} · ${badge.short}` : label;
       mesh.add(this.makeTag(solid.id, text, solid.source_label, badge?.text));
     }
+    this.framed = framedParts(s.solids);
     this.applyCutaway();
     const box = new THREE.Box3().setFromObject(this.root);
     if (box.isEmpty()) return;
@@ -425,7 +427,7 @@ export class Viewport3D {
   private frame(ids: string[] | null, dir: THREE.Vector3, pad: number, ms: number): void {
     this.root.updateMatrixWorld(true);
     const box = new THREE.Box3();
-    const list = ids && ids.length ? ids : [...this.meshes.keys()];
+    const list = ids && ids.length ? ids : this.framed;
     for (const id of list) {
       const m = this.meshes.get(id);
       if (m) box.expandByObject(m);

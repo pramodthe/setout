@@ -19,6 +19,10 @@ drafting conventions. For one drawing:
 5. Each mask is its part's cut loops sent through the same transforms: the
    stretch, `RenderInfo.to_pixel`, the placement and the rotation.
 
+`Config.zoom` renders the same drawing at a higher resolution: the same paper
+scanned at z x the dpi. Every random draw stays the zoom 1 draw, so a zoomed
+sheet is the zoom 1 sheet with every coordinate multiplied by z.
+
 Pixel coordinates follow the corner convention used by COCO and by the
 renderer: pixel (i, j) covers [i, i+1) x [j, j+1), and a mask holds the pixels
 whose centres lie inside the polygon.
@@ -70,7 +74,12 @@ Ring = list[tuple[float, float]]
 
 @dataclass(frozen=True)
 class Config:
-    """Rendering and dataset knobs; the defaults make seg-synth-v1."""
+    """Rendering and dataset knobs; the defaults make seg-synth-v1.
+
+    `target_px`, `geometry_px`, `margin_px` and `overlap_px` lay the drawing out
+    and are zoom 1 pixels. The rest are pixels of the image the model sees, so
+    they do not scale with `zoom`, and a part's thin flag can change with it.
+    """
 
     tile: int = 1008
     stride: int = 756  # 252 px overlap between neighbouring tiles
@@ -86,6 +95,8 @@ class Config:
     keep_empty_p: float = 0.35  # share of tiles with ink but no part that are kept as clutter
     max_attempts: int = 40
     overlap_px: int = 2  # tolerated overlap between two parts' masks
+    zoom: float = 1.0  # render resolution multiplier, at least 1
+    drop_empty_masks: bool = False  # drop clipped pieces whose mask has no pixel; off to reproduce v1
 
 
 # ---------------------------------------------------------------- templates
@@ -1246,12 +1257,21 @@ def to_pixels(rings, info) -> list[np.ndarray]:
             for r in rings]
 
 
-def place(image: Image.Image, rings: dict[str, list[np.ndarray]], cfg: Config, rng: random.Random):
+def place(image: Image.Image, rings: dict[str, list[np.ndarray]], cfg: Config, rng: random.Random,
+          base_size: tuple[int, int] | None = None):
     """Pad the render to at least one tile with paper, at a random offset, then
-    rotate it by a small angle; the rings go through the same affine map."""
-    w, h = image.size
-    W, H = max(w, cfg.tile), max(h, cfg.tile)
-    ox, oy = rng.randint(0, W - w), rng.randint(0, H - h)
+    rotate it by a small angle; the rings go through the same affine map.
+
+    `base_size` is the render's size at zoom 1. Offset, rotation and sheet size
+    are worked out there and then scaled, so the random draws and the layout
+    are the zoom 1 ones. Rounding at a fractional zoom can clip a pixel or two
+    of the render's white margin.
+    """
+    z = cfg.zoom
+    w, h = base_size or image.size
+    W1, H1 = max(w, cfg.tile), max(h, cfg.tile)
+    ox, oy = rng.randint(0, W1 - w), rng.randint(0, H1 - h)
+    ox, oy, W, H = round(ox * z), round(oy * z), round(W1 * z), round(H1 * z)
     sheet = Image.new("L", (W, H), 255)
     sheet.paste(image, (ox, oy))
     moved = {pid: [r + (ox, oy) for r in rs] for pid, rs in rings.items()}
@@ -1261,9 +1281,9 @@ def place(image: Image.Image, rings: dict[str, list[np.ndarray]], cfg: Config, r
     a = math.radians(angle)
     c, s = math.cos(a), math.sin(a)
     rot = np.array([[c, -s], [s, c]])
-    corners = (np.array([[0, 0], [W, 0], [0, H], [W, H]], dtype=float) - (W / 2, H / 2)) @ rot.T
-    Wr = int(math.ceil(np.ptp(corners[:, 0])))
-    Hr = int(math.ceil(np.ptp(corners[:, 1])))
+    corners = (np.array([[0, 0], [W1, 0], [0, H1], [W1, H1]], dtype=float) - (W1 / 2, H1 / 2)) @ rot.T
+    Wr = round(int(math.ceil(np.ptp(corners[:, 0]))) * z)
+    Hr = round(int(math.ceil(np.ptp(corners[:, 1]))) * z)
     centre_in, centre_out = np.array([W / 2, H / 2]), np.array([Wr / 2, Hr / 2])
     inv = rot.T  # output -> input: p_in = R^T (p_out - c_out) + c_in
     shift = centre_in - inv @ centre_out
@@ -1276,14 +1296,22 @@ def place(image: Image.Image, rings: dict[str, list[np.ndarray]], cfg: Config, r
 
 def degrade(image: Image.Image, rng: np.random.Generator, cfg: Config):
     """Photometric damage of a scan: ink spread or loss, blur, paper and ink
-    levels, uneven light, noise, specks and JPEG. Geometry is untouched."""
+    levels, uneven light, noise, specks and JPEG. Geometry is untouched.
+
+    A zoomed sheet takes the damage its zoom 1 sheet takes, as the same paper
+    scanned at z x the dpi: blur and specks are z x wider in pixels, and noise
+    and JPEG stay per pixel. Draws are sized by the zoom 1 sheet, which keeps
+    `rng` in step with zoom 1 and the record the same.
+    """
+    z = cfg.zoom
+    base = (round(image.height / z), round(image.width / z))  # the array's shape at zoom 1
     record = {}
     img = image
     if rng.random() < cfg.clean_p:
         record["clean"] = True
     else:
         if rng.random() < 0.3:
-            img = img.filter(ImageFilter.GaussianBlur(float(rng.uniform(0.5, 0.8))))
+            img = img.filter(ImageFilter.GaussianBlur(float(rng.uniform(0.5, 0.8)) * z))
             a = np.asarray(img, dtype=np.float32) / 255.0
             if rng.random() < 0.6:
                 t0 = float(rng.uniform(0.2, 0.45))
@@ -1296,7 +1324,7 @@ def degrade(image: Image.Image, rng: np.random.Generator, cfg: Config):
             img = Image.fromarray((a * 255.0 + 0.5).astype(np.uint8))
         if rng.random() < 0.4:
             sigma = float(rng.uniform(0.3, 1.0))
-            img = img.filter(ImageFilter.GaussianBlur(sigma))
+            img = img.filter(ImageFilter.GaussianBlur(sigma * z))
             record["blur"] = round(sigma, 3)
     a = np.asarray(img, dtype=np.float32) / 255.0
     paper, ink = float(rng.uniform(0.88, 1.0)), float(rng.uniform(0.0, 0.3))
@@ -1312,13 +1340,20 @@ def degrade(image: Image.Image, rng: np.random.Generator, cfg: Config):
             record["light"] = round(g, 3)
         if rng.random() < 0.5:
             sigma = float(rng.uniform(0.01, 0.05))
-            a = a + rng.normal(0.0, sigma, size=a.shape).astype(np.float32)
+            noise = rng.normal(0.0, sigma, size=base)
+            if z != 1.0:  # the draw above kept `rng` in step; the pixels come from a child stream
+                noise = rng.spawn(1)[0].normal(0.0, sigma, size=a.shape)
+            a = a + noise.astype(np.float32)
             record["noise"] = round(sigma, 4)
         if rng.random() < 0.3:
             density = float(rng.uniform(5e-5, 5e-4))
-            count = int(density * a.size)
-            ys, xs = rng.integers(0, a.shape[0], count), rng.integers(0, a.shape[1], count)
-            a[ys, xs] = rng.uniform(0.0, 0.35, count)
+            count = int(density * (base[0] * base[1]))
+            ys, xs = rng.integers(0, base[0], count), rng.integers(0, base[1], count)
+            values = rng.uniform(0.0, 0.35, count)
+            ys, xs = (ys * z).astype(np.int64), (xs * z).astype(np.int64)
+            for dy in range(max(1, round(z))):  # a speck covers the same paper at every zoom
+                for dx in range(max(1, round(z))):
+                    a[np.minimum(ys + dy, a.shape[0] - 1), np.minimum(xs + dx, a.shape[1] - 1)] = values
             record["specks"] = count
     out = Image.fromarray((np.clip(a, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8))
     if not record.get("clean") and rng.random() < 0.4:
@@ -1409,7 +1444,11 @@ def make_drawing(index: int, seed: int, templates, styles, cfg: Config = Config(
     t_draft = time.perf_counter()
     margin = rng.randint(*cfg.margin_px)
     info = dxf_ingest.render_info(doc, dpi=ppu * 25.4, margin_px=margin, max_px=16384)
-    info = dataclasses.replace(info, px_per_mm=d.dpi / 25.4)  # lineweights plot at the scan dpi
+    base_size = (info.width, info.height)
+    if cfg.zoom != 1.0:
+        info = dxf_ingest.render_info(doc, dpi=ppu * 25.4 * cfg.zoom, margin_px=round(margin * cfg.zoom),
+                                      max_px=round(16384 * cfg.zoom))
+    info = dataclasses.replace(info, px_per_mm=d.dpi / 25.4 * cfg.zoom)  # lineweights plot at the scan dpi
     render = dxf_ingest.render_image(doc, info)
     t_render = time.perf_counter()
     k = info.px_per_unit
@@ -1422,7 +1461,7 @@ def make_drawing(index: int, seed: int, templates, styles, cfg: Config = Config(
             delta = (cfg.min_mask_px - g.narrow * k) / 2.0 + 0.01
             px = [np.asarray(offset_ring(r, delta if _is_outer(r, px) else -delta)) for r in px]
         rings[pid] = px
-    clean, rings, placement = place(render, rings, cfg, rng)
+    clean, rings, placement = place(render, rings, cfg, rng, base_size)
     image, damage = degrade(clean, nprng, cfg)
     instances = []
     for pid, part in section.parts.items():
@@ -1446,7 +1485,7 @@ def make_drawing(index: int, seed: int, templates, styles, cfg: Config = Config(
                      "paper_scale": round(n, 3), "target_px": round(d.target_px, 3),
                      "thinnest_px": round(min(widths.values()), 3), "font": d.font,
                      "capped": info.capped, "labels": sorted(words)},
-        "sheet": {"render": list(render.size), "size": list(clean.size), **placement, "margin_px": margin},
+        "sheet": {"render": list(render.size), "size": list(clean.size), **placement, "margin_px": info.margin_px},
         "damage": damage,
         "parts": [{"id": i.part_id, "class_id": i.class_id, "min_width_px": i.min_width_px, "thin": i.thin,
                    "widened": i.widened, "mode": i.mode, "linetype": i.linetype,
@@ -1456,7 +1495,7 @@ def make_drawing(index: int, seed: int, templates, styles, cfg: Config = Config(
         "seconds": {"sample": round(t_sample - started, 4), "draft": round(t_draft - t_sample, 4),
                     "render": round(t_render - t_draft, 4),
                     "total": round(time.perf_counter() - started, 4)},
-    }
+    } | ({"zoom": cfg.zoom} if cfg.zoom != 1.0 else {})
     return Drawing(drawing_id, image, clean, instances, record)
 
 
@@ -1505,9 +1544,10 @@ class Tile:
 
 def tiles(drawing: Drawing, cfg: Config, rng: random.Random) -> list[Tile]:
     """Cut the sheet into overlapping tiles; each instance is clipped to the
-    tile and kept when the piece is at least `cfg.min_remnant_px2`. Tiles with
-    ink but no instance (text, dimensions) are kept as clutter at
-    `cfg.keep_empty_p`; blank tiles are dropped."""
+    tile and kept when the piece is at least `cfg.min_remnant_px2` (and, with
+    `cfg.drop_empty_masks`, fills a pixel). Tiles with ink but no instance (text,
+    dimensions) are kept as clutter at `cfg.keep_empty_p`; blank tiles are
+    dropped."""
     W, H = drawing.image.size
     clean = np.asarray(drawing.clean)
     out = []
@@ -1524,6 +1564,17 @@ def tiles(drawing: Drawing, cfg: Config, rng: random.Random) -> list[Tile]:
                     continue
             out.append(Tile(x0, y0, drawing.image.crop((x0, y0, x1, y1)), anns))
     return out
+
+
+def fills_a_pixel(poly, size: int) -> bool:
+    """True when a polygon, rounded as an annotation stores it, has a pixel in
+    its mask. The scorer's port of pycocotools decides: training and scoring
+    both see that mask, and a mask with no pixel can never be matched. Its
+    upsampling differs from `rasterize` on slivers under a pixel wide."""
+    from training.eval_seg import rle_from_polygon  # only dataset builds need this, and training/ is not app code
+
+    flat = [round(float(c), 2) for p in poly for c in p]
+    return any(rle_from_polygon(flat, size, size)[1::2])
 
 
 def _clip_instance(inst: Instance, x0, y0, x1, y1, cfg: Config) -> dict | None:
@@ -1544,7 +1595,10 @@ def _clip_instance(inst: Instance, x0, y0, x1, y1, cfg: Config) -> dict | None:
         a = abs(ring_area(piece))
         if a < cfg.min_remnant_px2:
             continue
-        polys.append([(px - x0, py - y0) for px, py in piece])
+        poly = [(px - x0, py - y0) for px, py in piece]
+        if cfg.drop_empty_masks and not fills_a_pixel(poly, cfg.tile):
+            continue
+        polys.append(poly)
         area += a
     if not polys:
         return None

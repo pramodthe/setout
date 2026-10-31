@@ -495,7 +495,7 @@ def history_tip(row):
     if not points:
         return ""
     best_i, best_v = max(points, key=lambda p: (p[1], -p[0]))
-    return (f"Validation AP: pass {points[0][0]} {points[0][1]:.3f}, best {best_v:.3f} at pass {best_i}, "
+    return (f"Validation box AP: pass {points[0][0]} {points[0][1]:.3f}, best {best_v:.3f} at pass {best_i}, "
             f"pass {points[-1][0]} {points[-1][1]:.3f}")
 
 
@@ -504,9 +504,9 @@ def class_table(run, manifest, styles):
     if not rows:
         return f"<p>{NOT_RUN}</p>"
     plan = runs.plan_passes(run.progress, run.config, run.train_summary)
-    val_head = f"Validation AP, pass {plan.best_pass}" if plan.best_pass else "Validation AP"
-    head = tr(th("Class"), th("Test parts", "n"), th("Thin share", "n"), th("Test AP", "n"), th("Test AP50", "n"),
-              th(val_head, "n"), th("Validation AP by pass"))
+    val_head = f"Validation box AP, pass {plan.best_pass}" if plan.best_pass else "Validation box AP"
+    head = tr(th("Class"), th("Test parts", "n"), th("Thin share", "n"), th("Test mask AP", "n"), th("Test mask AP50", "n"),
+              th(val_head, "n"), th("Validation box AP by pass"))
     body = []
     blank = "no test parts" if run.metrics else NOT_RUN  # scored, and this class has nothing to score
     for row in rows:
@@ -532,7 +532,7 @@ def class_history_table(run):
         return ""
     head = tr(th("Class"), *[th(i, "n") for i in range(1, len(passes) + 1)])
     rows = [tr(td(esc(name), "name"), *[td(num(runs.class_ap(p, name)), "n") for p in passes]) for name in names]
-    return f"<details><summary>Table of validation AP per class and pass</summary>{table(head, rows)}</details>"
+    return f"<details><summary>Table of validation box AP per class and pass</summary>{table(head, rows)}</details>"
 
 
 def section_classes(models, manifests, styles):
@@ -587,7 +587,17 @@ def confused_table(run):
             f'and score ≥ {conf.get("score_thr", 0.5):.2f}, but under the wrong class.</p>{table(head, rows, "pairs")}')
 
 
-def section_thin(models):
+def zoom_note(run, manifests):
+    """Width rows hold different parts on a dataset rendered at another resolution: say so."""
+    config = (manifests.get(run.dataset) or {}).get("config") or {}
+    if config.get("zoom", 1) == 1:
+        return ""
+    return (f'<p class="note"><code>{esc(run.dataset)}</code> is rendered at {config["zoom"]:g}x. Thin and the width rows '
+            "count pixels of that render, so a part that is thin at 1x can sit in a wider row here. Compare runs on "
+            "different datasets by class, not by these rows.</p>")
+
+
+def section_thin(models, manifests):
     parts = []
     for name, group in models.items():
         before, after = group["before"], group["after"]
@@ -595,7 +605,7 @@ def section_thin(models):
             parts.append(f"<h3>{esc(name)}</h3><p>{NOT_RUN}</p>")
             continue
         thr = (after or before).score_thr
-        parts.append(f'<h3>{esc(name)}</h3><div class="pair">'
+        parts.append(f'<h3>{esc(name)}</h3>{zoom_note(after or before, manifests)}<div class="pair">'
                      f'{thin_table("Recall at IoU 0.5", "recall50", group, thr)}'
                      f'{thin_table("Mean IoU", "mean_iou", group, thr)}</div>'
                      f'{confused_table(after) if after else ""}')
@@ -755,7 +765,7 @@ def render(world, models, manifests, styles, gallery, every):
     registry = {}
     sections = [
         section_now(world), section_curves(world, registry), section_before_after(world, models),
-        section_classes(models, manifests, styles), section_thin(models), section_images(gallery, styles),
+        section_classes(models, manifests, styles), section_thin(models, manifests), section_images(gallery, styles),
         section_limits(world, manifests),
     ]
     refresh = f'<meta http-equiv="refresh" content="{int(every)}">' if live else ""

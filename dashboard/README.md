@@ -76,7 +76,10 @@ and memory on top. The ledger does not hold that, so the all-in figures live in
 No code changes. Put a run under `data/models/<model>/<run_id>/` in the same
 layout, with `"weights": "pretrained"` or `"trained"` in
 `predict_summary_test.json`. Before and after come from `weights`; runs group by
-the `<model>` folder. `runs.MODEL_NAMES` only gives the folder a display name.
+the `<model>` folder, and by dataset once a model has runs on more than one, so
+a stock run is never set against a trained run on another dataset. The images use
+the test split of the newest scored run's dataset. `runs.MODEL_NAMES` only gives
+the folder a display name.
 `runs.PLANNED_MODELS` lists models that show as "not run yet" before they have
 run.
 

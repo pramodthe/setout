@@ -20,6 +20,7 @@ from typing import Any
 
 import sqlalchemy as sa
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -116,7 +117,9 @@ async def upload_document(file: UploadFile = File(...)) -> dict:
         raise HTTPException(400, "not a PDF (magic check failed)")
     if len(data) > 50 * 1024 * 1024:
         raise HTTPException(400, "PDF larger than 50 MB")
-    return _with_detail_ids(store_pdf(file.filename or "upload.pdf", data))
+    # Off the event loop: rendering a sheet set takes long enough to stall every
+    # other request and job stream.
+    return _with_detail_ids(await run_in_threadpool(store_pdf, file.filename or "upload.pdf", data))
 
 
 def _with_detail_ids(doc: dict) -> dict:

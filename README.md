@@ -44,7 +44,7 @@ Meta Global AI Developer Hackathon 2026 · Indie Developer Track · Build for Yo
 | **Library** (`/`) | Browse details **by situation** (sector › area › element, e.g. Residential › Internal · Bathroom › Floor + walls) or **by component / product** (every detail where a membrane, waterstop, floor waste… is installed). Cards show the source drawing, part count, drawing values and whether the detail is a human transcription or AI-generated. |
 | **Detail page** (`#/d/<id>`) | Full-screen 3D: studio lighting, procedurally generated materials, a stepped cutaway that reveals each layer, drawing-label tags on every part, parts in install order, evidence per part (value, source, exact quote), and view / solo / explode / cut / install-step controls. |
 | **AI installation guide** | A sidebar chat. Ask *"walk me through the install"* and the guide answers as a narrated tour that **drives the 3D**: it flies the camera to parts, isolates them, steps the install sequence, explodes and cuts. Every number it speaks is checked against the detail. |
-| **Add from PDF** (`#/workbench`) | Upload any installation PDF. Embedded drawings are extracted. Pick one and press **Generate 3D with AI**: the model reads it, writes a detail program, code checks it, and the 3D is built and verified. An automatic **self-check** then compares a render with the drawing and corrects it. |
+| **Add from PDF** (`#/workbench`) | Upload any installation PDF. Embedded drawings are extracted, and pages drawn in vector (CAD exports) are rendered at 300 dpi. Pick one and press **Generate 3D with AI**: the model reads it, writes a detail program, code checks it, and the 3D is built and verified. An automatic **self-check** then compares a render with the drawing and corrects it. |
 | **Review and publish** | Before an AI-generated detail is trusted, an expert reviews it: values printed on the drawing are listed first, each with its exact quote and the parts it drives (click to isolate them in 3D). Accept a value, fix it (every dimension computed from it moves too), set labels only to text printed on the drawing, then publish as *reviewed by <name>*. |
 | **Drawing ↔ 3D link (SAM 3.1)** | The source drawing sits in a panel beside the 3D, turned upright. SAM 3.1 finds each part on it; click a box on the drawing to fly to that part, or select a part to light up its box. |
 | **Model with AI (CadQuery)** | For a part the shape grammar can't express (a perforated grate, a mixer), the model writes CadQuery code that runs in an isolated, no-network sandbox. The result is labelled illustrative. |
@@ -113,7 +113,7 @@ flowchart LR
 
   subgraph Server["FastAPI server — app/"]
     API["REST API<br/>main.py"]
-    STORE["Document store<br/>store.py (pypdf + Pillow)"]
+    STORE["Document store<br/>store.py (pypdf, Pillow, PDFium)"]
     GEN["AI pipeline<br/>generate.py"]
     PROG["Detail grammar + compiler<br/>program.py"]
     GEO["Geometry generators<br/>geometry.py"]
@@ -143,8 +143,8 @@ flowchart LR
 |---|---|---|
 | Frontend | React 19, TypeScript 7 (strict), Vite 8, Three.js 0.149 | Hash-routed SPA: library, detail page, guide, workbench. Three.js viewer with `OrbitControls`, `RoomEnvironment` image-based lighting, PCF soft shadows, `CSS2DRenderer` labels. |
 | Backend | Python, FastAPI 0.162, Pydantic 2.14, Uvicorn | REST API, background jobs (threads), compiler, mesh generators, verification, glTF export — all pure Python (no geometry kernel needed locally). |
-| Storage | SQLite + files under `SETOUT_VAR` | Uploaded PDFs and extracted figures, build artifacts, the AI-generated library. Gitignored. |
-| PDF handling | pypdf 6, Pillow 13 | Extracts embedded drawing images losslessly; re-encodes JPEG 2000 figures as PNG (browsers and the model API can't read JP2). |
+| Storage | SQLite + files under `SETOUT_VAR` | Uploaded PDFs and their figures, build artifacts, the AI-generated library. Gitignored. |
+| PDF handling | pypdf 6, Pillow 13, pypdfium2 5 | Extracts embedded drawing images losslessly; re-encodes JPEG 2000 figures as PNG (browsers and the model API can't read JP2). Renders pages drawn in vector with PDFium (BSD-3 / Apache-2.0), since a CAD export holds no image to extract. |
 | AI | Meta Model API — Muse (`muse-spark-1.3` by default) and SAM 3.1 | Muse reads drawings, writes detail programs, critiques renders, writes CadQuery and guides users; SAM locates parts on the drawing. |
 | Sandbox | Modal Sandboxes + CadQuery 2.8 (OpenCascade) | Executes model-written CAD code in isolation, with networking blocked. |
 | Testing | pytest, Vitest, Playwright | 96 backend tests (no network), 13 frontend tests, a headless browser acceptance pass. |
@@ -164,7 +164,7 @@ sequenceDiagram
   participant C as Code gates + compiler
   participant X as Modal sandbox
   U->>S: POST /api/documents (PDF)
-  S-->>U: embedded drawings (sha256, crops)
+  S-->>U: drawings (sha256, crops)
   U->>S: POST /api/generate {doc, crop}
   S->>M: READ: image → labels verbatim, printed dimensions, drawing type
   M-->>S: read JSON (strict schema)
@@ -190,8 +190,11 @@ sequenceDiagram
 **Step by step**
 
 1. **Upload.** `store.py` checksums the PDF (sha256), extracts every embedded figure
-   ≥ 200 × 200 px losslessly, and records page sizes. Nothing is rasterised or
-   altered except JPEG 2000 → PNG.
+   ≥ 200 × 200 px losslessly, and records page sizes. A page drawn in vector holds no
+   image to extract, so it is rendered instead, at 300 dpi or the highest resolution
+   that fits 36 MP. Every figure records which it is (`kind`) and any render resolution
+   (`dpi`). Blank pages and pages of plain text give no figure. A rendered page beats
+   a logo: an image under 3% of a page of line work never stands in for the drawing.
 2. **Read pass.** Muse receives the drawing image and returns, under a strict JSON
    schema: drawing type (section / isometric room / plan …), rotation, every label
    copied verbatim, and every printed dimension with its exact printed words.
@@ -335,8 +338,8 @@ Modal secret holding the API key.
 
 ### 5.6 Other libraries
 
-FastAPI and Pydantic (API and schemas), pypdf and Pillow (PDF figures), SQLite
-(job and document records), Playwright with system Chrome (acceptance test),
+FastAPI and Pydantic (API and schemas), pypdf, Pillow and PDFium via pypdfium2
+(PDF figures), SQLite (job and document records), Playwright with system Chrome (acceptance test),
 oxlint (frontend lint). Versions are pinned in `requirements.txt` and
 `web/package-lock.json`.
 
@@ -372,7 +375,7 @@ A wrong dimension in a construction tool is worse than a missing one. So:
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/api/documents` | Upload a PDF (≤ 50 MB). Returns id, sha256, extracted figures. |
+| `POST` | `/api/documents` | Upload a PDF (≤ 50 MB). Returns id, sha256, figures (each with `kind`, extracted image or rendered page, and `dpi`) and any render `warnings`. |
 | `GET` | `/api/documents/{doc_id}` | Document metadata and figures. |
 | `GET` | `/api/documents/{doc_id}/figures/{crop_id}` | One extracted drawing image. |
 | `GET` | `/api/library` | All details with situation, counts and components, plus the component index. |
@@ -443,7 +446,7 @@ app/                     FastAPI backend
   verify.py              verification checks and report
   spec.py                canonical DetailSpec v1 (Pydantic)
   seed.py                two human-transcribed door-sill details
-  store.py               PDF store and figure extraction
+  store.py               PDF store; figures extracted or rendered
 web/                     React + TypeScript frontend (Vite)
   src/Library.tsx        library front page
   src/DetailView.tsx     detail page

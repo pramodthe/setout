@@ -27,6 +27,34 @@ ontology `class_id`s. Each annotation carries `attributes: {thin, min_width_px,
 part_id}`; `thin` means narrower than 6 px in the tile, decided from geometry,
 never from names. The masks are the parts' filled cut regions.
 
+### Zoom
+
+`tools/make_seg_dataset.py --zoom 2` renders the same drawings at a higher
+resolution: the same paper at z x the dpi, so ink, hatches, text and blur all
+scale. Every random draw stays the zoom 1 draw. With the same `--seed` and
+`--drawings`, a drawing keeps its template, values, damage and layout, and its
+sheet is the zoom 1 sheet with every coordinate multiplied by z. Noise and JPEG
+stay per pixel. `--drawings` must stay the same, because it fixes the splits;
+to make fewer drawings use `--max-train-drawings` and `--max-valid-drawings`,
+which skip drawings and never move one.
+
+Tiles stay 1008 px, so each shows less of the drawing. Widths, `thin` and the
+scorer's width buckets count pixels of the render, so a 3 px part at zoom 1 is
+a 6 px "compact" part at zoom 2. Never compare two zooms by those buckets alone.
+
+A zoomed dataset also drops clipped pieces whose mask has no pixel
+(`--drop-empty-masks`): `seg-synth-v1` has 9 of them, which no model can match.
+The mask is the one the scorer and training see, the pycocotools rasterisation
+of the stored polygon. Only a zoom 1 run without that flag reproduces v1's
+bytes, and `tests/test_synthetic.py` pins that.
+
+What zoom 2 did, on the same 100 test drawings: tiles grew 2.7x, not 4x, because
+more zoomed tiles are blank. On the same real parts, AP on thin parts rose from
+0.25 to 0.36 and their outlines gained about 0.09 IoU on a common pixel grid, but
+the gain sat in masks scoring under 0.5, so recall at that threshold stayed at
+0.71. Results follow a part's width in rendered pixels, not on paper: parts still
+under 4 px after zoom gained nothing, and the gain was clearest from 8 px.
+
 ## Scoring: `eval_seg.py`
 
 ```sh
@@ -159,8 +187,8 @@ The settings below are from rfdetr 1.11.2, read from its source.
 ### GPUs and budget
 
 GPUs are chosen by cost per job, the owner's rule. Training defaults to an
-L40S (48 GB, about 45 GiB usable; batch 8 at 1008 px peaked at 37.0 GiB on the
-B200 run) and prediction to an A10. `--gpu` and `--predict-gpu` override them;
+L40S (44.4 GiB usable; batch 8 at 1008 px peaked at 36.0 GiB there) and
+prediction to an A10. `--gpu` and `--predict-gpu` override them;
 H100 and B200 are for when someone asks. If an L40S runs out of memory, use
 `--batch-size 4 --grad-accum 4`, the same effective batch.
 
@@ -174,7 +202,23 @@ H100 and B200 are for when someone asks. If an L40S runs out of memory, use
 | L4 | 0.000222 |
 
 Modal list prices, 30 Oct 2026, in `GPU_PRICE_PER_S`. CPU and memory are billed
-on top: they added 20% to the B200 run.
+on top and by time, not as a share of the GPU: the training request (16 CPUs,
+64 GiB) costs $1.27 an hour on any GPU. That is 20% on a B200 and 65% on an L40S,
+so compare GPUs all-in. Measured, for the same work (5,890 training and 779
+validation tiles, one `seg-synth-v1` pass):
+
+| | B200 | L40S |
+|---|---|---|
+| Training | 21.4 tiles/s | 7.1 tiles/s |
+| Validation | 5.1 tiles/s | 4.7 tiles/s |
+| One pass | 428 s | 998 s |
+| GPU only | $0.74 | $0.54 |
+| All-in | $0.89 | $0.89 |
+
+Validation is mostly CPU, so a faster GPU barely helps it, and the less often a
+job validates, the better a fast GPU does all-in. An L40S started within seconds
+both times it was asked; three of four B200 requests got no machine, after
+waits of up to 37 minutes.
 
 The experiment's limit is 3 B200-hours at list price, $18.75, unless the
 coordinator agrees more. Every GPU call is logged in

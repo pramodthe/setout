@@ -4,7 +4,7 @@ import type { JSX } from "react";
 type Job = {
   id: string; state: string; run_id: string; version_id: string | null;
   detail_id: string | null; progress: string[];
-  result?: { open_issues?: string[]; states?: Record<string, number>; continued_by?: string };
+  result?: { open_issues?: string[]; states?: Record<string, number>; continued_by?: string; stop_reason?: string };
   error?: { message?: string };
 };
 /* Compact trace rows from GET /api/runs/{id}/steps (see v3_api.step_summary). */
@@ -98,6 +98,8 @@ export default function JobPanel({ jobId, onSettled }: { jobId: string; onSettle
     {job?.error?.message && (["queued", "running"].includes(job.state)
       ? <p>Resumed after an interruption ({job.error.message}).</p>
       : <p role="alert">{job.error.message}</p>)}
+    {job?.result?.stop_reason && job.result.stop_reason !== "finished" &&
+      <p>Stopped: {job.result.stop_reason.replaceAll("_", " ")}</p>}
     {job?.result?.open_issues?.map(issue => <p key={issue}>{issue}</p>)}
     {job?.result?.states && <p>{Object.entries(job.result.states).map(([state, count]) => `${count} ${state.replaceAll("_", " ")}`).join(" · ")}</p>}
     {job?.version_id && job.detail_id && <a href={`#/d/${encodeURIComponent(job.detail_id)}`}>Open detail</a>}

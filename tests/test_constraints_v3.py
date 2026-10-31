@@ -213,23 +213,21 @@ def test_sloped_interfaces_measure_contact_and_coverage_without_bounding_box_sho
 
 def test_cad_support_uses_the_measured_foot_face_not_the_overhanging_body():
     from app.geometry import _box_tris
-    from app.interfaces import measure_interface,matches_brep_planes
+    from app.interfaces import measure_interface
     body,floor = Mesh("fixture"),Mesh("floor")
     _box_tris(body,0,0,0,100,20,100)
     _box_tris(body,10,20,10,90,30,90)
     _box_tris(body,-50,30,-50,150,50,150)
     _box_tris(floor,-500,-20,-500,500,0,500)
-    planes = [([0,1,0],[50,0,50])]
-    assert matches_brep_planes(body,1,"min",planes,extremal=True)
-    measured = measure_interface(body,floor,1,"min","max",False,source_extremal=True)
-    assert measured == {"coverage":1,"min_gap":0,"max_gap":0}
+    measured = measure_interface(body,floor,1,"min","max",False,source_level=0)
+    assert (measured["coverage"], measured["min_gap"], measured["max_gap"]) == (1, 0, 0)
     body.positions = [value+5 if i%3 == 1 else value for i,value in enumerate(body.positions)]
-    assert measure_interface(body,floor,1,"min","max",False,source_extremal=True)["min_gap"] == pytest.approx(5)
+    assert measure_interface(body,floor,1,"min","max",False,source_level=5)["min_gap"] == pytest.approx(5)
 
 
 def test_countertop_support_uses_cad_top_rim_without_internal_faces():
     from app.geometry import _box_tris
-    from app.interfaces import measure_interface, matches_brep_planes
+    from app.interfaces import measure_interface
     cabinet,counter = Mesh("cabinet"),Mesh("counter")
     # Dense recessed body faces must not enter the top contact or its coverage.
     for i in range(100):
@@ -237,11 +235,11 @@ def test_countertop_support_uses_cad_top_rim_without_internal_faces():
     _box_tris(cabinet,0,100,0,10,120,100)
     _box_tris(cabinet,90,100,0,100,120,100)
     _box_tris(counter,0,120,0,100,130,100)
-    assert matches_brep_planes(cabinet,1,"max",[([0,1,0],[0,120,0])],extremal=True)
-    measured = measure_interface(counter,cabinet,1,"min","max",False,target_extremal=True)
-    assert measured == {"coverage":pytest.approx(.2),"min_gap":0,"max_gap":0}
+    measured = measure_interface(counter,cabinet,1,"min","max",False,target_level=120)
+    assert (measured["coverage"], measured["min_gap"], measured["max_gap"]) == (pytest.approx(.2), 0, 0)
+    assert measured["contact"] == 1  # the rim is the smaller face, and all of it bears
     counter.positions = [v+5 if i%3 == 1 else v for i,v in enumerate(counter.positions)]
-    assert measure_interface(counter,cabinet,1,"min","max",False,target_extremal=True)["max_gap"] == pytest.approx(5)
+    assert measure_interface(counter,cabinet,1,"min","max",False,target_level=120)["max_gap"] == pytest.approx(5)
 
 
 def test_identifier_normalization_preserves_expression_and_relation_references(source_repo):
@@ -458,20 +456,41 @@ def test_slot_checks_follow_the_contract():
     program.parts[2].class_id = class_id
     checks = {c["id"]: c for c in slot_checks(program)}
     assert checks["class-role:tile"]["status"] == "FAIL" and checks["class-role:tile"]["class_role"] == ont.component(class_id).role
+    # A role the READ set is not the author's to change: the class's disagreement
+    # is named and left to a reviewer. The same part without a label still FAILs.
+    read = {"elements": [{"label_verbatim": "TILE", "category": "layer"}]}
+    program.parts[2].class_id = next(i for i in ont.component_ids() if ont.component(i).role == "object")
+    assert {c["id"]: c for c in slot_checks(program, read)}["class-role:tile"]["status"] == "FAIL"  # unlabelled
+    program.parts[2].label = "TILE"
+    disagreement = {c["id"]: c for c in slot_checks(program, read)}["class-role:tile"]
+    assert disagreement["status"] == "UNVERIFIED" and not disagreement["required"]
+    assert "'TILE'" in disagreement["reason"] and "layer" in disagreement["reason"] and "'object'" in disagreement["reason"]
+    assert {c["id"]: c for c in slot_checks(program)}["class-role:tile"]["status"] == "FAIL"  # no reading to defer to
 
 
-@pytest.mark.parametrize("kind", ["hosted_in", "fixed_to", "abuts", "repeated_along"])
-def test_world_model_relation_kinds_are_reported_not_measured(kind):
+@pytest.mark.parametrize("kind", ["hosted_in", "fixed_to", "abuts"])
+def test_a_relation_of_a_world_model_kind_is_measured_so_it_is_no_way_out(kind):
+    """Three parts stacked: the tile does not touch the membrane, whatever it is called."""
     from app.native_program import NativeRelation
-    from app.verification_probes import layer_order_probes
     native = _layer_program()
     native.relations.append(NativeRelation(source="tile", target="membrane", kind=kind, constraints=dict(
         native.relations[0].constraints)))
     meshes = {"membrane": _solid("membrane", 0, 1.5), "adhesive": _solid("adhesive", 1.5, 6.5), "tile": _solid("tile", 6.5, 16.5)}
     checks = {c["id"]: c for c in spatial_checks(native, meshes)}
-    unmeasured = checks[f"assembly-2-{kind}"]
-    assert unmeasured["status"] == "UNVERIFIED" and not unmeasured["required"] and kind in unmeasured["reason"]
+    assert checks[f"assembly-2-{kind}"]["status"] == "FAIL" and checks[f"assembly-2-{kind}"]["reason"]
     assert all(c["status"] == "PASS" for i, c in checks.items() if i != f"assembly-2-{kind}")
+
+
+def test_a_repeat_cannot_be_measured_so_it_stays_open_and_blocks():
+    from app.native_program import NativeRelation
+    from app.verification_probes import layer_order_probes
+    native = _layer_program()
+    native.relations.append(NativeRelation(source="tile", target="membrane", kind="repeated_along", constraints=dict(
+        native.relations[0].constraints)))
+    meshes = {"membrane": _solid("membrane", 0, 1.5), "adhesive": _solid("adhesive", 1.5, 6.5), "tile": _solid("tile", 6.5, 16.5)}
+    checks = {c["id"]: c for c in spatial_checks(native, meshes)}
+    open_check = checks["assembly-2-repeated_along"]
+    assert open_check["status"] == "UNVERIFIED" and open_check["required"] and "repeated_along" in open_check["reason"]
     assert {p["id"] for p in layer_order_probes(native, meshes)} == {"layer-order:membrane:adhesive", "layer-order:adhesive:tile"}
 
 

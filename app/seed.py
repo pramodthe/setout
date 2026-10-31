@@ -339,7 +339,7 @@ def door_sill_d3() -> DetailSpec:
             "contact_checks": [
                 ["packer", "membrane", "packer beds on membrane"],
                 ["frame", "packer", "frame beds on packer"],
-                ["fillet", "membrane", "fillet bonds to membrane"],
+                ["fillet", "slip_sheet", "fillet bears on slip sheet"],
                 ["screed", "slip_sheet", "screed covers slip sheet"],
             ],
             "note": "Conpro sheet is a reference drawing, not proof of any "
