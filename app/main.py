@@ -602,6 +602,26 @@ class GenerateRequest(BaseModel):
     crop_id: str
 
 
+@app.post("/api/section-drafts")
+async def start_section_draft(req: GenerateRequest) -> dict:
+    """A section to a local 3D assembly: shapes from the drawing, kinds from one model call."""
+    from . import section_draft
+    if not meta_client.configured():
+        raise HTTPException(503, "AI not configured")
+    if figure_path(req.doc_id, req.crop_id) is None:
+        raise HTTPException(404, "unknown figure")
+    return section_draft.start(req.doc_id, req.crop_id)
+
+
+@app.get("/api/section-drafts/{ident}")
+async def get_section_draft(ident: str) -> dict:
+    from . import section_draft
+    found = section_draft.get(ident)
+    if found is None:
+        raise HTTPException(404, "unknown draft")
+    return found
+
+
 @app.get("/api/ai/status")
 async def ai_status() -> dict:
     return {"configured": meta_client.configured(),

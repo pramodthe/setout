@@ -40,7 +40,7 @@ def main():
             more.write_text(json.dumps(answer, indent=1))
         tokens += labelled["usage"].get("total_tokens", 0) + answer["usage"].get("total_tokens", 0)
         marked = {r["id"]: r for r in labelled["regions"]}
-        built = compose.build(regions, marked, size) + hidden.build(answer["groups"], regions, size, compose.DEPTH_SHARE)
+        built = [piece for piece, _ in hidden.assemble(regions, marked, answer["groups"], size, compose.DEPTH_SHARE)]
         reference = judge.load(name)
         score = judge.score(built, reference)
         rows.append({"name": name, "built": len(built), "real": len(reference), "regions": len(regions), "assembly": labelled["assembly"][:80], "score": score})

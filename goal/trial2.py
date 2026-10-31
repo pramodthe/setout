@@ -39,7 +39,7 @@ def main():
         shares = {"default": compose.DEPTH_SHARE, "given": run / drawn}
         row = {"name": name, "groups": len(answer["groups"]), "tokens": answer["usage"].get("total_tokens"), "real": len(reference)}
         for kind, share in shares.items():
-            built = compose.build(regions, marked, size, share) + hidden.build(answer["groups"], regions, size, share)
+            built = [piece for piece, _ in hidden.assemble(regions, marked, answer["groups"], size, share)]
             row[kind] = judge.score(built, reference)
             row[kind + "_built"] = len(built)
         rows.append(row)

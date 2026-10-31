@@ -15,6 +15,7 @@ from .labels import overlay
 
 SHAPES = ("unit", "plate", "bar", "rod", "cube")
 MOST = 600  # pieces from one group
+PIECES_PER_REGION = 13.9
 SCHEMA = {"type": "object", "additionalProperties": False, "required": ["groups"], "properties": {
     "groups": {"type": "array", "items": {"type": "object", "additionalProperties": False,
                "required": ["family", "what", "shape", "near_region", "columns", "rows", "across", "up", "along"], "properties": {
@@ -49,6 +50,26 @@ def ask(picture, regions, size, labelled) -> tuple[dict, dict]:
     text = "".join(part.get("text", "") for item in result["output"] if item.get("type") == "message"
                    for part in item.get("content", []))
     return json.loads(text), result.get("usage") or {}
+
+
+def calibrated(groups, regions, seen) -> list[dict]:
+    """Groups scaled down if they would pass what real assemblies hold for a section this size:
+    across 17 training models, the middle half run 5.6 to 13.9 pieces per piece cut. An untrained
+    model lists far too many on a small detail. It is only ever a ceiling."""
+    wanted = sum(g["columns"] * g["rows"] for g in groups)
+    room = max(PIECES_PER_REGION * len(regions) - seen, len(groups))
+    if wanted <= room:
+        return groups
+    share = (room / wanted) ** 0.5  # each group shrinks both ways, keeping its shape
+    return [{**g, "columns": max(1, round(g["columns"] * share)), "rows": max(1, round(g["rows"] * share))} for g in groups]
+
+
+def assemble(regions, marked, groups, size, depth_share) -> list[tuple[dict, str]]:
+    """Every piece, each with where it came from: `section` if the slice shows it, `hidden` if not."""
+    from . import compose
+    shown = compose.build(regions, marked, size, depth_share)
+    unseen = build(calibrated(groups, regions, len(shown)), regions, size, depth_share)
+    return [(p, "section") for p in shown] + [(p, "hidden") for p in unseen]
 
 
 def _piece(group, x, y, z, sizes) -> np.ndarray:
