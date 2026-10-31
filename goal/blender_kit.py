@@ -1,4 +1,5 @@
-"""Parametric building components for headless Blender: our own geometry, built from sizes in mm.
+"""Generic shapes for headless Blender, built from sizes in mm. Only shapes, never components: every
+real part, a door, a wall, a fixing, is written by the model. That is the owner's rule.
 
 Across, up and along are y, z and x: a section lies in the y-z plane and runs along x. Every part joins
 a group, and the groups are what an exploded view pulls apart.
@@ -13,8 +14,7 @@ from pathlib import Path
 import bpy
 from mathutils import Vector
 
-__all__ = ["start", "materials", "prism", "box", "sheet", "lathe", "rod", "screw", "brick_wall", "tiles", "PARTS", "tally", "finish",
-           "packers_along", "fixings_along", "seal_joint", "sliding_door", "cavity_wall", "weep_vents", "floor_finish", "lintel", "export_parts"]
+__all__ = ["start", "materials", "prism", "box", "sheet", "lathe", "rod", "PARTS", "tally", "finish", "export_parts"]
 
 MM = 0.001
 OUT = Path(os.environ.get("SETOUT_OUT", "."))
@@ -109,145 +109,6 @@ def lathe(name, profile, origin, direction, material, group, sides=20, smooth=Tr
 def rod(name, a, b, radius, material, group, sides=16):
     a, b = Vector(a), Vector(b)
     return lathe(name, [(radius, 0), (radius, (b - a).length)], a, b - a, material, group, sides)
-
-
-def screw(name, head, tip, radius, material, group):
-    """A threaded screw: a countersunk head, then real ridges down the shank to a point."""
-    start_, stop = Vector(head), Vector(tip)
-    length = (stop - start_).length
-    pitch = radius * 0.9
-    profile = [(0.01, 0), (radius * 2.0, 0), (radius * 2.0, radius * 0.5), (radius, radius * 1.8)]
-    along = radius * 1.8
-    while along < length - radius * 3:
-        profile += [(radius * 0.75, along + pitch * 0.5), (radius * 1.15, along + pitch)]
-        along += pitch
-    profile += [(radius * 0.7, length - radius * 2), (0.05, length)]
-    return lathe(name, profile, start_, stop - start_, material, group, 14, smooth=False)
-
-
-def brick_wall(name, x0, x1, y0, y1, z0, z1, material, joint_material, group, length=230, course=76, joint=10):
-    """A leaf in running bond: each brick and each joint a part of its own, as they are built."""
-    made, z, row = 0, z0, 0
-    while z < z1:
-        top = min(z + course, z1)
-        x = x0 - (length + joint) / 2 * (row % 2)
-        while x < x1:
-            a, b = max(x, x0), min(x + length, x1)
-            if b > a:
-                box(f"{name}_brick", (a, y0, z), (b, y1, top), material, group)
-                made += 1
-                if b + joint <= x1:
-                    box(f"{name}_head_joint", (b, y0 + 3, z), (b + joint, y1 - 3, top), joint_material, group)
-            x += length + joint
-        if top + joint < z1:
-            box(f"{name}_bed_joint", (x0, y0 + 3, top), (x1, y1 - 3, top + joint), joint_material, group)
-        z = top + joint
-        row += 1
-    return made
-
-
-def tiles(name, x0, x1, y0, y1, z0, z1, size, joint, material, group):
-    y = y0
-    while y < y1 - 1:
-        x = x0
-        while x < x1 - 1:
-            box(name, (x, y, z0), (min(x + size, x1), min(y + size, y1), z1), material, group)
-            x += size + joint
-        y += size + joint
-
-
-def packers_along(x0, x1, y0, y1, z0, z1, spacing=400, length=90, group="packers"):
-    """Separate packers under something, recurring along the run."""
-    x = x0 + spacing * 0.3
-    while x < x1 - length / 2:
-        box("packer", (x - length / 2, y0, z0), (x + length / 2, y1, z1), "packer", group)
-        x += spacing
-
-
-def fixings_along(x0, x1, y, head_z, tip_z, spacing=600, radius=3.0, sealed=True, group="fix"):
-    """Screws recurring along the run, driven from head_z down to tip_z, each head under a dome of
-    sealant when it pierces a membrane."""
-    x = x0 + spacing / 3
-    while x < x1:
-        screw("screw", (x, y, head_z), (x, y, tip_z), radius, "steel", group)
-        if sealed:
-            lathe("oversealing", [(radius * 4.6, 0), (radius * 4.2, 4), (radius * 3, 8), (radius * 1.3, 10.5), (0.05, 11)], (x, y, head_z - 2), (0, 0, 1), "sealant", group)
-        x += spacing
-
-
-def seal_joint(x0, x1, y0, y1, z, group="seals"):
-    """A sealed joint between two faces, y0 to y1, along the run: a backing rod with silicone over it."""
-    width = abs(y1 - y0)
-    middle = (y0 + y1) / 2
-    rod("backing_rod", (x0, middle, z - width * 0.95), (x1, middle, z - width * 0.95), width * 0.55, "backing", group)
-    prism("silicone_seal", [(min(y0, y1), z - width * 0.45), (max(y0, y1), z - width * 0.45), (max(y0, y1), z + width * 0.25), (min(y0, y1), z + width * 0.5)], x0, x1, "silicone", group)
-
-
-def _panel(name, x0, x1, y0, y1, z0, z1, group):
-    stile, rail = 58, 76
-    box(f"{name}_rail", (x0, y0, z0), (x1, y1, z0 + rail), "frame", group)
-    box(f"{name}_rail", (x0, y0, z1 - 62), (x1, y1, z1), "frame", group)
-    box(f"{name}_stile", (x1 - stile, y0, z0 + rail), (x1, y1, z1 - 62), "frame", group)
-    middle = (y0 + y1) / 2
-    box(f"{name}_glass", (x0, middle - 11, z0 + rail - 8), (x1 - stile + 8, middle + 11, z1 - 54), "glass", group)
-    for x in (x1 - 150, max(x0 + 150, x1 - 760)):
-        lathe(f"{name}_roller", [(0.05, -6), (16, -6), (17, -3), (17, 3), (16, 6), (0.05, 6)], (x, middle, z0 - 12), (0, 1, 0), "rubber", group)
-
-
-def sliding_door(x0, x1, y0, y1, z0, top, group="door"):
-    """A whole sliding door or window frame in a real extrusion: its sill with feet and two tracks, from
-    x0 to the jamb at x1, then the jamb, the head and two glazed panels in their tracks. y0 to y1 is the
-    frame's depth across the section, z0 the underside of the sill's feet, top the top of the frame."""
-    s = (y1 - y0) / 152
-    Y = lambda v: y0 + v * s  # noqa: E731
-    Z = lambda v: z0 + v * s  # noqa: E731
-    outline = [(0, 0), (32, 0), (32, 8), (20, 8), (20, 26), (58, 26), (58, 62), (64, 62), (64, 26), (100, 26), (100, 62), (106, 62), (106, 26), (142, 26),
-               (142, 8), (130, 8), (130, 0), (152, 0), (152, 80), (146, 80), (146, 32), (14, 32), (14, 14), (0, 14)]
-    prism("sill", [(Y(a), Z(b)) for a, b in outline], x0, x1 - 10, "frame", group)
-    box("jamb", (x1 - 10, y0, z0), (x1, y1, top), "frame", group)
-    for a in (58, 100):
-        box("jamb_web", (x1 - 44, Y(a), Z(62)), (x1 - 10, Y(a + 6), top - 80), "frame", group)
-    head = [(0, 0), (152, 0), (152, -96), (146, -96), (146, -8), (106, -8), (106, -114), (100, -114), (100, -8), (64, -8), (64, -114), (58, -114), (58, -8),
-            (6, -8), (6, -96), (0, -96)]
-    prism("head", [(Y(a), top + b) for a, b in head], x0, x1, "frame", group)
-    _panel("fixed_panel", x0, x1 - 12, Y(68), Y(96), Z(40), top - 106, group + "_panels")
-    _panel("sliding_panel", x0, x1 - 12, Y(26), Y(54), Z(40), top - 106, group + "_panels")
-
-
-def weep_vents(x0, x1, y0, y1, z, spacing=800, group="vents"):
-    """Vents through the bottom course of an outer leaf, recurring along the run."""
-    x = x0 + spacing / 2
-    while x < x1:
-        box("weep_vent", (x - 5, y0, z), (x + 5, y1, z + 62), "packer", group)
-        x += spacing
-
-
-def cavity_wall(x0, x1, y_out, y_in, z0, z1, group="wall"):
-    """A cavity wall from x0 to x1: an outer and an inner brick leaf in running bond, with a clear cavity
-    between them and wall ties crossing it every few courses. y_out and y_in are its two faces."""
-    leaf = 110
-    sign = 1 if y_in > y_out else -1
-    a0, a1, b0, b1 = sorted((y_out, y_out + sign * leaf)) + sorted((y_in - sign * leaf, y_in))
-    brick_wall("outer_leaf", x0, x1, a0, a1, z0, z1, "brick", "mortar", group)
-    brick_wall("inner_leaf", x0, x1, b0, b1, z0, z1, "brick", "mortar", group)
-    z = z0 + 4 * 86 + 81
-    while z < z1:
-        x = x0 + 225
-        while x < x1:
-            rod("wall_tie", (x, y_out + sign * 50, z), (x, y_in - sign * 50, z), 2.2, "steel", group)
-            x += 450
-        z += 5 * 86
-
-
-def lintel(x0, x1, y0, y1, z, height=75, thickness=6, group="wall"):
-    """A steel angle over an opening: one leg under the leaf, one rising behind it."""
-    sheet("lintel", [(y0, z), (y1, z), (y1, z + height)], thickness, x0, x1, "steel", group)
-
-
-def floor_finish(x0, x1, y0, y1, top, name="floor", tile=300, bed=40, group="finish"):
-    """A floor build-up finishing at height top: a bed, then real tiles with joints."""
-    box(f"{name}_bed", (x0, y0, top - 12 - bed), (x1, y1, top - 12), "bed", group)
-    tiles(f"{name}_tile", x0, x1, y0, y1, top - 12, top, tile, 4, "tile", group)
 
 
 def _material(name, base, roughness=0.6, metallic=0.0, noise=0.0, bump=0.0, scale=60.0, vary=0.0, transmission=0.0, ior=1.45):
