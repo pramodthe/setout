@@ -92,6 +92,8 @@ need a Modal login (`modal token new`).
   `eval/v3_smoke.py`: live evaluations and probes (they spend API credits)
 - `app/dxf_ingest.py`, `app/section_cut.py`, `app/synthetic.py`, `synthetic/`,
   `tools/`: DXF reading, section drawings, synthetic training data
+- `annotation/`: real drawings to a labelled dataset: regions and proposed names
+  from a DXF, a local review page, export split by project
 - `training/`: Modal training jobs and the segmentation scorer (they spend GPU
   money); `dashboard/`: builds the local results page into `data/dashboard/`
 - `scripts/demo_drawing.py`: draws our own test drawings into `data/demo/`
