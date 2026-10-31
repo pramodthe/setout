@@ -51,6 +51,8 @@ def test_the_key_is_stored_and_only_a_boolean_comes_back():
     assert listed.status_code == 200
     assert SECRET not in listed.text
     assert "llm.example.test" not in listed.text
+    muse_chip = next(item for item in listed.json() if item["id"] == "muse")
+    assert muse_chip["ready"] is True
     again = client.get("/api/make/settings")
     assert SECRET not in again.text
     junk = client.put(

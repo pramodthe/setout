@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import type { JSX } from "react";
 import type { MakeMessage } from "./makeApi";
+import { attemptLabel } from "./status";
 import type { JobLine } from "./useJobStream";
 
 export default function ChatPanel({ messages, lines, attempt, state, busy, onSend }: {
@@ -33,16 +34,23 @@ export default function ChatPanel({ messages, lines, attempt, state, busy, onSen
   return (
     <aside className="make-chat">
       <div className="make-messages" data-make="messages">
+        {!messages.length && !state && (
+          <p className="make-muted" data-make="empty-chat">Describe a detail to build the first version.</p>
+        )}
         {messages.map((message) => (
           <div key={message.id} className={`make-msg ${message.role}`}>
             <b>{message.role}</b>
             <p>{message.text}</p>
           </div>
         ))}
+        {attemptLabel(attempt, state) && (
+          <p className={state === "failed" ? "make-err" : "make-status"} data-make="attempt">
+            {attemptLabel(attempt, state)}
+          </p>
+        )}
         {(state || lines.length > 0) && (
           <div className="make-log" data-make="status" aria-live="polite">
-            {state && <div>status {state}{attempt != null && attempt > 0 ? ` · attempt ${attempt}` : ""}</div>}
-            {lines.map((line, index) => <div key={`${index}-${line.text}`}>{line.text}</div>)}
+            {lines.map((line, index) => <div key={`${index}-${line.kind}-${line.text}`}>{line.text}</div>)}
           </div>
         )}
       </div>

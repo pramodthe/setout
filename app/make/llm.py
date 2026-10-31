@@ -55,7 +55,7 @@ Blender's unit is the metre. Author every size in millimetres and convert with t
 
 Start the script with PARAMS, a dict of every dimension in millimetres. OVERRIDES is injected by the harness and may be empty. Before building geometry, for each object, if OVERRIDES[name]["dims"] contains a key that is also in PARAMS, use that value. The harness re-applies location (millimetres) and rotation_deg (degrees) after the script, in Blender's Z-up world, even if the script ignores them.
 
-Each part is one named mesh object in a named collection. On every object set dims (a JSON object of the PARAMS keys that size that part), build_order (an int, bottom-up), material (a short name) and component_ref (an empty string unless the catalog gives an id). Give each part a distinct colour.
+Each part is one named mesh object. Put the meshes in at least two named collections under the scene. Do not place every mesh in a single collection. On every object set dims (a JSON object of the PARAMS keys that size that part), build_order (an int, bottom-up), material (a short name) and component_ref (an empty string unless the catalog gives an id). Give each part a distinct colour.
 
 When the user asks to add a part, create a new named mesh object for it. Keep every part that is already in the scene. Do not satisfy an add by only changing an existing part's dimensions, material, or name.
 
@@ -142,17 +142,15 @@ def describe(profile: str | None = None) -> dict:
         raise LLMConfigError(f"unknown profile {pid!r}")
     spec = profiles[pid]
     model = _resolved_model(pid, default_id, spec)
-    base_name = str(spec.get("base_url_env") or "")
-    key_name = str(spec.get("api_key_env") or "")
-    ready = bool(os.environ.get(base_name, "").strip() and os.environ.get(key_name, "").strip() and model)
+    missing = _missing(pid, default_id, spec, model)
     tools = _tools_mode(pid, spec)
     return {
         "id": pid,
         "label": str(spec.get("label") or pid),
         "model": model,
-        "ready": ready,
+        "ready": not missing,
         "caps": {"vision": bool(spec.get("vision")), "tools": tools},
-        "missing": _missing(pid, default_id, spec, model),
+        "missing": missing,
     }
 
 

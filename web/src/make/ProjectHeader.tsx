@@ -24,7 +24,9 @@ export default function ProjectHeader({ title, versions, selected, onSelect, mod
         >
           {!done.length && <option value="">none yet</option>}
           {done.map((version) => (
-            <option key={version.n} value={version.n}>v{version.n} · {version.source}</option>
+            <option key={version.n} value={version.n}>
+              v{version.n} · {version.source}{version.model ? ` · ${version.model}` : ""}
+            </option>
           ))}
         </select>
       </label>

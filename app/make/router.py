@@ -118,10 +118,14 @@ def add_message(project_id: str, body: MessageIn):
 
 
 @router.get("/jobs/{job_id}/events")
-def job_events(job_id: str):
+def job_events(job_id: str, request: Request, after: int = 0):
     if db.get_job(job_id) is None:
         raise HTTPException(404, "unknown job")
-    return StreamingResponse(_stream(job_id), media_type="text/event-stream")
+    header = request.headers.get("last-event-id") or ""
+    start = after
+    if header.isdigit():
+        start = max(start, int(header))
+    return StreamingResponse(_stream(job_id, start), media_type="text/event-stream")
 
 
 @router.get("/projects/{project_id}/versions/{number}/scene.glb")
@@ -304,42 +308,45 @@ def _artifact(project_id: str, number: int, name: str):
     return FileResponse(path, media_type=media, filename=name)
 
 
-def _stream(job_id: str):
+def _stream(job_id: str, start: int = 0):
+    """Replay log events after ``start``. A reconnect sends the current status once."""
     seen = 0
-    last_state = None
-    last_attempt = None
+    delivered = 0
+    sent_status = False
     while True:
         job = db.get_job(job_id)
         if job is None:
-            yield _sse("error", {"message": "unknown job"})
+            yield _sse("failed", {"message": "unknown job"}, None)
             return
         state = job["state"]
         attempt = job["attempt"] or 0
-        if state != last_state:
-            last_state = state
-            yield _sse("status", {"state": state, "attempt": attempt})
-        if attempt != last_attempt:
-            last_attempt = attempt
-            yield _sse("attempt", {"attempt": attempt})
+        if not sent_status:
+            sent_status = True
+            yield _sse("status", {"state": state, "attempt": attempt}, None)
+            yield _sse("attempt", {"attempt": attempt}, None)
         events = _load_events(job.get("events"))
         while seen < len(events):
             event = events[seen]
             seen += 1
             if event.get("kind") == "request":
                 continue
-            yield _sse("log", _log(event))
+            delivered += 1
+            if delivered <= start:
+                continue
+            yield _sse("log", _log(event), delivered)
         if state in ("done", "failed"):
             result = next((event for event in reversed(events) if event.get("kind") == "result"), {})
             if state == "done":
-                yield _sse("done", {"version": result.get("version")})
+                yield _sse("done", {"version": result.get("version")}, None)
             else:
-                yield _sse("error", {"message": redact(str(result.get("error") or "failed"))[:800]})
+                yield _sse("failed", {"message": redact(str(result.get("error") or "failed"))[:800]}, None)
             return
         time.sleep(0.25)
 
 
-def _sse(event: str, data: dict) -> str:
-    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+def _sse(event: str, data: dict, event_id: int | None = None) -> str:
+    prefix = f"id: {event_id}\n" if event_id is not None else ""
+    return f"{prefix}event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
 def _log(event: dict) -> dict:

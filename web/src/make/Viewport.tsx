@@ -258,6 +258,32 @@ export default function Viewport({ url, selected, edits, bases, playback, mode, 
 
     let frame = 0;
     let disposed = false;
+    let modelRoot: THREE.Object3D | null = null;
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "o") {
+        controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+        transform.detach();
+      } else if (key === "p") {
+        controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
+        transform.detach();
+      } else if (key === "m") {
+        controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+        setGizmo("translate");
+        const object = selectedRef.current ? meshes.get(selectedRef.current) : undefined;
+        if (object) transform.attach(object);
+      } else if (key === "f") {
+        const object = (selectedRef.current ? meshes.get(selectedRef.current) : modelRoot) || modelRoot;
+        if (object) fit(camera, controls, object);
+      } else {
+        return;
+      }
+      event.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
     const loop = () => {
       if (disposed) return;
       const current = selectedRef.current ? meshes.get(selectedRef.current) : undefined;
@@ -320,6 +346,7 @@ export default function Viewport({ url, selected, edits, bases, playback, mode, 
         if (disposed) return;
         const model = gltf.scene;
         orientLoadedModel(model);
+        modelRoot = model;
         scene.add(model);
         model.traverse((object) => {
           if (!(object as THREE.Mesh).isMesh || !object.name) return;
@@ -347,6 +374,7 @@ export default function Viewport({ url, selected, edits, bases, playback, mode, 
 
     return () => {
       disposed = true;
+      window.removeEventListener("keydown", onKey);
       cancelAnimationFrame(frame);
       observer.disconnect();
       renderer.domElement.removeEventListener("pointerup", onPointer);
@@ -364,7 +392,7 @@ export default function Viewport({ url, selected, edits, bases, playback, mode, 
   }, [selected, edits, bases, playback]);
 
   return (
-    <div className="make-view" ref={host} data-make="viewport">
+    <div className="make-view" ref={host} data-make="viewport" title="O orbit, P pan, M move, F focus">
       <div className="make-gizmo">
         <button type="button" className={gizmo === "translate" ? "on" : ""} data-make="gizmo-move" onClick={() => setGizmo("translate")}>Move</button>
         <button type="button" className={gizmo === "rotate" ? "on" : ""} data-make="gizmo-rotate" onClick={() => setGizmo("rotate")}>Rotate</button>
