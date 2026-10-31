@@ -142,6 +142,11 @@ def scene_preview(project_id: str, number: int):
     return _artifact(project_id, number, "preview.png")
 
 
+@router.get("/projects/{project_id}/versions/{number}/render.png")
+def scene_render(project_id: str, number: int):
+    return _artifact(project_id, number, "render.png")
+
+
 @router.patch("/projects/{project_id}/versions/{number}/overrides")
 def patch_overrides(project_id: str, number: int, body: OverridesIn):
     version = _require_version(project_id, number)
@@ -220,7 +225,7 @@ def _require_version(project_id: str, number: int) -> dict:
 
 def _artifact(project_id: str, number: int, name: str):
     version = _require_version(project_id, number)
-    column = {"scene.glb": "glb_path", "preview.png": "preview_path"}[name]
+    column = {"scene.glb": "glb_path", "preview.png": "preview_path", "render.png": "render_path"}[name]
     rel = version.get(column)
     if not rel:
         raise HTTPException(404, f"{name} is not available")
@@ -228,7 +233,7 @@ def _artifact(project_id: str, number: int, name: str):
     path = (store.var_root() / rel).resolve()
     if not path.is_relative_to(root) or not path.is_file():
         raise HTTPException(404, f"{name} is not available")
-    media = {"scene.glb": "model/gltf-binary", "preview.png": "image/png"}[name]
+    media = {"scene.glb": "model/gltf-binary", "preview.png": "image/png", "render.png": "image/png"}[name]
     return FileResponse(path, media_type=media, filename=name)
 
 
@@ -323,4 +328,5 @@ def _version(row: dict) -> dict:
         "model": row["model"],
         "created": row["created"],
         "error": row["error"],
+        "has_render": bool(row.get("render_path")),
     }

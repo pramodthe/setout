@@ -311,6 +311,18 @@ a.make-tab{color:var(--muted)}
 .make-name{margin:0;font-weight:600}
 .make-muted{color:var(--muted);font-size:12px}
 .make-gizmo{position:absolute;top:10px;left:10px;display:flex;gap:6px;z-index:2}
+.make-play{position:absolute;left:10px;right:10px;bottom:10px;z-index:2;display:flex;align-items:center;gap:8px;
+  background:rgba(14,17,22,.88);border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+.make-play input[type=range]{flex:1;accent-color:var(--accent)}
+.make-step{font-size:12px;min-width:150px;color:var(--ink)}
+.make-bottom{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 12px;
+  background:var(--panel);border-top:1px solid var(--line)}
+.make-bottom a{color:var(--accent);font-size:12px}
+.make-bottom a[aria-disabled="true"]{pointer-events:none;opacity:.45}
+.make-render{position:absolute;top:46px;right:10px;z-index:2;width:260px;background:var(--panel);
+  border:1px solid var(--line);border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px}
+.make-render img{width:100%;height:auto;display:block;border-radius:4px;background:#0e1116}
+.make-render a{font-size:12px;color:var(--accent)}
 .make-tools{display:flex;gap:6px;padding:0 12px 8px}
 @media (max-width:1100px){
   .make-body{grid-template-columns:1fr}

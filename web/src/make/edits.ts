@@ -6,6 +6,7 @@ export interface TreeNode {
   rotation_deg?: [number, number, number];
   dims?: Record<string, number>;
   material?: string;
+  build_order?: number;
 }
 
 export interface PartOverride {

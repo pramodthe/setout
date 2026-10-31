@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import type { JSX } from "react";
+import type { JSX, ReactNode } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { axisScaleFactors, yUpMetresToZUpMm, type OverrideMap } from "./edits";
+import type { PartPose } from "./playback";
 import { needsZUpMmConversion, zUpMmToYUpMetres } from "./units";
 
 export type GizmoMode = "translate" | "rotate";
@@ -76,14 +77,28 @@ interface Original {
   scale: THREE.Vector3;
 }
 
-export default function Viewport({ url, selected, edits, bases, mode, onSelect, onCommit }: {
+function paintOpacity(object: THREE.Object3D, opacity: number): void {
+  const mesh = object as THREE.Mesh;
+  const list = mesh.material ? (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) : [];
+  for (const material of list) {
+    material.transparent = opacity < 0.999;
+    material.opacity = opacity;
+    material.depthWrite = opacity >= 0.999;
+    material.needsUpdate = true;
+  }
+  object.visible = opacity > 0.02;
+}
+
+export default function Viewport({ url, selected, edits, bases, playback, mode, onSelect, onCommit, children }: {
   url: string | null;
   selected: string | null;
   edits: OverrideMap;
   bases: Record<string, Record<string, number>>;
+  playback: Record<string, PartPose> | null;
   mode: GizmoMode;
   onSelect: (name: string | null) => void;
   onCommit: (name: string, location: [number, number, number], rotation: [number, number, number]) => void;
+  children?: ReactNode;
 }): JSX.Element {
   const host = useRef<HTMLDivElement>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -91,12 +106,14 @@ export default function Viewport({ url, selected, edits, bases, mode, onSelect, 
   const selectedRef = useRef(selected);
   const editsRef = useRef(edits);
   const basesRef = useRef(bases);
+  const playbackRef = useRef(playback);
   const onSelectRef = useRef(onSelect);
   const onCommitRef = useRef(onCommit);
   const modeRef = useRef(gizmo);
   selectedRef.current = selected;
   editsRef.current = edits;
   basesRef.current = bases;
+  playbackRef.current = playback;
   onSelectRef.current = onSelect;
   onCommitRef.current = onCommit;
   modeRef.current = gizmo;
@@ -173,11 +190,26 @@ export default function Viewport({ url, selected, edits, bases, mode, onSelect, 
         }
         object.updateMatrixWorld(true);
       }
-      const current = selectedRef.current ? meshes.get(selectedRef.current) : null;
+      const poses = playbackRef.current;
+      let partial = false;
+      for (const [name, object] of meshes) {
+        const pose = poses?.[name];
+        if (pose) {
+          object.position.y += pose.dropMm / 1000;
+          paintOpacity(object, pose.opacity);
+          if (pose.opacity < 0.98) partial = true;
+        } else {
+          paintOpacity(object, 1);
+        }
+      }
+      const current = !partial && selectedRef.current ? meshes.get(selectedRef.current) : null;
       if (current) {
         helper.setFromObject(current);
         helper.visible = true;
         transform.attach(current);
+      } else if (partial) {
+        helper.visible = false;
+        transform.detach();
       }
     };
 
@@ -291,6 +323,9 @@ export default function Viewport({ url, selected, edits, bases, mode, onSelect, 
         scene.add(model);
         model.traverse((object) => {
           if (!(object as THREE.Mesh).isMesh || !object.name) return;
+          const mesh = object as THREE.Mesh;
+          if (Array.isArray(mesh.material)) mesh.material = mesh.material.map((material) => material.clone());
+          else if (mesh.material) mesh.material = mesh.material.clone();
           meshes.set(object.name, object);
           originals.set(object.name, {
             position: object.position.clone(),
@@ -326,7 +361,7 @@ export default function Viewport({ url, selected, edits, bases, mode, onSelect, 
     const api = (host.current as HTMLDivElement & { __make?: { apply: () => void; select: (name: string | null) => void } } | null)?.__make;
     api?.select(selected);
     api?.apply();
-  }, [selected, edits, bases]);
+  }, [selected, edits, bases, playback]);
 
   return (
     <div className="make-view" ref={host} data-make="viewport">
@@ -334,6 +369,7 @@ export default function Viewport({ url, selected, edits, bases, mode, onSelect, 
         <button type="button" className={gizmo === "translate" ? "on" : ""} data-make="gizmo-move" onClick={() => setGizmo("translate")}>Move</button>
         <button type="button" className={gizmo === "rotate" ? "on" : ""} data-make="gizmo-rotate" onClick={() => setGizmo("rotate")}>Rotate</button>
       </div>
+      {children}
       {note && <p className="make-empty" data-make="viewport-note">{note}</p>}
       {!url && !note && <p className="make-empty">The scene will appear here after the first build.</p>}
     </div>

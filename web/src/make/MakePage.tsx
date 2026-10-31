@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { JSX } from "react";
+import BottomBar from "./BottomBar";
+import type { RenderQuality } from "./BottomBar";
 import ChatPanel from "./ChatPanel";
 import {
   diffOverrides,
@@ -12,6 +14,8 @@ import {
 } from "./edits";
 import { makeApi } from "./makeApi";
 import type { MakeDetail, MakeModel } from "./makeApi";
+import PlaybackBar from "./PlaybackBar";
+import { posesAt, STEP_MS, stepLabel, installSteps } from "./playback";
 import ProjectHeader from "./ProjectHeader";
 import PropertiesPanel from "./PropertiesPanel";
 import SceneTree from "./SceneTree";
@@ -43,9 +47,18 @@ export default function MakePage({ projectId }: { projectId: string | null }): J
   const [tree, setTree] = useState<TreeNode | null>(null);
   const [part, setPart] = useState<string | null>(null);
   const [history, dispatch] = useReducer(historyReducer, EMPTY);
+  const [fresh, setFresh] = useState(0);
+  const [quality, setQuality] = useState<RenderQuality>("draft");
+  const [jobKind, setJobKind] = useState<"build" | "render" | null>(null);
+  const [renderStamp, setRenderStamp] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [sequence, setSequence] = useState(false);
+  const [progress, setProgress] = useState(0);
   const presentRef = useRef(history.present);
+  const progressRef = useRef(progress);
   useEffect(() => {
     presentRef.current = history.present;
+    progressRef.current = progress;
   });
 
   useEffect(() => {
@@ -107,7 +120,7 @@ export default function MakePage({ projectId }: { projectId: string | null }): J
       if (!cancel) setTree(null);
     });
     return () => { cancel = true; };
-  }, [projectId, selected]);
+  }, [projectId, selected, fresh]);
 
   useEffect(() => {
     dispatch({ type: "reset" });
@@ -116,6 +129,8 @@ export default function MakePage({ projectId }: { projectId: string | null }): J
 
   const onDone = useCallback((version: number) => {
     setJobId(null);
+    setJobKind(null);
+    setRenderStamp(Date.now());
     setSelected(version);
     if (projectId) reload(projectId).catch((error: Error) => setErr(error.message));
   }, [projectId, reload]);
@@ -133,6 +148,33 @@ export default function MakePage({ projectId }: { projectId: string | null }): J
     return map;
   }, [meshMap]);
   const selectedMesh = meshByName(tree, part);
+  const steps = useMemo(() => installSteps(meshesOf(tree)), [tree]);
+  const poses = sequence ? posesAt(steps, progress) : null;
+
+  useEffect(() => {
+    setPlaying(false);
+    setSequence(false);
+    setProgress(steps.length);
+  }, [projectId, selected, steps.length]);
+
+  useEffect(() => {
+    if (!playing) return;
+    let frame = 0;
+    let last = performance.now();
+    const tick = (now: number) => {
+      const next = Math.min(steps.length, progressRef.current + (now - last) / STEP_MS);
+      last = now;
+      progressRef.current = next;
+      setProgress(next);
+      if (next >= steps.length) {
+        setPlaying(false);
+        return;
+      }
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [playing, steps.length]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -174,6 +216,7 @@ export default function MakePage({ projectId }: { projectId: string | null }): J
       mode: hasVersion ? "feedback" : "create",
       profile,
     });
+    setJobKind("build");
     setJobId(sent.job_id);
     await reload(projectId);
   }
@@ -183,10 +226,45 @@ export default function MakePage({ projectId }: { projectId: string | null }): J
     const body = diffOverrides(meshMap, presentRef.current);
     if (!body.overrides.length) return;
     const sent = await makeApi.overrides(projectId, selected, body);
+    setJobKind("build");
     setJobId(sent.job_id);
   }
 
-  const glb = projectId && selected != null ? makeApi.glbUrl(projectId, selected) : null;
+  async function renderScene() {
+    if (!projectId || selected == null) return;
+    const sent = await makeApi.render(projectId, selected, quality);
+    setJobKind("render");
+    setJobId(sent.job_id);
+  }
+
+  function togglePlay() {
+    if (!steps.length) return;
+    if (playing) {
+      setPlaying(false);
+      return;
+    }
+    setSequence(true);
+    if (progressRef.current >= steps.length) {
+      progressRef.current = 0;
+      setProgress(0);
+    }
+    setPlaying(true);
+  }
+
+  const version = detail?.versions.find((item) => item.n === selected) || null;
+  const glb = projectId && selected != null ? `${makeApi.glbUrl(projectId, selected)}?r=${fresh}` : null;
+  const downloads = projectId && selected != null ? {
+    glb: makeApi.glbUrl(projectId, selected),
+    tree: makeApi.treeUrl(projectId, selected),
+    preview: makeApi.previewUrl(projectId, selected),
+    render: `${makeApi.renderUrl(projectId, selected)}?r=${renderStamp}`,
+  } : null;
+  const rendering = jobKind === "render" && stream.state !== "failed";
+  const renderStatus = jobKind === "render"
+    ? stream.state === "failed"
+      ? (stream.lines[stream.lines.length - 1]?.text || "Render failed")
+      : `Rendering with Blender… ${stream.state || "queued"}`
+    : null;
   const canApply = diffOverrides(meshMap, history.present).overrides.length > 0;
 
   return (
@@ -216,10 +294,31 @@ export default function MakePage({ projectId }: { projectId: string | null }): J
           selected={part}
           edits={history.present}
           bases={bases}
+          playback={poses}
           mode="translate"
           onSelect={setPart}
           onCommit={(name, location, rotation) => merge(name, { location, rotation_deg: rotation })}
-        />
+        >
+          <PlaybackBar
+            playing={playing}
+            label={sequence ? stepLabel(steps, progress) : steps.length ? `${steps.length} parts` : "No parts"}
+            progress={sequence ? progress : steps.length}
+            count={steps.length}
+            onToggle={togglePlay}
+            onScrub={(value) => {
+              setPlaying(false);
+              setSequence(true);
+              progressRef.current = value;
+              setProgress(value);
+            }}
+          />
+          {version?.has_render && downloads && (
+            <aside className="make-render" data-make="render-panel">
+              <img data-make="render-image" src={downloads.render} alt="Blender render" />
+              <a data-make="download-render" href={downloads.render} download="render.png">Download render</a>
+            </aside>
+          )}
+        </Viewport>
         <aside className="make-side">
           <div className="make-tools">
             <button type="button" data-make="undo" onClick={() => dispatch({ type: "undo" })} disabled={!history.past.length}>Undo</button>
@@ -251,6 +350,18 @@ export default function MakePage({ projectId }: { projectId: string | null }): J
           />
         </aside>
       </div>
+      <BottomBar
+        quality={quality}
+        onQuality={setQuality}
+        onRefresh={() => setFresh((n) => n + 1)}
+        onRender={() => { void renderScene().catch((error: Error) => setErr(error.message)); }}
+        busy={busy}
+        rendering={rendering}
+        status={renderStatus}
+        glbUrl={downloads?.glb || null}
+        treeUrl={downloads?.tree || null}
+        previewUrl={downloads?.preview || null}
+      />
     </div>
   );
 }

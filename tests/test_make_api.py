@@ -232,6 +232,11 @@ def test_render_is_enqueued_and_use_blender_chains_one():
     again = client.post(f"/api/make/projects/{project}/versions/1/render", json={"quality": "draft"})
     assert again.status_code == 200
     assert get_job(again.json()["job_id"])["kind"] == "render"
+    png = client.get(f"/api/make/projects/{project}/versions/1/render.png")
+    assert png.status_code == 200
+    assert png.content.startswith(b"\x89PNG")
+    detail = client.get(f"/api/make/projects/{project}").json()
+    assert detail["versions"][0]["has_render"] is True
     assert created.status_code == 200
 
 

@@ -24,6 +24,7 @@ export interface MakeVersion {
   model: string;
   created: string;
   error: string | null;
+  has_render: boolean;
 }
 
 export interface MakeDetail {
@@ -73,6 +74,18 @@ export const makeApi = {
     }),
   glbUrl: (id: string, n: number): string =>
     `/api/make/projects/${encodeURIComponent(id)}/versions/${n}/scene.glb`,
+  treeUrl: (id: string, n: number): string =>
+    `/api/make/projects/${encodeURIComponent(id)}/versions/${n}/tree.json`,
+  previewUrl: (id: string, n: number): string =>
+    `/api/make/projects/${encodeURIComponent(id)}/versions/${n}/preview.png`,
+  renderUrl: (id: string, n: number): string =>
+    `/api/make/projects/${encodeURIComponent(id)}/versions/${n}/render.png`,
+  render: (id: string, n: number, quality: "draft" | "high"): Promise<{ job_id: string }> =>
+    req(`/api/make/projects/${encodeURIComponent(id)}/versions/${n}/render`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ quality }),
+    }),
   tree: (id: string, n: number): Promise<import("./edits").TreeNode> =>
     req(`/api/make/projects/${encodeURIComponent(id)}/versions/${n}/tree.json`),
   overrides: (
