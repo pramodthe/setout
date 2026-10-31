@@ -70,10 +70,10 @@ def analyse(doc) -> Analysis:
     return analysis
 
 
-def analyse_sheet(doc) -> SheetAnalysis:
+def analyse_sheet(doc, split_frames=()) -> SheetAnalysis:
     """The file split into details, each analysed, names shared across them."""
     drawing = read(doc)
-    sheet = splitter.split(drawing)
+    sheet = splitter.split(drawing, split_frames)
     analyses = []
     for detail in sheet.details:
         part = drawing.subset(detail.curves, detail.hatches, detail.texts, detail.callouts)
@@ -167,6 +167,22 @@ def _existing(store, file_id) -> list[str]:
     return [s for s in sheets.sheet_ids(store) if s.rsplit("-d", 1)[0] == file_id]
 
 
+def frames_holding_several(path) -> dict:
+    """{frame handle: groups} for a file with nothing split, by the details it then has."""
+    sheet = splitter.split(read(dxf_ingest.load(path)))
+    return {d.frame: (d.index, d.groups_inside) for d in sheet.details if d.frame and d.groups_inside > 1}
+
+
+def mark_frames(path, store, handles) -> str:
+    """Record which frames of a file to split, and return its id. No handles means none."""
+    file_id = file_id_of(path, hashlib.sha256(Path(path).read_bytes()).hexdigest())
+    unknown = sorted(set(handles) - set(frames_holding_several(path)))
+    if unknown:
+        raise sheets.Refused(f"Not a frame holding several groups: {', '.join(unknown)}")
+    sheets.mark_split_frames(store, file_id, handles)
+    return file_id
+
+
 def propose_file(path, store, root=None, force=False) -> list[dict]:
     """Read one DXF and write a record per detail under `store`. `root` is the folder it
     was found under: the export reads the project from the path below it. A file a person
@@ -179,7 +195,7 @@ def propose_file(path, store, root=None, force=False) -> list[dict]:
     if not force and any(sheets.has_decisions(sheets.read_sheet(store, s)) for s in earlier):
         raise AlreadyReviewed(f"{file_id} has review decisions; pass --force to discard them")
     doc = dxf_ingest.load(path)
-    whole = analyse_sheet(doc)
+    whole = analyse_sheet(doc, sheets.split_frames(store, file_id))
     for sheet_id in earlier:
         shutil.rmtree(sheets.sheet_dir(store, sheet_id))
     relative = None
@@ -205,7 +221,7 @@ def propose_file(path, store, root=None, force=False) -> list[dict]:
         source = {"sheet_id": sheet_id, "file": path.name, "sha256": digest, "relative_path": relative,
                   "file_id": file_id, "details_in_file": len(whole.analyses),
                   "detail": {"index": detail.index, "box": [_number(v) for v in detail.box], "framed": detail.framed,
-                             "groups_inside": detail.groups_inside}}
+                             "groups_inside": detail.groups_inside, "frame": detail.frame, "split": detail.split}}
         record = sheet_record(analysis, info, source)
         record["legend"] = legend
         records.append(record)

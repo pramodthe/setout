@@ -1,0 +1,18 @@
+id: drain
+name: Drain
+status: draft
+definition: A fitting set into a floor or roof that collects surface water and carries it into pipework.
+function: drainage
+role: object
+shape_hint: cad
+form: shaped
+relations_allowed: [supported_by, bonded_to, sealed_to, installed_before]
+dimension_slots:
+  - name: diameter
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+drawing_appearance: {}
+aliases: [drain, floor drain, roof drain, drainage outlet, rainwater outlet]

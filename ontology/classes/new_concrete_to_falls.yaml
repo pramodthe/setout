@@ -1,0 +1,24 @@
+id: new_concrete_to_falls
+name: New concrete to falls
+status: draft
+definition: Concrete placed over an existing surface and shaped so its top slopes water toward an outlet, covered by later layers.
+function: drainage
+role: covered_layer
+shape_hint: wedge
+form: null
+relations_allowed: [covers, supported_by, bonded_to, terminates_against, installed_before]
+dimension_slots:
+  - name: thickness
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+  - name: fall_ratio
+    unit: ratio
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+drawing_appearance: {}
+aliases: [new concrete to falls, concrete to falls, concrete falls]

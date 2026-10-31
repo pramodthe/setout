@@ -1,0 +1,24 @@
+id: rod
+name: Threaded rod
+status: draft
+definition: A straight rod threaded along its length and cut to size, set into or through other parts and held with nuts or a bonded anchor.
+function: fixing
+role: object
+shape_hint: cad
+form: shaped
+relations_allowed: [fixed_to, repeated_along, supported_by, bonded_to, installed_before]
+dimension_slots:
+  - name: diameter
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+  - name: length
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+drawing_appearance: {}
+aliases: [rod, threaded rod, threaded bar, steel rod, metal rod]

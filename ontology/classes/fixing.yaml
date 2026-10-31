@@ -1,7 +1,7 @@
 id: fixing
 name: Fixing
 status: draft
-definition: A manufactured fastener such as a screw, bolt, anchor or threaded rod that holds one part to another.
+definition: A manufactured fastener such as a screw, bolt or anchor that holds one part to another.
 function: fixing
 role: object
 shape_hint: cad
@@ -27,4 +27,4 @@ dimension_slots:
     source: null
     derive_from: null
 drawing_appearance: {}
-aliases: [fixing, fixings, screw, screws, bolt, bolts, anchor, anchors, booker rod, threaded rod, rod, masonry anchor, fastener]
+aliases: [fixing, fixings, screw, screws, bolt, bolts, anchor, anchors, booker rod, masonry anchor, fastener]

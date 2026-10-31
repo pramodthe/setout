@@ -1,0 +1,24 @@
+id: general_flashing
+name: General flashing
+status: draft
+definition: A formed strip of metal or sheet that laps over a junction and sheds water away from it, wherever on a building that junction is.
+function: water_barrier
+role: object
+shape_hint: cad
+form: shaped
+relations_allowed: [covers, laps_over, bonded_to, fixed_to, terminates_against, sealed_to, installed_before]
+dimension_slots:
+  - name: thickness
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+  - name: upstand_height
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+drawing_appearance: {}
+aliases: [flashing, general flashing, cover flashing, counter flashing, apron flashing, metal flashing]

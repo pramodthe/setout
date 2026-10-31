@@ -293,17 +293,19 @@ ZOOM = dataclasses.replace(FAST, zoom=2.0)
 # Frozen from the generator before `zoom` existed (commit d1100a2, macOS): FAST, 8 drawings, seed 5,
 # which reaches every kind of damage, rotation, widening and padding. That same code reproduced
 # seg-synth-v1 tile for tile.
-ZOOM_ONE_DIGEST = "2cc93a119345c9d12e621fc958f805f8e3dff09ee58ffaacfda8b6dceb0e5af5"
+ZOOM_ONE_DIGEST = "0d6efbf21f49d7ffe7292b0f99908bd7b2a1872f4b9dd8eaece4cb31f9d64472"
 
 
 def _dataset_digest(root):
-    """Every output byte but run.json's timings and the manifest's hashes of our own code."""
+    """Every output byte but run.json's timings, and the manifest's hashes of our own code and
+    the ontology's version, which names the classes and changes no drawing."""
     digest = hashlib.sha256()
     for path in sorted(p for p in Path(root).rglob("*") if p.is_file() and p.name != "run.json"):
         data = path.read_bytes()
         if path.name == "manifest.json":
             manifest = json.loads(data)
             manifest["generator"].pop("code_sha256")
+            manifest.pop("ontology_version")
             data = json.dumps(manifest, sort_keys=True).encode()
         digest.update(f"{path.relative_to(root).as_posix()}\0{len(data)}\0".encode())
         digest.update(data)

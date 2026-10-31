@@ -41,7 +41,9 @@ def caption(record) -> str:
     named = sum(1 for r in live if r["proposal"]["class_id"] != names.UNKNOWN)
     detail = record["source"].get("detail", {})
     frame = " framed" if detail.get("framed") else ""
-    groups = f" x{detail['groups_inside']}" if detail.get("groups_inside", 1) > 1 else ""
+    groups = ""
+    if detail.get("groups_inside", 1) > 1:
+        groups = " split" if detail.get("split") else f" x{detail['groups_inside']} frame {detail['frame']}"
     return f"d{detail.get('index', 1):02d}{frame}{groups}: {len(live)} regions, {named} named"
 
 

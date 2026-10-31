@@ -1,0 +1,30 @@
+id: termination_bar
+name: Termination bar
+status: draft
+definition: A flat metal bar fixed along the top edge of a sheet or membrane to clamp it to the surface behind.
+function: fixing
+role: object
+shape_hint: cad
+form: block
+relations_allowed: [covers, fixed_to, bonded_to, installed_before]
+dimension_slots:
+  - name: width
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+  - name: thickness
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+  - name: fixing_spacing
+    unit: mm
+    typical_min: null
+    typical_max: null
+    source: null
+    derive_from: null
+drawing_appearance: {}
+aliases: [termination bar, term bar, clamping bar, clamp bar]

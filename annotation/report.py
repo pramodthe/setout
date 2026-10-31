@@ -60,7 +60,8 @@ def build(store, file_id=None) -> dict:
     return {
         "details": len(records),
         "framed": len(framed),
-        "frames_holding_several": sum(1 for d in framed if d.get("groups_inside", 1) > 1),
+        "frames_holding_several": len({d["frame"] for d in framed if d.get("groups_inside", 1) > 1}),
+        "frames_split": len({d["frame"] for d in framed if d.get("split")}),
         "legend_rows": _unmapped(records),
         "regions": len(every),
         "regions_per_detail": {"mean": round(statistics.fmean(counts), 1) if counts else 0,
@@ -93,7 +94,7 @@ def build(store, file_id=None) -> dict:
 def text(report: dict) -> str:
     r = report["reviewer"]
     per = report["regions_per_detail"]
-    lines = [f"{report['details']} details ({report['framed']} framed, {report['frames_holding_several']} frames hold several), "
+    lines = [f"{report['details']} details ({report['framed']} framed, {report['frames_holding_several']} frames hold several, {report['frames_split']} split), "
              f"{report['regions']} regions: {per['mean']} per detail, median {per['median']}, most {per['max']}",
              f"thin {report['thin']}, with a class {report['named']}, carrying words from the sheet {report['carrying_sheet_words']}",
              f"named by source: {report['named_by_source']}",

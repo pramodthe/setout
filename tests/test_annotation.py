@@ -14,7 +14,7 @@ from ezdxf.math import Vec2
 from ezdxf.render.mleader import ConnectionSide
 from PIL import Image
 
-from annotation import cli, contact, details, drawing, export, measure, names, pipeline, planar, propagate, regions, report, review, sheets
+from annotation import cli, contact, details, drawing, export, measure, names, pipeline, planar, propagate, regions, report, review, sheets, upload
 from app import dxf_ingest, ontology, synthetic
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -750,8 +750,10 @@ def index():
 @pytest.mark.parametrize("text, class_id", [
     ("CONCRETE SLAB", "slab"), ("Concrete slab", "slab"), ("SUSPENDED SLAB", "slab"), ("SUB-SILL", "sub_sill"),
     ("sub sill", "sub_sill"), ("SILL", "door_sill"), ("SILL FLASHING", "sub_sill_flashing"), ("PACKERS", "packer"),
-    ("BACKING ROD", "backing_rod"), ("ROD", "fixing"), ("WATERPROOF\nMEMBRANE", "membrane"),
+    ("BACKING ROD", "backing_rod"), ("ROD", "rod"), ("THREADED ROD", "rod"), ("WATERPROOF\nMEMBRANE", "membrane"),
     ("2 MM SHEET MEMBRANE", "membrane"), ("SCREED TO FALL", "screed"), ("MEMBRANE TURNED UP", "membrane"),
+    ("FLASHING", "general_flashing"), ("WEEPHOLES", "weep_hole"), ("LIFT OVERRUN", "lift_overrun"),
+    ("NEW CONCRETE\nTO FALLS", "new_concrete_to_falls"), ("HOBS", "hob"), ("TERMINATION BAR", "termination_bar"),
 ])
 def test_text_maps_to_a_class_through_ontology_aliases(text, class_id, index):
     assert names.match_text(text, index).class_id == class_id
@@ -768,6 +770,26 @@ def test_the_subject_of_a_callout_comes_before_its_preposition(index):
 @pytest.mark.parametrize("text", ["STONE FLOOR", "WATERPROOFING", "SEE DETAIL 5", "", None, "   ", "123"])
 def test_no_match_stays_unknown(text, index):
     assert names.match_text(text, index).class_id == names.UNKNOWN
+
+
+@pytest.mark.parametrize("text, candidates", [
+    ("TIMBER/ BRICK WALL", ["brick_wall"]), ("TIMBER OR BRICK WALL", ["brick_wall"]), ("TIMBER & BRICK WALL", ["brick_wall"]),
+    ("TIMBER AND BRICK WALL", ["brick_wall"]), ("OLD HOBS/PIERS", ["hob"]), ("PIERS / HOBS", ["hob"]),
+    ("HOB/PLINTH", ["hob", "plinth"]),
+])
+def test_two_things_joined_in_a_label_name_neither(text, candidates, index):
+    """A label naming two things says what a region might be: it is no name for it, even
+    when only one of the two is a class."""
+    match = names.match_text(text, index)
+    assert match.class_id == names.UNKNOWN and match.candidates == candidates
+
+
+@pytest.mark.parametrize("text, class_id", [
+    ("W/P MEMBRANE", "membrane"), ("M12/150 BOLT", "fixing"), ("BACKING ROD AND SEALANT", "backing_rod"),
+    ("OLD MEMBRANE ON SCREED/SAND", "membrane"), ("MEMBRANE OR MEMBRANE", "membrane"),
+])
+def test_a_slash_or_and_that_joins_nothing_still_names(text, class_id, index):
+    assert names.match_text(text, index).class_id == class_id
 
 
 def test_two_classes_in_a_callout_stay_unknown_and_list_both(index):
@@ -981,6 +1003,118 @@ def test_no_class_or_alias_is_named_in_code():
             continue
         quoted = {q.lower() for q in re.findall(r"""["']([a-zA-Z_ -]{3,})["']""", text)}
         assert not quoted & words, (path.name, sorted(quoted & words))
+
+
+# ---------------------------------------------------------------- one detail for the app
+
+def two_details(tmp_path, thin=2.0):
+    """A wide detail with a thin layer on it, and a tall one far from it."""
+    doc = new_doc()
+    msp = doc.modelspace()
+    hatch(msp, box_points(0, 0, 800, 100), "AR-CONC", scale=10)
+    loop(msp, 0, 0, 800, 100)
+    hatch(msp, box_points(0, 100, 800, 100 + thin), "ANSI31", scale=1)
+    loop(msp, 0, 100, 800, 100 + thin)
+    lines(msp, box_points(100, 100 + thin, 300, 200))
+    msp.add_line((400, 105), (700, 105))  # one line, bounding nothing
+    note(msp, "NOTE", (0, -30))
+    section(msp, 5000, 0, width=100, height=900)
+    path = tmp_path / "sheet.dxf"
+    doc.saveas(path)
+    return path
+
+
+def test_a_detail_fills_the_model_budget_and_no_more(tmp_path):
+    path = two_details(tmp_path)
+    doc = dxf_ingest.load(path)
+    render = upload.render_detail(doc, pipeline.analyse_sheet(doc), 1)
+    width, height = render.image.size
+    assert 0.98 * upload.MAX_PIXELS <= width * height <= 1.005 * upload.MAX_PIXELS
+    assert render.px_per_unit > pipeline.render_scale(pipeline.analyse_sheet(doc).drawing)  # enlarged
+
+
+def test_a_render_holds_its_own_detail_only(tmp_path):
+    path = two_details(tmp_path)
+    doc = dxf_ingest.load(path)
+    whole = pipeline.analyse_sheet(doc)
+    wide = upload.render_detail(doc, whole, next(a.detail.index for a in whole.analyses if a.detail.box[0] < 1000))
+    tall = upload.render_detail(doc, whole, next(a.detail.index for a in whole.analyses if a.detail.box[0] > 1000))
+    assert wide.image.width > wide.image.height and tall.image.height > tall.image.width
+
+
+def test_a_frame_costs_no_pixels(tmp_path):
+    doc, _ = sheet_of((0, 0), (900, 0), framed=True, gap_note=False)
+    whole = pipeline.analyse_sheet(doc)
+    render = upload.render_detail(doc, whole, 2)
+    assert render.px_per_unit == pytest.approx(upload.budget_scale(200, 180, pipeline.MARGIN_PX))
+
+
+def test_a_frame_inside_a_block_keeps_the_block_in_the_render():
+    """Every piece of a block has the block's handle: dropping the frame's would drop it all."""
+    doc = new_doc()
+    block = doc.blocks.new("DETAIL")
+    section(block, 0, 0, framed=True)
+    doc.modelspace().add_blockref("DETAIL", (0, 0))
+    section(doc.modelspace(), 2000, 0, framed=True)
+    note(doc.modelspace(), "NOTE", (0, -60))
+    whole = pipeline.analyse_sheet(doc)
+    index = next(a.detail.index for a in whole.analyses if a.detail.box[0] < 1000)
+    image = upload.render_detail(doc, whole, index).image
+    assert 0.8 < image.width / image.height < 1.3  # the block, not the note left beside it
+
+
+def test_the_thinnest_part_is_counted_in_pixels_and_lines_are_not_parts(tmp_path):
+    path = two_details(tmp_path, thin=2.0)
+    doc = dxf_ingest.load(path)
+    whole = pipeline.analyse_sheet(doc)
+    analysis = next(a for a in whole.analyses if a.detail.box[0] < 1000)
+    render = upload.render_detail(doc, whole, analysis.detail.index)
+    assert any(r.kind == "stroke" and r.width < 1.0 for r in analysis.result.regions)
+    assert render.thinnest == pytest.approx(2.0, abs=0.2)
+    assert render.thinnest_px == pytest.approx(render.thinnest * render.px_per_unit)
+
+
+@pytest.mark.parametrize("px, verdict", [(9.0, "good"), (8.0, "good"), (5.0, "enough"), (4.0, "enough"), (3.9, "too coarse")])
+def test_a_render_says_when_it_is_too_coarse(px, verdict):
+    assert upload.Render(None, 1.0, px, 1.0).verdict == verdict
+
+
+def test_the_budget_counts_the_margins():
+    scale = upload.budget_scale(1000, 10, 24)
+    assert (1000 * scale + 48) * (10 * scale + 48) == pytest.approx(upload.MAX_PIXELS)
+
+
+def test_the_upload_reaches_the_store_as_the_same_pixels(tmp_path):
+    from app import store  # tests/conftest.py points it at a temp dir
+
+    path = two_details(tmp_path)
+    result = upload.write(path, 1, tmp_path / "out")
+    data = Path(result["pdf"]).read_bytes()
+    doc = store.store_pdf("detail.pdf", data)
+    assert len(doc["figures"]) == 1 and doc["warnings"] == []
+    figure = doc["figures"][0]
+    assert figure["kind"] == "embedded_image" and (figure["width"], figure["height"]) == (result["width"], result["height"])
+    stored = store.doc_dir(doc["id"]) / f"{figure['crop_id']}.png"
+    with Image.open(stored) as got, Image.open(result["png"]) as wanted:
+        assert got.mode == wanted.mode and got.tobytes() == wanted.tobytes()
+
+
+def test_the_upload_pdf_says_nothing_about_size_or_source(tmp_path):
+    path = two_details(tmp_path)
+    data = Path(upload.write(path, 1, tmp_path / "out")["pdf"]).read_bytes()
+    assert b"sheet" not in data and b"/UserUnit" not in data and b"/Metadata" not in data
+
+
+def test_an_upload_will_not_land_in_a_tracked_folder(tmp_path):
+    path = two_details(tmp_path)
+    with pytest.raises(sheets.Refused):
+        upload.write(path, 1, Path(__file__).resolve().parents[1] / "annotation" / "out")
+
+
+def test_a_detail_the_file_does_not_have_is_refused(tmp_path):
+    path = two_details(tmp_path)
+    with pytest.raises(SystemExit):
+        cli.main(["upload", str(path), "--detail", "99", "--out", str(tmp_path / "out")])
 
 
 # ---------------------------------------------------------------- the store and its edits
@@ -1765,9 +1899,9 @@ def sheet_of(*origins, framed=False, gap_note=True):
     return doc, msp
 
 
-def split_of(doc):
+def split_of(doc, split_frames=()):
     d = drawing.read(doc)
-    return d, details.split(d)
+    return d, details.split(d, split_frames)
 
 
 def test_whitespace_splits_a_sheet_into_details():
@@ -1784,18 +1918,145 @@ def test_one_detail_stays_one_detail():
     assert len(split_of(doc)[1].details) == 1
 
 
-def test_a_frame_gathers_what_it_holds():
+def framed_pair(frame=None):
+    """Two groups with a wide gap and one frame round both, and a detail apart from them."""
     doc = new_doc()
     msp = doc.modelspace()
     section(msp, 0, 0)
-    section(msp, 280, 0)  # two groups with a wide gap, one frame round both
-    loop(msp, -40, -40, 520, 240)
+    section(msp, 280, 0)
+    outline = msp.add_lwpolyline(frame or box_points(-40, -40, 520, 240), close=True)
     section(msp, 900, 0)
     note(msp, "NOTE", (0, -60))
-    _, sheet = split_of(doc)
+    return doc, msp, outline
+
+
+def test_a_frame_holding_several_groups_stays_one_detail_and_says_how_many():
+    """A gap in a frame can be the detail itself, a joint or a break, so nothing splits on it."""
+    doc, _, outline = framed_pair()
+    d, sheet = split_of(doc)
     assert len(sheet.details) == 2
-    framed = next(d for d in sheet.details if d.framed)
-    assert framed.groups_inside == 2 and len(framed.curves) == 21
+    whole = next(k for k in sheet.details if k.framed)
+    assert whole.groups_inside == 2 and whole.frame == outline.dxf.handle and not whole.split
+    assert outline.dxf.handle in {d.curves[n].handle for n in whole.curves}
+
+
+def test_a_mark_on_another_frame_leaves_this_one_whole():
+    doc, _, _ = framed_pair()
+    _, sheet = split_of(doc, {"NOT-THIS-ONE"})
+    assert len(sheet.details) == 2 and not any(k.split for k in sheet.details)
+
+
+def test_a_mark_on_a_frame_holding_one_group_loses_nothing():
+    doc, _ = sheet_of((0, 0), (900, 0), framed=True)
+    d, plain = split_of(doc)
+    _, marked = split_of(doc, {k.frame for k in plain.details})
+    assert [k.curves for k in marked.details] == [k.curves for k in plain.details]
+
+
+def test_a_marked_frame_gives_one_detail_each_and_belongs_to_none():
+    doc, _, outline = framed_pair()
+    d, sheet = split_of(doc, {outline.dxf.handle})
+    assert len(sheet.details) == 3
+    split = [k for k in sheet.details if k.framed]
+    assert all(k.split for k in split)
+    assert len(split) == 2 and all(k.groups_inside == 2 and k.frame == outline.dxf.handle for k in split)
+    assert all(len(k.curves) == 10 and len(k.hatches) == 1 for k in split)
+    handles = {d.curves[n].handle for k in sheet.details for n in k.curves}
+    assert outline.dxf.handle not in handles
+    assert split[0].box[2] < split[1].box[0]  # each box is its group, not the frame
+
+
+def test_a_skewed_frame_is_still_a_frame():
+    """Half the frames on a real sheet ran a fraction of a degree off square."""
+    doc, _, outline = framed_pair([(-40, -40), (520, -35), (518, 240), (-42, 235)])
+    d, sheet = split_of(doc, {outline.dxf.handle})
+    assert len(sheet.details) == 3 and sum(k.framed for k in sheet.details) == 2
+
+
+def test_a_long_thin_slanted_part_is_no_rectangle():
+    """Each side is judged on its own: a short side slanted hard must not pass because a long
+    side makes it look small."""
+    doc = new_doc()
+    outline = doc.modelspace().add_lwpolyline([(0, 0), (1000, 0), (1006, 40), (6, 40)], close=True)
+    d = drawing.read(doc)
+    assert not details._is_rectangle(next(c for c in d.curves if c.handle == outline.dxf.handle))
+
+
+def test_a_frame_holding_one_group_stays_one_detail():
+    doc, _ = sheet_of((0, 0), (900, 0), framed=True)
+    d, sheet = split_of(doc)
+    assert len(sheet.details) == 2
+    assert all(k.framed and k.groups_inside == 1 and k.frame for k in sheet.details)
+    assert all(len(k.curves) == 11 for k in sheet.details)  # the frame stays with its one group
+
+
+def test_a_scrap_in_a_split_frame_joins_its_group_or_is_counted():
+    doc, msp, outline = framed_pair(box_points(-40, -40, 520, 640))
+    tick = msp.add_line((212, 50), (219, 50))  # past the gap from the left group, within reach of it
+    far = msp.add_line((0, 500), (5, 500))  # further from both groups than a scrap reaches
+    d, sheet = split_of(doc, {outline.dxf.handle})
+    split = sorted((k for k in sheet.details if k.framed), key=lambda k: k.box[0])
+    assert tick.dxf.handle in {d.curves[n].handle for n in split[0].curves}
+    assert far.dxf.handle not in {d.curves[n].handle for k in sheet.details for n in k.curves}
+    assert sheet.fragments == 1
+
+
+def test_text_in_a_split_frame_goes_to_its_own_group():
+    doc, msp, outline = framed_pair()
+    note(msp, "RIGHT HAND", (300, 150))
+    d, sheet = split_of(doc, {outline.dxf.handle})
+    right = max((k for k in sheet.details if k.framed), key=lambda k: k.box[0])
+    assert "RIGHT HAND" in [d.texts[n].text for n in right.texts]
+
+
+def test_frames_stay_whole_until_marked_and_the_marks_reach_every_command(tmp_path):
+    doc, _, outline = framed_pair()
+    path = tmp_path / "sheet.dxf"
+    doc.saveas(path)
+    store, handle = tmp_path / "store", outline.dxf.handle
+    assert len(pipeline.propose_file(path, store)) == 2
+    summary = report.build(store)
+    assert summary["frames_holding_several"] == 1 and summary["frames_split"] == 0
+    assert pipeline.frames_holding_several(path)[handle][1] == 2
+    file_id = pipeline.mark_frames(path, store, [handle])
+    assert sheets.split_frames(store, file_id) == [handle]
+    assert len(pipeline.propose_file(path, store)) == 3
+    assert upload.write(path, 3, tmp_path / "out", store)["detail"] == 3
+    with pytest.raises(upload.NoSuchDetail):
+        upload.write(path, 3, tmp_path / "out", tmp_path / "another-store")  # unmarked, so two details
+    pipeline.mark_frames(path, store, [])
+    assert sheets.split_frames(store, file_id) == [] and len(pipeline.propose_file(path, store)) == 2
+
+
+def test_only_a_frame_holding_several_groups_can_be_marked(tmp_path):
+    doc, _, _ = framed_pair()
+    path = tmp_path / "sheet.dxf"
+    doc.saveas(path)
+    with pytest.raises(sheets.Refused, match="Not a frame"):
+        pipeline.mark_frames(path, tmp_path / "store", ["FFFF"])
+    assert not (tmp_path / "store" / sheets.SPLIT_FRAMES).exists()
+
+
+def test_the_contact_sheet_gives_the_handle_to_mark():
+    source = {"detail": {"index": 1, "framed": True, "groups_inside": 2, "frame": "1F3A"}}
+    assert "x2 frame 1F3A" in contact.caption({"regions": [], "source": source})
+    source["detail"]["split"] = True
+    assert "split" in contact.caption({"regions": [], "source": source})
+
+
+def test_a_split_frame_gives_a_record_per_group_and_the_report_counts_one_frame(tmp_path):
+    doc, _, outline = framed_pair()
+    path = tmp_path / "sheet.dxf"
+    doc.saveas(path)
+    store = tmp_path / "store"
+    pipeline.mark_frames(path, store, [outline.dxf.handle])
+    records = pipeline.propose_file(path, store)
+    assert len(records) == 3
+    split = [r for r in records if r["source"]["detail"]["split"]]
+    assert len(split) == 2 and all(r["source"]["detail"]["groups_inside"] == 2 for r in split)
+    summary = report.build(store)
+    assert summary["frames_holding_several"] == 1 and summary["frames_split"] == 1 and summary["details"] == 3
+    assert not any((r["dropped"] or "").startswith("a frame") for record in split for r in record["regions"])
 
 
 def test_two_frames_close_together_stay_two_details():
@@ -2061,6 +2322,43 @@ def test_two_legend_rows_for_one_hatch_keep_both_and_name_neither():
     p = proposal(sheet_analysis(doc), 50, 50)
     assert p["class_id"] == names.UNKNOWN and p["verbatim"] == ["CONCRETE SLAB", "MYSTERY STUFF"]
     assert p["candidates"] == ["slab"]
+
+
+def test_two_legend_rows_for_one_hatch_name_nothing_even_when_they_map_to_one_class():
+    """The sheet draws two things alike. That their words share an alias does not tell which
+    one a region is, and a whole drawing's worth of that hatch would take the guess."""
+    doc, _ = legend_doc(("AR-CONC", 10, "HOB KEPT"), ("AR-CONC", 10, "HOB REMOVED"), ("ANSI31", 1, "MORE"))
+    p = proposal(sheet_analysis(doc), 50, 50)
+    assert p["class_id"] == names.UNKNOWN and p["verbatim"] == ["HOB KEPT", "HOB REMOVED"] and p["candidates"] == ["hob"]
+
+
+def test_a_legend_row_naming_two_things_offers_the_class_and_names_nothing():
+    doc, _ = legend_doc(("AR-CONC", 10, "OLD HOBS/PIERS"), ("ANSI31", 1, "MORE"), ("ANSI37", 5, "OTHER"))
+    p = proposal(sheet_analysis(doc), 50, 50)
+    assert p["class_id"] == names.UNKNOWN and p["candidates"] == ["hob"] and p["verbatim"] == ["OLD HOBS/PIERS"]
+
+
+def test_one_label_does_not_carry_across_a_hatch_the_legend_says_otherwise_about():
+    doc, msp = legend_doc(("AR-CONC", 10, "MYSTERY STUFF"), ("ANSI31", 1, "MORE"), ("ANSI37", 5, "OTHER"))
+    hatch(msp, box_points(0, -100, 200, 0), "AR-CONC", scale=10)
+    label = note(msp, "BRICK WALL", (100, -50))
+    label.set_location((100, -50), attachment_point=ezdxf.enums.MTextEntityAlignment.MIDDLE_CENTER)
+    analysis = sheet_analysis(doc)
+    assert proposal(analysis, 100, -80)["class_id"] == "brick_wall"
+    assert proposal(analysis, 50, 50)["class_id"] == names.UNKNOWN
+
+
+def test_a_label_naming_two_things_does_not_carry_across_its_hatch():
+    doc = new_doc()
+    msp = doc.modelspace()
+    hatch(msp, box_points(0, 0, 200, 100), "AR-CONC", scale=10)
+    hatch(msp, box_points(0, 200, 200, 300), "AR-CONC", scale=10)
+    label = note(msp, "TIMBER/ BRICK WALL", (100, 50))
+    label.set_location((100, 50), attachment_point=ezdxf.enums.MTextEntityAlignment.MIDDLE_CENTER)
+    analysis = analyse(doc)
+    assert proposal(analysis, 50, 20)["class_id"] == names.UNKNOWN
+    assert proposal(analysis, 50, 20)["candidates"] == ["brick_wall"]
+    assert proposal(analysis, 50, 250)["class_id"] == names.UNKNOWN
 
 
 def test_a_solid_swatch_names_no_solid_line():

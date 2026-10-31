@@ -31,6 +31,9 @@ MAX_LABEL_WORDS = 5  # text lying inside a region is its label only if it is thi
 # these are read first, and the whole text only when those match nothing.
 PHRASE_ENDS = {"on", "over", "under", "to", "with", "at", "from", "behind", "above", "below", "against",
                "onto", "into", "in", "by", "beneath", "around", "through", "for", "of"}
+# Words joined like this are two things, not one: a slash between words, an ampersand, "or",
+# "and". A slash between short marks or numbers abbreviates or sizes, and joins nothing.
+JOINED = re.compile(r"(?<=[^\W\d_]{3})\s*/\s*(?=[^\W\d_]{3})|\s*&\s*|\s+(?:or|and)\s+", re.IGNORECASE)
 
 
 def tokens(text: str) -> list[str]:
@@ -77,6 +80,14 @@ class Match:
     candidates: list = field(default_factory=list)  # classes the words point to when they disagree
 
 
+def _before_phrase_end(text: str) -> str:
+    """The text as printed, up to the word that ends its noun phrase."""
+    for found in re.finditer(r"[^\W\d_]+", text):
+        if found.group().casefold() in PHRASE_ENDS:
+            return text[:found.start()] or text
+    return text
+
+
 def match_text(text: str | None, index: AliasIndex) -> Match:
     """The class a text names, or UNKNOWN. Two classes in play is UNKNOWN too, with both
     listed: a person picks in one key, and nothing is guessed."""
@@ -88,6 +99,17 @@ def match_text(text: str | None, index: AliasIndex) -> Match:
         if word in PHRASE_ENDS:
             break
         subject.append(word)
+    whole = index.spans(subject)
+    if not (len(whole) == 1 and whole[0][:2] == (0, len(subject))):  # "x and y" can be one alias
+        sides = JOINED.split(_before_phrase_end(text))
+        if len(sides) > 1:
+            matches = [match_text(side, index) for side in sides]
+            classes = {m.class_id for m in matches}
+            if len(classes) == 1 and UNKNOWN not in classes:
+                return matches[0]
+            named = sorted({c for m in matches for c in m.candidates})
+            if named:  # one side unknown is no better than two classes: nothing is guessed
+                return Match(UNKNOWN, candidates=named)
     for scope in (subject, words):
         spans = index.spans(scope)
         if not spans:
@@ -225,16 +247,27 @@ def spread(analyses, legend, onto, thin_width) -> None:
     shape as a region a callout named, then the legend. `analyses` have `.result.regions`
     and `.proposals`, and `.detail` (None for a whole sheet)."""
     rows = [(a, r) for a in analyses for r in a.result.regions if not r.dropped]
-    _from_hatches(rows, thin_width)
-    if legend:
-        _from_legend(rows, legend, AliasIndex.of(onto))
+    index = AliasIndex.of(onto)
+    table = _legend_table(legend)
+    _from_hatches(rows, thin_width, table, index)
+    _from_legend(rows, table, index)
 
 
 def _label(analysis, region) -> str:
     return f"{region.id} in detail {analysis.detail.index}" if analysis.detail else region.id
 
 
-def _from_hatches(rows, thin_width) -> None:
+def _legend_table(legend) -> dict:
+    """{exact hatch: its legend words, each once}. A solid fill has no pattern to look up."""
+    table: dict[tuple, list] = {}
+    for entry in legend:
+        key = hatch_key({"pattern": entry.pattern, "scale": entry.scale, "angle": entry.angle}) if entry.pattern else None
+        if key and entry.text not in table.setdefault(key, []):
+            table[key].append(entry.text)
+    return table
+
+
+def _from_hatches(rows, thin_width, table, index) -> None:
     groups: dict[tuple, list] = {}
     for analysis, region in rows:
         key = group_key(region, thin_width)
@@ -249,6 +282,8 @@ def _from_hatches(rows, thin_width) -> None:
         if len(named) != 1:
             continue  # nothing to copy, or callouts on this hatch disagree: guess nothing
         class_id, (donor_analysis, donor) = next(iter(named.items()))
+        if any(match_text(w, index).class_id != class_id for w in table.get(key[:3], ())):
+            continue  # the legend gives this hatch another meaning: one label does not outvote it
         words = donor_analysis.proposals[donor.id]["verbatim"][0]
         shape = "thin" if key[3] else "compact"
         for analysis, region in members:
@@ -259,15 +294,12 @@ def _from_hatches(rows, thin_width) -> None:
                                        f"{_label(donor_analysis, donor)}, named by callout '{words}'")
 
 
-def _from_legend(rows, legend, index) -> None:
+def _from_legend(rows, table, index) -> None:
     """A swatch's meaning applies only to its exact hatch: a pattern can be used at another
-    scale for something else, and a solid fill is no pattern at all. The text stays on the
-    proposal even when no class matches, so a person sees what the sheet calls it."""
-    table: dict[tuple, list] = {}
-    for entry in legend:
-        key = hatch_key({"pattern": entry.pattern, "scale": entry.scale, "angle": entry.angle}) if entry.pattern else None
-        if key and entry.text not in table.setdefault(key, []):
-            table[key].append(entry.text)
+    scale for something else, and a solid fill is no pattern at all. Two rows with one hatch
+    say the sheet draws two things alike, so the hatch names neither, even when their words
+    map to one class. The text stays on the proposal even when no class matches, so a person
+    sees what the sheet calls it."""
     for analysis, region in rows:
         words = table.get(hatch_key(region.hatch))
         proposal = analysis.proposals[region.id]
@@ -277,9 +309,9 @@ def _from_legend(rows, legend, index) -> None:
         classes = sorted({m.class_id for m in matches})
         proposal["verbatim"] = list(proposal["verbatim"]) + [w for w in words if w not in proposal["verbatim"]]
         shown = " / ".join(f"'{w}'" for w in words)
-        if len(classes) == 1 and classes[0] != UNKNOWN:
+        if len(words) == 1 and classes[0] != UNKNOWN:
             proposal.update(class_id=classes[0], source=LEGEND, candidates=classes,
                             reason=f"the legend calls this hatch {shown}; text matches alias '{matches[0].alias}'")
         else:
-            known = [c for c in classes if c != UNKNOWN]
+            known = sorted({c for m in matches for c in m.candidates})
             proposal.update(candidates=known, reason=f"the legend calls this hatch {shown}, which names no single class")

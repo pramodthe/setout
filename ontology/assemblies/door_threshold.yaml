@@ -25,7 +25,7 @@ slots:
     position: under
     description: The slab, step or set-down the threshold is built on, inside and out.
   - id: flashing
-    classes: [sub_sill_flashing, edge_angle]
+    classes: [sub_sill_flashing, edge_angle, general_flashing]
     min: 0
     max: null
     section_visibility: cut
