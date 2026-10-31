@@ -39,6 +39,8 @@ def test_system_prompt_states_the_contract():
     assert "PARAMS" in prompt
     assert "{component_catalog}" not in prompt
     assert "(none)" in prompt
+    assert "add a part" in prompt
+    assert "new named mesh" in prompt
 
 
 def test_vision_off_omits_image_bytes():

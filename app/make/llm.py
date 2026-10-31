@@ -57,6 +57,8 @@ Start the script with PARAMS, a dict of every dimension in millimetres. OVERRIDE
 
 Each part is one named mesh object in a named collection. On every object set dims (a JSON object of the PARAMS keys that size that part), build_order (an int, bottom-up), material (a short name) and component_ref (an empty string unless the catalog gives an id). Give each part a distinct colour.
 
+When the user asks to add a part, create a new named mesh object for it. Keep every part that is already in the scene. Do not satisfy an add by only changing an existing part's dimensions, material, or name.
+
 Helpers injected by the harness:
 - box_mm(name, size, location=(0, 0, 0), *, collection, dims, material, build_order, color, metallic=0, roughness=0.5)
   size and location are millimetres. location is the minimum corner. size is (x, y, z). The object origin is the centre of the box.

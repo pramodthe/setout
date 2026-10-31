@@ -96,9 +96,12 @@ export default function Library(): JSX.Element {
           onChange={(e) => setQ(e.target.value)}
         />
         {!pub && (
-          <a className="btn primary" href="#/workbench">
-            + Add from PDF
-          </a>
+          <>
+            <a className="btn" href="#/make">3D Make</a>
+            <a className="btn primary" href="#/workbench">
+              + Add from PDF
+            </a>
+          </>
         )}
       </header>
       <nav className="tabs">

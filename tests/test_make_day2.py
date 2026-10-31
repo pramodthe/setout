@@ -238,6 +238,7 @@ def test_feedback_bakes_overrides_and_writes_the_next_version():
     assert "upturn_h" in body
     assert "sealant bead" in body
     assert "150mm" in body
+    assert "new named mesh" in body
     row = _version(first["project_id"], 2)
     assert row["source"] == "feedback"
     assert row["parent_n"] == 1

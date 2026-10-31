@@ -211,7 +211,9 @@ def build_messages(mode: str, text: str, version: dict | None, images: list | No
             "Current tree.json:\n" + tree + "\n\n"
             + baked
             + "Feedback:\n" + text + "\n\n"
-            "Return the full corrected script. Keep existing part names unless the feedback adds or removes a part."
+            "Return the full corrected script. Keep existing part names. "
+            "If the feedback asks to add a part, add one new named mesh for it and keep every part already in the tree. "
+            "Do not satisfy an add by resizing or renaming an existing part."
         )
     else:
         body = text
