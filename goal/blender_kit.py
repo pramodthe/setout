@@ -14,7 +14,7 @@ import bpy
 from mathutils import Vector
 
 __all__ = ["start", "materials", "prism", "box", "sheet", "lathe", "rod", "screw", "brick_wall", "tiles", "PARTS", "tally", "finish",
-           "packers_along", "fixings_along", "seal_joint", "sliding_door", "cavity_wall", "weep_vents", "floor_finish", "lintel"]
+           "packers_along", "fixings_along", "seal_joint", "sliding_door", "cavity_wall", "weep_vents", "floor_finish", "lintel", "export_parts"]
 
 MM = 0.001
 OUT = Path(os.environ.get("SETOUT_OUT", "."))
@@ -387,9 +387,33 @@ def export_glb(file) -> None:
         print("glb export failed:", str(error)[:300])
 
 
+def export_parts(file="parts.json.gz") -> None:
+    """Every part's triangles in mm, in the order they were built, for the app's viewer. Pieces of one
+    kind stay together as one row, the way a parts list reads, and remember how many they are."""
+    import gzip
+    import json
+    import re
+    rows: dict = {}
+    for obj, group, name in PARTS:
+        material = obj.data.materials[0].name
+        base = re.sub(r"(_\d+)+$", "", name)
+        row = rows.setdefault((base, material), {"name": base, "material": material, "group": group, "pieces": 0, "tris": []})
+        row["pieces"] += 1
+        mesh = obj.data
+        mesh.calc_loop_triangles()
+        matrix = obj.matrix_world
+        for triangle in mesh.loop_triangles:
+            for index in triangle.vertices:
+                row["tris"].extend(round(c / MM, 2) for c in matrix @ mesh.vertices[index].co)
+    (OUT / file).write_bytes(gzip.compress(json.dumps(list(rows.values())).encode(), 9))
+
+
 def finish(section_at=0) -> None:
     """The standard pictures, framed from what was built: the cut face straight on, and a three-quarter
     view. A scene calls this last, so a scene never has to place a camera."""
+    if os.environ.get("SETOUT_EXPORT"):
+        export_parts()
+        return
     points = [obj.matrix_world @ Vector(corner) for obj, _, _ in PARTS for corner in obj.bound_box]
     low = Vector((min(p[k] for p in points) / MM for k in range(3)))
     high = Vector((max(p[k] for p in points) / MM for k in range(3)))

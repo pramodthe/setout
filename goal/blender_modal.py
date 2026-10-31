@@ -29,6 +29,17 @@ def render_model_code(kit: str, scene: str) -> dict:
     return _run(kit, scene)
 
 
+@app.function(image=image, cpu=4.0, memory=8192, timeout=300, block_network=True)
+def export_model_code(kit: str, scene: str):
+    """A model's scene as parts for the viewer. With the network blocked a large result can't be uploaded,
+    so it comes back in pieces small enough to travel with the reply."""
+    import os
+    os.environ["SETOUT_EXPORT"] = "1"
+    for name, payload in _run(kit, scene).items():
+        for start in range(0, max(len(payload), 1), 1 << 20):
+            yield name, payload[start:start + (1 << 20)]
+
+
 def _run(kit: str, scene: str) -> dict:
     import io
     import os

@@ -117,3 +117,16 @@ def test_a_cutaway_steps_layers_back_and_keeps_the_base_whole(tmp_path):
     bricks = [p for p in cut if p["family"] == "brick"]
     assert max(p["triangles"][..., 1].max() for p in bricks) < whole
     assert max(p["triangles"][..., 1].max() for p in cut) == pytest.approx(whole)  # the base still runs the whole way
+
+
+def test_a_blender_scene_reads_as_a_detail_and_stays_a_trial(tmp_path, monkeypatch):
+    from app import blender_details
+    monkeypatch.setattr(blender_details, "VAR", tmp_path)
+    row = {"name": "membrane", "material": "membrane", "group": "layers", "pieces": 2, "tris": [10.0, 20.0, 30.0] * 3}
+    blender_details.publish("blender-test", "A wall", "blender-trial", [row, {**row, "name": "fixing", "material": "galvanised"}])
+    scene = blender_details.scene("blender-test")
+    first = scene["solids"][0]
+    assert first["tris"][:3] == [20.0, 30.0, 10.0]  # across, up, along
+    assert scene["install_order"] == ["membrane", "fixing"] and scene["solids"][1]["layer"] == "steel"
+    assert first["provenance"] == "assumption" and "verified" in first["note"] and scene["verification"] == []
+    assert blender_details.scene("blender-../x") is None and blender_details.scene("other") is None

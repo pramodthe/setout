@@ -414,6 +414,12 @@ async def get_library() -> dict:
 @app.get("/api/specs/{detail_id}/scene")
 async def get_scene(detail_id: str) -> dict:
     """Build + verify on demand (fast: pure-Python meshes) for the viewer page."""
+    from . import blender_details
+    if blender_details.is_one(detail_id):
+        found = blender_details.scene(detail_id)
+        if found is None:
+            raise HTTPException(404, "unknown detail")
+        return found
     native = _database_version(detail_id)
     if native:
         from .v3_api import scene
@@ -431,6 +437,12 @@ async def get_scene(detail_id: str) -> dict:
 @app.get("/api/specs/{detail_id}/drawing")
 async def get_drawing(detail_id: str):
     """The source drawing, upright (as SAM saw it; regions are relative to it)."""
+    from . import blender_details
+    if blender_details.is_one(detail_id):
+        png = blender_details.drawing(detail_id)
+        if png is None:
+            raise HTTPException(404, "no drawing for this detail")
+        return Response(png, media_type="image/png")
     native = _database_version(detail_id)
     if native and native["figure_id"]:
         from . import database as tables, sam

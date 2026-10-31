@@ -4,6 +4,8 @@ Every size below is an assumption: the drawing is not to scale. This shows what 
 It says nothing yet about whether a model can write it.
 """
 from blender_kit import *  # noqa: F403
+from blender_kit import explode, export_glb, settle, shot, stage
+import os
 
 start()
 materials()
@@ -124,6 +126,9 @@ box("floor_bed", (0, ANGLE_Y + ANGLE_LEG + 4, 2), (WALL_END, SLAB_IN, IN_FINISH 
 tiles("floor_tile", 0, WALL_END, ANGLE_Y + 8, SLAB_IN, IN_FINISH - 12, IN_FINISH, 300, 4, "tile", "floor_finish")
 
 print("parts", len(PARTS), tally())
+if os.environ.get("SETOUT_EXPORT"):
+    export_parts()
+    raise SystemExit
 
 stage()
 shot("section.png", (-2600, 60, 40), (0, 60, 40), size=(1400, 1000), samples=32, ortho=1050)
