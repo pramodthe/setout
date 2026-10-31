@@ -34,3 +34,7 @@ web/node_modules/
 # Private plans and research stay on the owner's machine
 docs/
 research_notes/
+
+# Day-1 3D Make eval output. The report is redacted, and it still stays local.
+eval/make/out/**
+!eval/make/out/.gitkeep

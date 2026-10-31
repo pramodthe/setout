@@ -18,3 +18,4 @@ psycopg[binary]==3.3.6
 playwright==1.64.1
 ezdxf==1.4.5
 PyYAML==6.0.3
+openai==3.42.0
