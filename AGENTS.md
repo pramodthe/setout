@@ -97,3 +97,11 @@ need a Modal login (`modal token new`).
 - `training/`: Modal training jobs and the segmentation scorer (they spend GPU
   money); `dashboard/`: builds the local results page into `data/dashboard/`
 - `scripts/demo_drawing.py`: draws our own test drawings into `data/demo/`
+
+## Cursor Cloud specific instructions
+
+The environment install creates `.venv`, installs the Python and web dependencies, installs Playwright Chromium, and builds `web/dist`. On boot the API serves that bundle at `http://127.0.0.1:8000` with `SETOUT_VAR=var` and the embedded worker. The library and seed builds run without `META_API_KEY`. AI generation, the guide, and SAM need that key; CAD objects also need a Modal login.
+
+The default image has Python 3.12 and Node 22 on the login-shell `PATH`, but not `python3.12-venv`. `python3 -m venv .venv` fails until that package is installed; the environment install does this.
+
+`python -m pytest tests/ -q` uses SQLite (Muse, SAM, and Modal are stubbed). Postgres is optional: `scripts/test_postgres.sh` needs `SETOUT_TEST_DATABASE_URL`. Its default socket path is macOS-only.
