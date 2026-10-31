@@ -24,6 +24,7 @@ ORDER = ("concrete", "block", "brick", "stone", "reinforcement", "mortar", "fixi
          "insulation", "board", "timber", "thinset", "tile", "plaster", "sealant", "metal", "glass", "unknown")
 COURSE_MM = {"brick": 76.0, "block": 200.0}  # the usual course, only to give the draft a sensible size
 LONGEST_MM = 1500.0
+CUTAWAY = "left"  # layers step back from this side, so what lies behind them shows
 _folder = lambda: Path(VAR) / "section-drafts"  # noqa: E731
 
 
@@ -93,7 +94,7 @@ def _run(ident, doc_id, crop_id) -> None:
         _save(ident, {"id": ident, "state": "running", "step": "working out what the slice doesn't show"})
         groups, second = hidden.ask(picture, regions, size, labelled)
         marked = {r["id"]: r for r in labelled["regions"]}
-        pieces = hidden.assemble(regions, marked, groups["groups"], size, compose.DEPTH_SHARE)
+        pieces = hidden.assemble(regions, marked, groups["groups"], size, compose.DEPTH_SHARE, CUTAWAY)
         scene = scene_of(pieces, labelled.get("assembly") or "Section draft", labelled.get("assembly"), scale_of(regions, marked, size), size[1])
         tokens = (first.get("total_tokens") or 0) + (second.get("total_tokens") or 0)
         _save(ident, {"id": ident, "state": "done", "scene": scene, "regions": len(regions), "tokens": tokens,

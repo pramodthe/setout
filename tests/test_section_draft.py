@@ -104,3 +104,16 @@ def test_ties_lie_in_the_mortar_beds_the_section_shows(tmp_path):
     built = hidden.build([tie], found, size, 0.8, marked)
     assert len(built) == 1
     assert abs(built[0]["triangles"][..., 2].mean() - (size[1] - (bed.box[1] + bed.box[3]) / 2)) < 12
+
+
+def test_a_cutaway_steps_layers_back_and_keeps_the_base_whole(tmp_path):
+    found, size = regions.find(drawing(tmp_path / "s.png"))
+    marked = {r["id"]: r for r in LABELS(found)["regions"]}
+    runs = compose.stepped(found, marked, size, "left", 300.0)
+    slab = next(r for r in found if r.width > 200)
+    assert slab.id not in runs and all(0 < run <= 300 for run in runs.values())
+    whole = max(p["triangles"][..., 1].max() for p in compose.build(found, marked, size))
+    cut = compose.build(found, marked, size, compose.DEPTH_SHARE, "left")
+    bricks = [p for p in cut if p["family"] == "brick"]
+    assert max(p["triangles"][..., 1].max() for p in bricks) < whole
+    assert max(p["triangles"][..., 1].max() for p in cut) == pytest.approx(whole)  # the base still runs the whole way

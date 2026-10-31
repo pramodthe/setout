@@ -81,12 +81,13 @@ def _beds(region, regions, marked, height) -> list[float]:
     return sorted({round(height - (r.box[1] + r.box[3]) / 2, 1) for r in near})
 
 
-def assemble(regions, marked, groups, size, depth_share) -> list[tuple[dict, str]]:
+def assemble(regions, marked, groups, size, depth_share, cutaway=None) -> list[tuple[dict, str]]:
     """Every piece, each with where it came from: `section` if the slice shows it, `hidden` if not."""
     from . import compose
-    shown = compose.build(regions, marked, size, depth_share)
+    shown = compose.build(regions, marked, size, depth_share, cutaway)
     wanted = [g for g in groups if not _already_built(g, marked)]
-    unseen = build(calibrated(wanted, regions, len(shown)), regions, size, depth_share, marked)
+    runs = compose.stepped(regions, marked, size, cutaway, depth_share * max(size)) if cutaway else None
+    unseen = build(calibrated(wanted, regions, len(shown)), regions, size, depth_share, marked, runs)
     return [(p, "section") for p in shown] + [(p, "hidden") for p in unseen]
 
 
@@ -115,7 +116,7 @@ def _piece(group, x, y, z, sizes) -> np.ndarray:
     return _block(x - across / 2, x + across / 2, y - along / 2, y + along / 2, z - up / 2, z + up / 2)
 
 
-def build(groups, regions, size, depth_share, marked=None) -> list[dict]:
+def build(groups, regions, size, depth_share, marked=None, runs=None) -> list[dict]:
     """Each group as a grid of real pieces at its region, along the depth and upward. What lies in
     a joint goes in the joints the section shows."""
     width, height = size
@@ -138,6 +139,8 @@ def build(groups, regions, size, depth_share, marked=None) -> list[dict]:
             levels = _beds(region, regions, marked, height) or levels
         for c in range(columns):
             y = depth * (c + 0.5) / columns
+            if runs and y > runs.get(region.id, depth):
+                continue
             for z in levels:
                 pieces.append({"triangles": _piece(group, x, y, z, sizes), "family": group["family"]})
     return pieces

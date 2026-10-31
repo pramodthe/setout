@@ -92,7 +92,7 @@ export default function DraftView({ draftId }: { draftId: string | null }): JSX.
       {scene && (
         <p className="draftnote">
           Shapes come from the drawing, and sizes are assumed. Ghosted parts aren't in the drawing: a model listed them.{" "}
-          <label>explode <input id="draftExplode" type="range" min={0} max={1} step={0.02} value={explode} onChange={(e) => move(Number(e.target.value))} /></label>
+          <label>explode <input id="draftExplode" type="range" min={0} max={120} step={2} value={explode} onChange={(e) => move(Number(e.target.value))} /></label>
         </p>
       )}
       <div ref={root} id="gl" style={{ position: "relative", width: "100%", height: "78vh" }} />

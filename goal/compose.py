@@ -14,6 +14,9 @@ JOINT = 0.17  # head joint, as a share of unit height
 UNIT_FAMILIES = tuple(UNIT_LENGTH)
 SPACED_FAMILIES = ("fixing", "reinforcement", "weep")
 SQUARE_ENOUGH = 0.95  # a region this full of its box is a rectangle: drawn lines wobble a pixel or two
+WIDE = 0.45  # of the sheet: a region this wide is the base everything stands on
+BAND = 0.08  # of the sheet: regions this close across it are one layer
+SHORTEST = 0.3  # of the run: where the outermost layer stops in a cutaway
 DEPTH_SHARE = 0.8  # depth of the assembly, as a share of the section's longest side
 
 
@@ -38,7 +41,21 @@ def _unit(region, family, height, y0, y1) -> np.ndarray:
     return _extrude(region, height, y0, y1)
 
 
-def build(regions, labels, size, depth_share=DEPTH_SHARE) -> list[dict]:
+def stepped(regions, labels, size, side, depth) -> dict:
+    """How far each region runs in a cutaway: the outermost layer stops shortest, so what lies behind it
+    shows, as a built-up wall is drawn peeled back. A wide base stays whole. {region id: run}."""
+    width = size[0]
+    standing = [r for r in regions if (labels.get(r.id) or {}).get("depth") != "empty" and r.width < WIDE * width]
+    middles = sorted({round((r.box[0] + r.box[2]) / 2 / (width * BAND)) for r in standing}, reverse=side == "right")
+    rank = {band: k for k, band in enumerate(middles)}
+    out = {}
+    for region in standing:
+        k = rank[round((region.box[0] + region.box[2]) / 2 / (width * BAND))]
+        out[region.id] = depth * (SHORTEST + (1 - SHORTEST) * k / max(len(middles) - 1, 1))
+    return out
+
+
+def build(regions, labels, size, depth_share=DEPTH_SHARE, cutaway=None) -> list[dict]:
     """Pieces in picture units: x across, z up, y the depth. `labels` maps region id to
     {"family", "depth"}, depth being continuous, units, spaced or empty. How far the assembly runs
     is a choice of how much to draw, which a section can't show, so it can be given."""
@@ -47,11 +64,14 @@ def build(regions, labels, size, depth_share=DEPTH_SHARE) -> list[dict]:
     pieces = []
     spacing = depth / 3
     rows = sorted({r.box[1] for r in regions})
+    runs = stepped(regions, labels, size, cutaway, depth) if cutaway else {}
+    full = depth
     for region in regions:
         label = labels.get(region.id) or {"family": "unknown", "depth": "continuous"}
         family, how = label["family"], label["depth"]
         if how == "empty":
             continue
+        depth = runs.get(region.id, full)
         if how == "units" and family in UNIT_FAMILIES:
             unit = UNIT_LENGTH[family] * region.height
             joint = JOINT * region.height
