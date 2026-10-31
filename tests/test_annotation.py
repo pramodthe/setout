@@ -786,7 +786,7 @@ def test_two_things_joined_in_a_label_name_neither(text, candidates, index):
 
 @pytest.mark.parametrize("text, class_id", [
     ("W/P MEMBRANE", "membrane"), ("M12/150 BOLT", "fixing"), ("BACKING ROD AND SEALANT", "backing_rod"),
-    ("MEMBRANE ON SCREED/SAND", "membrane"), ("MEMBRANE OR MEMBRANE", "membrane"),
+    ("OLD MEMBRANE ON SCREED/SAND", "membrane"), ("MEMBRANE OR MEMBRANE", "membrane"),
 ])
 def test_a_slash_or_and_that_joins_nothing_still_names(text, class_id, index):
     assert names.match_text(text, index).class_id == class_id
@@ -1016,6 +1016,7 @@ def two_details(tmp_path, thin=2.0):
     hatch(msp, box_points(0, 100, 800, 100 + thin), "ANSI31", scale=1)
     loop(msp, 0, 100, 800, 100 + thin)
     lines(msp, box_points(100, 100 + thin, 300, 200))
+    msp.add_line((400, 105), (700, 105))  # one line, bounding nothing
     note(msp, "NOTE", (0, -30))
     section(msp, 5000, 0, width=100, height=900)
     path = tmp_path / "sheet.dxf"
@@ -1048,12 +1049,27 @@ def test_a_frame_costs_no_pixels(tmp_path):
     assert render.px_per_unit == pytest.approx(upload.budget_scale(200, 180, pipeline.MARGIN_PX))
 
 
+def test_a_frame_inside_a_block_keeps_the_block_in_the_render():
+    """Every piece of a block has the block's handle: dropping the frame's would drop it all."""
+    doc = new_doc()
+    block = doc.blocks.new("DETAIL")
+    section(block, 0, 0, framed=True)
+    doc.modelspace().add_blockref("DETAIL", (0, 0))
+    section(doc.modelspace(), 2000, 0, framed=True)
+    note(doc.modelspace(), "NOTE", (0, -60))
+    whole = pipeline.analyse_sheet(doc)
+    index = next(a.detail.index for a in whole.analyses if a.detail.box[0] < 1000)
+    image = upload.render_detail(doc, whole, index).image
+    assert 0.8 < image.width / image.height < 1.3  # the block, not the note left beside it
+
+
 def test_the_thinnest_part_is_counted_in_pixels_and_lines_are_not_parts(tmp_path):
     path = two_details(tmp_path, thin=2.0)
     doc = dxf_ingest.load(path)
     whole = pipeline.analyse_sheet(doc)
     analysis = next(a for a in whole.analyses if a.detail.box[0] < 1000)
     render = upload.render_detail(doc, whole, analysis.detail.index)
+    assert any(r.kind == "stroke" and r.width < 1.0 for r in analysis.result.regions)
     assert render.thinnest == pytest.approx(2.0, abs=0.2)
     assert render.thinnest_px == pytest.approx(render.thinnest * render.px_per_unit)
 
@@ -1933,6 +1949,15 @@ def test_a_skewed_frame_is_still_a_frame():
     assert len(sheet.details) == 3 and sum(k.framed for k in sheet.details) == 2
 
 
+def test_a_long_thin_slanted_part_is_no_rectangle():
+    """Each side is judged on its own: a short side slanted hard must not pass because a long
+    side makes it look small."""
+    doc = new_doc()
+    outline = doc.modelspace().add_lwpolyline([(0, 0), (1000, 0), (1006, 40), (6, 40)], close=True)
+    d = drawing.read(doc)
+    assert not details._is_rectangle(next(c for c in d.curves if c.handle == outline.dxf.handle))
+
+
 def test_a_frame_holding_one_group_stays_one_detail():
     doc, _ = sheet_of((0, 0), (900, 0), framed=True)
     d, sheet = split_of(doc)
@@ -1942,14 +1967,14 @@ def test_a_frame_holding_one_group_stays_one_detail():
 
 
 def test_a_scrap_in_a_split_frame_joins_its_group_or_is_counted():
-    doc, msp, _ = framed_pair()
-    tick = msp.add_line((205, 50), (212, 50))  # past the gap from the left group, within reach of it
-    far = msp.add_line((0, 200), (5, 200))  # clear of both groups' boxes and of anything near
+    doc, msp, _ = framed_pair(box_points(-40, -40, 520, 640))
+    tick = msp.add_line((212, 50), (219, 50))  # past the gap from the left group, within reach of it
+    far = msp.add_line((0, 500), (5, 500))  # further from both groups than a scrap reaches
     d, sheet = split_of(doc)
     split = sorted((k for k in sheet.details if k.framed), key=lambda k: k.box[0])
     assert tick.dxf.handle in {d.curves[n].handle for n in split[0].curves}
-    assert far.dxf.handle in {d.curves[n].handle for n in split[0].curves}
-    assert sheet.fragments == 0
+    assert far.dxf.handle not in {d.curves[n].handle for k in sheet.details for n in k.curves}
+    assert sheet.fragments == 1
 
 
 def test_text_in_a_split_frame_goes_to_its_own_group():
@@ -2245,6 +2270,12 @@ def test_two_legend_rows_for_one_hatch_name_nothing_even_when_they_map_to_one_cl
     doc, _ = legend_doc(("AR-CONC", 10, "HOB KEPT"), ("AR-CONC", 10, "HOB REMOVED"), ("ANSI31", 1, "MORE"))
     p = proposal(sheet_analysis(doc), 50, 50)
     assert p["class_id"] == names.UNKNOWN and p["verbatim"] == ["HOB KEPT", "HOB REMOVED"] and p["candidates"] == ["hob"]
+
+
+def test_a_legend_row_naming_two_things_offers_the_class_and_names_nothing():
+    doc, _ = legend_doc(("AR-CONC", 10, "OLD HOBS/PIERS"), ("ANSI31", 1, "MORE"), ("ANSI37", 5, "OTHER"))
+    p = proposal(sheet_analysis(doc), 50, 50)
+    assert p["class_id"] == names.UNKNOWN and p["candidates"] == ["hob"] and p["verbatim"] == ["OLD HOBS/PIERS"]
 
 
 def test_one_label_does_not_carry_across_a_hatch_the_legend_says_otherwise_about():

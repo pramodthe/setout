@@ -69,7 +69,8 @@ def render_detail(doc, whole, index: int) -> Render:
     drawing, detail = whole.drawing, analysis.detail
     reach = splitter.ATTACH * (drawing.text_height or 1.0)
     only = splitter.handles_of(drawing, detail) | splitter.annotation_near(doc, whole.sheet, reach).get(index, set())
-    only.discard(detail.frame)  # a frame only costs pixels
+    if [drawing.curves[k].handle for k in detail.curves].count(detail.frame) == 1:
+        only.discard(detail.frame)  # a frame only costs pixels, unless it is one piece of a block
     extra = [p for k in detail.callouts for p in drawing.extra.get(drawing.callouts[k].leader, [])]
     layout = None if drawing.frame == dxf_ingest.MODEL else drawing.frame
     x0, y0, x1, y1 = dxf_ingest.drawn_extents(doc, layout=layout, extra=extra, only=only)
