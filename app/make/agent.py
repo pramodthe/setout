@@ -27,7 +27,9 @@ _BBOX_MARKS = ("extends beyond", "under 0.05 mm", "no mesh objects")
 
 def generate(text: str, *, project_id: str | None = None, mode: str = "prompt",
              profile: str | None = None, timeout: int = 90, title: str | None = None,
-             complete_fn=None, runner=None, mutate_script=None, note=None) -> dict:
+             complete_fn=None, runner=None, mutate_script=None, note=None,
+             job_id: str | None = None, record_user: bool = True,
+             images: list | None = None, vision: bool | None = None) -> dict:
     """Run one generate job. ``mode`` is ``prompt`` (new project) or ``feedback``."""
     if mode not in ("prompt", "feedback"):
         raise ValueError(f"unknown mode {mode!r}")
@@ -36,10 +38,12 @@ def generate(text: str, *, project_id: str | None = None, mode: str = "prompt",
     runner = runner or default_run
     if mode == "prompt":
         project_id = project_id or uuid.uuid4().hex[:12]
-        db.create_project(title or _title_from(text), project_id)
+        if db.get_project(project_id) is None:
+            db.create_project(title or _title_from(text), project_id)
         version = None
-        parent_n = None
-        number = 1
+        previous = db.latest_version(project_id)
+        parent_n = previous["n"] if previous else None
+        number = parent_n + 1 if parent_n else 1
     else:
         if not project_id:
             raise ValueError("feedback needs a project id")
@@ -50,11 +54,19 @@ def generate(text: str, *, project_id: str | None = None, mode: str = "prompt",
             raise ValueError(f"project {project_id} has no version to revise")
         parent_n = version["n"]
         number = parent_n + 1
-    job_id = uuid.uuid4().hex
-    db.create_job(job_id, project_id, "generate")
+    if job_id is None:
+        job_id = uuid.uuid4().hex
+        db.create_job(job_id, project_id, "generate")
     db.set_job_state(job_id, "running", attempt=0)
-    db.add_message(uuid.uuid4().hex, project_id, "user", redact(text), job_id=job_id)
-    messages = build_messages(mode, text, version)
+    if record_user:
+        db.add_message(uuid.uuid4().hex, project_id, "user", redact(text), job_id=job_id)
+    if vision is None:
+        vision = _vision(profile)
+    messages = build_messages(mode, text, version, images=images, vision=vision)
+    image_count = _image_count(messages)
+    if images or image_count:
+        _record(job_id, {"kind": "images", "count": image_count, "vision": bool(vision),
+                         "attached": len(images or [])}, 0)
     # Feedback bakes previous overrides into the prompt. The new script is the
     # source of those numbers, so the harness is not asked to apply them again.
     overrides: dict = {}
@@ -149,6 +161,12 @@ def generate(text: str, *, project_id: str | None = None, mode: str = "prompt",
         db.touch_project(project_id, title=scene_name, active_version=number)
     else:
         db.touch_project(project_id, active_version=number)
+    _record(job_id, {
+        "kind": "result",
+        "version": number,
+        "status": status,
+        "error": None if status == "done" else redact(problem or "")[-800:],
+    }, _attempt_of(job_id))
     db.set_job_state(job_id, "done" if status == "done" else "failed", attempt=_attempt_of(job_id))
     part_count = _part_count(tree_text)
     assistant = summary or ("Done" if status == "done" else "Failed")
@@ -174,27 +192,31 @@ def generate(text: str, *, project_id: str | None = None, mode: str = "prompt",
     }
 
 
-def build_messages(mode: str, text: str, version: dict | None) -> list[dict]:
+def build_messages(mode: str, text: str, version: dict | None, images: list | None = None,
+                   vision: bool = True) -> list[dict]:
     """System prompt plus the user turn. Feedback includes the script, the tree and baked values."""
+    from app.make.llm import build_user_content
     system = {"role": "system", "content": system_prompt()}
-    if mode != "feedback" or not version:
-        return [system, {"role": "user", "content": text}]
-    script = version.get("script") or ""
-    tree = version.get("tree_json") or "{}"
-    current = current_values(version.get("params"), version.get("overrides"))
-    baked = "Current values in millimetres (overrides already applied; keep these unless the feedback changes them):\n"
-    baked += json.dumps(current, sort_keys=True) + "\n\n"
-    raw_overrides = _load_object(version.get("overrides"))
-    if raw_overrides:
-        baked += "Overrides by part, in millimetres and degrees:\n" + json.dumps(raw_overrides, sort_keys=True) + "\n\n"
-    user = (
-        "Current Blender script:\n```python\n" + script + "\n```\n\n"
-        "Current tree.json:\n" + tree + "\n\n"
-        + baked
-        + "Feedback:\n" + text + "\n\n"
-        "Return the full corrected script. Keep existing part names unless the feedback adds or removes a part."
-    )
-    return [system, {"role": "user", "content": user}]
+    if mode == "feedback" and version:
+        script = version.get("script") or ""
+        tree = version.get("tree_json") or "{}"
+        current = current_values(version.get("params"), version.get("overrides"))
+        baked = "Current values in millimetres (overrides already applied; keep these unless the feedback changes them):\n"
+        baked += json.dumps(current, sort_keys=True) + "\n\n"
+        raw_overrides = _load_object(version.get("overrides"))
+        if raw_overrides:
+            baked += "Overrides by part, in millimetres and degrees:\n" + json.dumps(raw_overrides, sort_keys=True) + "\n\n"
+        body = (
+            "Current Blender script:\n```python\n" + script + "\n```\n\n"
+            "Current tree.json:\n" + tree + "\n\n"
+            + baked
+            + "Feedback:\n" + text + "\n\n"
+            "Return the full corrected script. Keep existing part names unless the feedback adds or removes a part."
+        )
+    else:
+        body = text
+    content = build_user_content(body, images or [], vision=vision) if images else body
+    return [system, {"role": "user", "content": content}]
 
 
 def current_values(params_json, overrides_json) -> dict:
@@ -256,6 +278,7 @@ def _public_event(event: dict, attempt: int) -> dict:
         },
         "via": event.get("via") or "",
         "attempt": event.get("attempt") or attempt,
+        "tools_attempted": bool(event.get("tools_attempted")),
     }
 
 
@@ -356,3 +379,94 @@ def _title_from(text: str) -> str:
 def _note(message: str) -> None:
     import sys
     sys.stderr.write(redact(message) + "\n")
+
+
+def _vision(profile: str | None) -> bool:
+    try:
+        from app.make.llm import describe
+        return bool(describe(profile)["caps"]["vision"])
+    except Exception:
+        return True
+
+
+def _image_count(messages: list) -> int:
+    count = 0
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, list):
+            count += sum(1 for part in content if isinstance(part, dict) and part.get("type") == "image_url")
+    return count
+
+
+def rebuild(job_id: str, project_id: str, version_n: int, overrides: dict, *,
+            runner=None, timeout: int = 90) -> dict:
+    """Re-run a saved script with overrides. No model call. Writes version n+1."""
+    runner = runner or default_run
+    version = db.get_version(project_id, version_n)
+    if version is None:
+        raise KeyError(version_n)
+    script = version.get("script") or ""
+    latest = db.latest_version(project_id)
+    number = (latest["n"] if latest else version_n) + 1
+    db.set_job_state(job_id, "running", attempt=1)
+    result = runner(script, overrides, timeout)
+    problem = _problem(result)
+    accept = bool(result.get("ok")) and problem is None
+    status = "done" if accept else "failed"
+    paths = _write_artifacts(project_id, number, result.get("files") or {}) if accept else {}
+    tree_text = _tree_text(result) if accept else ""
+    db.insert_version({
+        "id": uuid.uuid4().hex,
+        "project_id": project_id,
+        "n": number,
+        "parent_n": version_n,
+        "source": "override",
+        "script": _scrub_script(script),
+        "params": version.get("params") or "{}",
+        "overrides": json.dumps(overrides),
+        "glb_path": paths.get("scene.glb"),
+        "tree_json": tree_text or None,
+        "preview_path": paths.get("preview.png"),
+        "render_path": None,
+        "profile": version.get("profile") or "",
+        "model": version.get("model") or "",
+        "status": status,
+        "error": None if status == "done" else redact(problem or "")[-REPAIR_TAIL:],
+    })
+    if status == "done":
+        db.touch_project(project_id, active_version=number)
+    _record(job_id, {
+        "kind": "result",
+        "version": number,
+        "status": status,
+        "error": None if status == "done" else redact(problem or "")[-800:],
+    }, 1)
+    db.set_job_state(job_id, "done" if status == "done" else "failed", attempt=1)
+    return {"project_id": project_id, "job_id": job_id, "version": number, "status": status}
+
+
+def render_scene(job_id: str, project_id: str, version_n: int, quality: str, *,
+                 render_fn=None, timeout: int = 540) -> dict:
+    """Render the saved script of one version and store render.png on that row."""
+    from app.make.worker import render as default_render
+    render_fn = render_fn or default_render
+    version = db.get_version(project_id, version_n)
+    if version is None:
+        raise KeyError(version_n)
+    db.set_job_state(job_id, "running", attempt=1)
+    overrides = _load_object(version.get("overrides"))
+    result = render_fn(version.get("script") or "", overrides, quality, timeout=timeout)
+    png = (result.get("files") or {}).get("render.png")
+    status = "done" if result.get("ok") and png else "failed"
+    path = None
+    if status == "done":
+        dest = store.var_root() / "make" / project_id / str(version_n)
+        dest.mkdir(parents=True, exist_ok=True)
+        file = dest / "render.png"
+        file.write_bytes(png if isinstance(png, bytes) else png.encode())
+        path = str(file.relative_to(store.var_root()))
+        db.set_render_path(project_id, version_n, path)
+    error = None if status == "done" else redact(result.get("traceback") or "render failed")[-800:]
+    _record(job_id, {"kind": "result", "version": version_n, "status": status, "error": error}, 1)
+    db.set_job_state(job_id, "done" if status == "done" else "failed", attempt=1)
+    return {"project_id": project_id, "job_id": job_id, "version": version_n, "status": status, "render_path": path}

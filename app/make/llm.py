@@ -117,6 +117,11 @@ def load_profiles(path: Path | None = None) -> dict:
 def clear_tool_cache() -> None:
     """Forget which profiles rejected tool calling. Tests use this."""
     _TOOLS_OFF.clear()
+    try:
+        from app.make.db import delete_settings_prefix
+        delete_settings_prefix("make.tools.")
+    except Exception:
+        return
 
 
 def system_prompt(component_catalog: str = "") -> str:
@@ -252,8 +257,10 @@ def complete(messages: list[dict], profile: str | None = None, *,
     script: str | None = None
     summary = ""
     use_tools = info["caps"]["tools"] is not False
+    tools_attempted = False
     try:
         if use_tools:
+            tools_attempted = True
             try:
                 response = _create(client, model, messages, tools=True)
                 _add_usage(tokens, response)
@@ -261,10 +268,10 @@ def complete(messages: list[dict], profile: str | None = None, *,
             except Exception as exc:
                 if not _tools_unsupported(exc):
                     raise LLMCallError(redact(f"{type(exc).__name__}: {exc}")) from None
-                _TOOLS_OFF.add(info["id"])
+                _remember_fence(info["id"])
                 script = None
             if script is None:
-                _TOOLS_OFF.add(info["id"])
+                _remember_fence(info["id"])
                 via = "fence"
                 response = _create(client, model, _with_fence_ask(messages), tools=False)
                 _add_usage(tokens, response)
@@ -287,6 +294,7 @@ def complete(messages: list[dict], profile: str | None = None, *,
         "tokens": tokens,
         "via": via,
         "attempt": attempt,
+        "tools_attempted": tools_attempted,
     }
     return {
         "script": script,
@@ -370,12 +378,35 @@ def _model_for(pid: str, default_id: str, spec: dict) -> str:
 
 
 def _tools_mode(pid: str, spec: dict):
-    if pid in _TOOLS_OFF:
+    if _fence_is_default(pid):
         return False
     mode = spec.get("tools", "auto")
     if mode is False or mode == "false":
         return False
     return mode if mode is not True else "auto"
+
+
+def _fence_is_default(pid: str) -> bool:
+    """True after this profile has already missed tool calling, including across processes."""
+    if pid in _TOOLS_OFF:
+        return True
+    try:
+        from app.make.db import get_setting
+        if get_setting(f"make.tools.{pid}") == "fence":
+            _TOOLS_OFF.add(pid)
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def _remember_fence(pid: str) -> None:
+    _TOOLS_OFF.add(pid)
+    try:
+        from app.make.db import put_setting
+        put_setting(f"make.tools.{pid}", "fence")
+    except Exception:
+        return
 
 
 def _missing(pid: str, default_id: str, spec: dict, model: str) -> list[str]:

@@ -206,3 +206,76 @@ def get_setting(key: str) -> str | None:
     with connect() as con:
         row = con.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
     return None if row is None else row["value"]
+
+
+def delete_settings_prefix(prefix: str) -> None:
+    with connect() as con:
+        con.execute("DELETE FROM settings WHERE key LIKE ?", (prefix + "%",))
+        con.commit()
+
+
+def list_projects() -> list[dict]:
+    with connect() as con:
+        rows = con.execute("SELECT * FROM projects ORDER BY created").fetchall()
+    return [dict(row) for row in rows]
+
+
+def list_messages(project_id: str) -> list[dict]:
+    with connect() as con:
+        rows = con.execute(
+            "SELECT * FROM messages WHERE project_id = ? ORDER BY created",
+            (project_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def list_versions(project_id: str) -> list[dict]:
+    with connect() as con:
+        rows = con.execute(
+            "SELECT * FROM scene_versions WHERE project_id = ? ORDER BY n",
+            (project_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_version(project_id: str, number: int) -> dict | None:
+    with connect() as con:
+        row = con.execute(
+            "SELECT * FROM scene_versions WHERE project_id = ? AND n = ?",
+            (project_id, number),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def set_render_path(project_id: str, number: int, path: str) -> None:
+    with connect() as con:
+        con.execute(
+            "UPDATE scene_versions SET render_path = ? WHERE project_id = ? AND n = ?",
+            (path, project_id, number),
+        )
+        con.commit()
+
+
+def claim_queued() -> dict | None:
+    """Move the oldest queued job to running. None when the queue is empty."""
+    with connect() as con:
+        row = con.execute(
+            "SELECT id FROM jobs WHERE state = 'queued' ORDER BY created LIMIT 1"
+        ).fetchone()
+        if row is None:
+            return None
+        updated = con.execute(
+            "UPDATE jobs SET state = 'running', updated = ? WHERE id = ? AND state = 'queued'",
+            (now(), row["id"]),
+        )
+        con.commit()
+        if updated.rowcount != 1:
+            return None
+        full = con.execute("SELECT * FROM jobs WHERE id = ?", (row["id"],)).fetchone()
+    return dict(full) if full else None
+
+
+def jobs_in_state(state: str) -> list[dict]:
+    with connect() as con:
+        rows = con.execute("SELECT * FROM jobs WHERE state = ? ORDER BY created", (state,)).fetchall()
+    return [dict(row) for row in rows]

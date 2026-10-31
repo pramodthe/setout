@@ -149,7 +149,7 @@ def test_tool_call_returns_the_script():
     assert result["via"] == "tool"
     assert result["script"] == "print(1)"
     assert result["summary"] == "a box"
-    assert set(result["event"]) == {"profile", "model", "latency_s", "tokens", "via", "attempt"}
+    assert set(result["event"]) == {"profile", "model", "latency_s", "tokens", "via", "attempt", "tools_attempted"}
     assert result["event"]["via"] == "tool"
     assert "base_url" not in result["event"]
     assert len(client.calls) == 1
@@ -186,3 +186,24 @@ def test_missing_tool_call_uses_the_fence():
     assert result["via"] == "fence"
     assert result["script"] == "print(2)"
     assert len(client.calls) == 2
+    assert result["event"]["tools_attempted"] is True
+
+
+def test_fence_stays_the_default_after_the_memory_cache_is_cleared():
+    """A miss is remembered for the profile, so the next process does not spend a tool round trip."""
+    from app.make import llm
+
+    def handler(kwargs):
+        if kwargs.get("tools"):
+            error = RuntimeError("tools unsupported")
+            error.status_code = 400
+            raise error
+        return _Response(_Message("```python\nprint(1)\n```"))
+
+    complete([{"role": "user", "content": "build"}], profile="muse", client=FakeClient(handler))
+    llm._TOOLS_OFF.clear()
+    again = FakeClient(handler)
+    result = complete([{"role": "user", "content": "build"}], profile="muse", client=again)
+    assert result["via"] == "fence"
+    assert result["event"]["tools_attempted"] is False
+    assert "tools" not in again.calls[0]

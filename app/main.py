@@ -41,12 +41,17 @@ async def lifespan(_app):
     if os.environ.get("SETOUT_PUBLIC") != "1":
         from .runtime import ensure_worker
         ensure_worker()
+        if os.environ.get("SETOUT_MAKE_WORKER", os.environ.get("SETOUT_WORKER", "embedded")) != "external":
+            from .make.queue import ensure_worker as ensure_make_worker
+            ensure_make_worker()
     yield
 
 
 app = FastAPI(title="Setout", version="0.1.0", lifespan=lifespan)
 from .v3_api import router as v3_router
+from .make.router import router as make_router
 app.include_router(v3_router)
+app.include_router(make_router)
 
 # Public demo mode (SETOUT_PUBLIC=1): read-only, source drawings never served
 # (they are third-party documents), and the AI guide is rate-limited so a
