@@ -22,6 +22,7 @@ from app.make.redact import redact
 
 HARNESS = Path(__file__).resolve().parent / "harness.py"
 MAX_STDOUT = 64 * 1024
+MAX_ARTIFACT = 32 * 1024 * 1024
 _SECRET_MARKERS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "AUTHORIZATION")
 
 
@@ -111,8 +112,12 @@ def run(script: str, overrides: dict | None = None, timeout: int = 90, *,
             payload["traceback"] = f"killed at timeout after {timeout}s\n" + (payload.get("traceback") or "")
         elif returncode != 0 and not payload.get("ok"):
             payload["traceback"] = (payload.get("traceback") or "") + f"\nblender exit {returncode}"
-        files = _read_files(out, preview=preview, mode=mode) if payload.get("ok") and not killed else {}
-        if payload.get("ok") and not _required_files(files, preview=preview, mode=mode):
+        files, oversized = _read_files(out, preview=preview, mode=mode) if payload.get("ok") and not killed else ({}, [])
+        if oversized:
+            payload["ok"] = False
+            payload["traceback"] = (payload.get("traceback") or "") + "\nartifact exceeds the output cap: " + ", ".join(oversized)
+            files = {}
+        elif payload.get("ok") and not _required_files(files, preview=preview, mode=mode):
             payload["ok"] = False
             payload["traceback"] = (payload.get("traceback") or "") + "\nharness did not write the expected files"
             files = {}
@@ -241,16 +246,22 @@ def _read_result(out: Path) -> dict:
     return data
 
 
-def _read_files(out: Path, *, preview: bool, mode: str) -> dict[str, bytes]:
+def _read_files(out: Path, *, preview: bool, mode: str) -> tuple[dict[str, bytes], list[str]]:
     files: dict[str, bytes] = {}
-    for name in ("scene.glb", "tree.json"):
-        path = out / name
-        if path.is_file():
-            files[name] = path.read_bytes()
+    oversized: list[str] = []
+    names = ["scene.glb", "tree.json"]
     extra = "render.png" if mode == "render" else "preview.png"
-    if (preview or mode == "render") and (out / extra).is_file():
-        files[extra] = (out / extra).read_bytes()
-    return files
+    if preview or mode == "render":
+        names.append(extra)
+    for name in names:
+        path = out / name
+        if not path.is_file():
+            continue
+        if path.stat().st_size > MAX_ARTIFACT:
+            oversized.append(name)
+            continue
+        files[name] = path.read_bytes()
+    return files, oversized
 
 
 def _required_files(files: dict[str, bytes], *, preview: bool, mode: str) -> bool:

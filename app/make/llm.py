@@ -141,7 +141,7 @@ def describe(profile: str | None = None) -> dict:
     if pid not in profiles:
         raise LLMConfigError(f"unknown profile {pid!r}")
     spec = profiles[pid]
-    model = _model_for(pid, default_id, spec)
+    model = _resolved_model(pid, default_id, spec)
     base_name = str(spec.get("base_url_env") or "")
     key_name = str(spec.get("api_key_env") or "")
     ready = bool(os.environ.get(base_name, "").strip() and os.environ.get(key_name, "").strip() and model)
@@ -171,6 +171,7 @@ def get_client(profile: str | None = None) -> tuple[OpenAI, str, dict]:
     """Return ``(client, model, caps)``. ``caps`` is the public description.
 
     The client holds the key. Callers must not log, repr, or serialise the client.
+    A saved settings value wins over the environment. The key is never returned.
     """
     info = describe(profile)
     if info["missing"]:
@@ -178,11 +179,79 @@ def get_client(profile: str | None = None) -> tuple[OpenAI, str, dict]:
         raise LLMConfigError(f"profile {info['id']!r} is not configured; set {names}")
     data = load_profiles()
     spec = data["profiles"][info["id"]]
-    base_url = os.environ.get(str(spec["base_url_env"]), "").strip()
-    api_key = os.environ.get(str(spec["api_key_env"]), "").strip()
+    base_url = _field(info["id"], spec, "base_url", "base_url_env")
+    api_key = _field(info["id"], spec, "api_key", "api_key_env")
     client = OpenAI(base_url=base_url, api_key=api_key, max_retries=0, timeout=120.0)
     public = {key: value for key, value in info.items() if key != "missing"}
     return client, info["model"], public
+
+
+def public_settings() -> dict:
+    """Profiles for the settings page. Base URL and model are shown. The key is a boolean."""
+    load_dotenv()
+    from app.make.blender_backend import blender_target
+    data = load_profiles()
+    default_id = str(data.get("default") or "muse")
+    profiles = []
+    for pid, spec in data["profiles"].items():
+        model = _resolved_model(pid, default_id, spec)
+        base_url = _show_base(_field(pid, spec, "base_url", "base_url_env"))
+        key = _field(pid, spec, "api_key", "api_key_env")
+        profiles.append({
+            "id": pid,
+            "label": str(spec.get("label") or pid),
+            "model": model,
+            "base_url": base_url,
+            "api_key_set": bool(key),
+            "ready": bool(base_url and key and model),
+            "caps": {"vision": bool(spec.get("vision")), "tools": _tools_mode(pid, spec)},
+        })
+    return {"profiles": profiles, "blender_target": blender_target()}
+
+
+def save_profile(profile: str, *, base_url: str, model: str, api_key: str | None,
+                 clear_api_key: bool = False) -> dict:
+    """Store one profile on the server. An empty key leaves the saved key in place."""
+    from app.make.db import delete_setting, put_setting
+    data = load_profiles()
+    if profile not in data["profiles"]:
+        raise LLMConfigError(f"unknown profile {profile!r}")
+    _put_or_clear(put_setting, delete_setting, f"make.llm.{profile}.base_url", base_url.strip())
+    _put_or_clear(put_setting, delete_setting, f"make.llm.{profile}.model", model.strip())
+    if clear_api_key:
+        delete_setting(f"make.llm.{profile}.api_key")
+    elif api_key:
+        put_setting(f"make.llm.{profile}.api_key", api_key.strip())
+    return public_settings()
+
+
+def test_connection(profile: str, *, base_url: str | None = None, model: str | None = None,
+                    api_key: str | None = None, create=None) -> dict:
+    """One short completion. The result is ``{ok, error?}`` and never includes the key."""
+    load_dotenv()
+    data = load_profiles()
+    if profile not in data["profiles"]:
+        return {"ok": False, "error": "unknown profile"}
+    spec = data["profiles"][profile]
+    default_id = str(data.get("default") or "muse")
+    base = _show_base(base_url if base_url is not None else _field(profile, spec, "base_url", "base_url_env"))
+    key = (api_key if api_key else _field(profile, spec, "api_key", "api_key_env")).strip()
+    chosen = (model if model else _resolved_model(profile, default_id, spec)).strip()
+    if not base or not key or not chosen:
+        return {"ok": False, "error": "profile is not configured"}
+    try:
+        if create is not None:
+            create(base, key, chosen)
+        else:
+            client = OpenAI(base_url=base, api_key=key, max_retries=0, timeout=30.0)
+            client.chat.completions.create(
+                model=chosen,
+                messages=[{"role": "user", "content": "Reply with ok."}],
+                max_tokens=1,
+            )
+    except Exception as exc:
+        return {"ok": False, "error": redact(f"{type(exc).__name__}: {exc}", extra=[key])[:400]}
+    return {"ok": True}
 
 
 def build_user_content(text: str, images: list[dict] | None = None, *, vision: bool = True):
@@ -369,6 +438,44 @@ def _add_usage(tokens: dict, response) -> None:
             tokens[dest] += value
 
 
+def _stored(pid: str, field: str) -> str:
+    try:
+        from app.make.db import get_setting
+        value = get_setting(f"make.llm.{pid}.{field}")
+    except Exception:
+        return ""
+    return (value or "").strip()
+
+
+def _field(pid: str, spec: dict, field: str, env_key: str) -> str:
+    stored = _stored(pid, field)
+    if stored:
+        return stored
+    name = str(spec.get(env_key) or "")
+    if not name:
+        return ""
+    return os.environ.get(name, "").strip()
+
+
+def _resolved_model(pid: str, default_id: str, spec: dict) -> str:
+    stored = _stored(pid, "model")
+    if stored:
+        return stored
+    return _model_for(pid, default_id, spec)
+
+
+def _show_base(url: str) -> str:
+    """Base URL without a query string, so a key in the query is not returned."""
+    return (url or "").split("?", 1)[0].strip()
+
+
+def _put_or_clear(put, delete, key: str, value: str) -> None:
+    if value:
+        put(key, value)
+    else:
+        delete(key)
+
+
 def _model_for(pid: str, default_id: str, spec: dict) -> str:
     if pid == default_id:
         override = os.environ.get("LLM_MODEL", "").strip()
@@ -413,11 +520,12 @@ def _remember_fence(pid: str) -> None:
 
 def _missing(pid: str, default_id: str, spec: dict, model: str) -> list[str]:
     missing: list[str] = []
-    for key in ("base_url_env", "api_key_env"):
-        name = str(spec.get(key) or "")
-        if not name or not os.environ.get(name, "").strip():
-            if name:
-                missing.append(name)
+    for field, env_key in (("base_url", "base_url_env"), ("api_key", "api_key_env")):
+        if _field(pid, spec, field, env_key):
+            continue
+        name = str(spec.get(env_key) or "")
+        if name:
+            missing.append(name)
     if not model:
         if pid == default_id:
             missing.append("LLM_MODEL")

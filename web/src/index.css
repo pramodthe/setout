@@ -324,6 +324,12 @@ a.make-tab{color:var(--muted)}
 .make-render img{width:100%;height:auto;display:block;border-radius:4px;background:#0e1116}
 .make-render a{font-size:12px;color:var(--accent)}
 .make-tools{display:flex;gap:6px;padding:0 12px 8px}
+.make-settings{max-width:520px;margin:24px auto;padding:8px 16px 32px;display:flex;flex-direction:column;gap:10px}
+.make-settings h1{font-size:18px;margin:0}
+.make-settings label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}
+.make-settings input,.make-settings select{background:#10151d;color:var(--ink);border:1px solid var(--line);
+  border-radius:7px;padding:6px 8px;font-size:13px}
+.make-settings-actions{display:flex;gap:8px;flex-wrap:wrap}
 @media (max-width:1100px){
   .make-body{grid-template-columns:1fr}
   .make-side{border-left:none;border-top:1px solid var(--line);max-height:40vh}

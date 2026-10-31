@@ -68,7 +68,7 @@ def _call(errors: list[str], node: ast.Call) -> None:
         return
     if name in _DYNAMIC_ATTR or (chain and chain[-1] in _DYNAMIC_ATTR):
         literal = _name_literal(node)
-        if literal is None or "__" in literal:
+        if literal is None or "__" in literal or literal in BANNED_CALLS:
             errors.append(f"line {node.lineno}: dynamic attribute access is not allowed")
     if chain[:3] == ["bpy", "ops", "wm"] and chain[-1].startswith("save"):
         errors.append(f"line {node.lineno}: bpy.ops.wm.{chain[-1]} is not allowed")

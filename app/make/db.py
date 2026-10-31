@@ -208,10 +208,23 @@ def get_setting(key: str) -> str | None:
     return None if row is None else row["value"]
 
 
+def delete_setting(key: str) -> None:
+    with connect() as con:
+        con.execute("DELETE FROM settings WHERE key = ?", (key,))
+        con.commit()
+
+
 def delete_settings_prefix(prefix: str) -> None:
     with connect() as con:
         con.execute("DELETE FROM settings WHERE key LIKE ?", (prefix + "%",))
         con.commit()
+
+
+def settings_values(like: str) -> list[str]:
+    """Values whose keys match a SQL LIKE pattern. Used to redact stored keys."""
+    with connect() as con:
+        rows = con.execute("SELECT value FROM settings WHERE key LIKE ?", (like,)).fetchall()
+    return [row["value"] for row in rows if row["value"]]
 
 
 def list_projects() -> list[dict]:

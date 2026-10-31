@@ -6,6 +6,7 @@ import App from "./App.tsx";
 import DetailView from "./DetailView.tsx";
 import Library from "./Library.tsx";
 import MakePage from "./make/MakePage.tsx";
+import SettingsPage from "./make/SettingsPage.tsx";
 import RenderView from "./RenderView.tsx";
 import JobPanel from "./JobPanel.tsx";
 
@@ -22,6 +23,7 @@ function Root(): JSX.Element {
   const job = hash.match(/^#\/jobs\/([^?]+)/);
   if (job) return <><header><a href="#/">← Library</a></header><JobPanel jobId={decodeURIComponent(job[1])} /></>;
   if (hash.startsWith("#/workbench")) return <App />;
+  if (hash.startsWith("#/make/settings")) return <SettingsPage />;
   const make = hash.match(/^#\/make(?:\/([^/?#]*))?/);
   if (make) return <MakePage key={make[1] || "new"} projectId={make[1] ? decodeURIComponent(make[1]) : null} />;
   const m = hash.match(/^#\/d\/([^?]+)(?:\?part=(.+))?/);

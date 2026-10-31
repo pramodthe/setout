@@ -49,8 +49,47 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+export interface MakeSettingsProfile {
+  id: string;
+  label: string;
+  model: string;
+  base_url: string;
+  api_key_set: boolean;
+  ready: boolean;
+  caps: { vision: boolean; tools: boolean };
+}
+
+export interface MakeSettings {
+  profiles: MakeSettingsProfile[];
+  blender_target: string;
+}
+
 export const makeApi = {
   models: (): Promise<MakeModel[]> => req("/api/make/settings/models"),
+  settings: (): Promise<MakeSettings> => req("/api/make/settings"),
+  saveSettings: (body: {
+    profile: string;
+    base_url: string;
+    model: string;
+    api_key?: string;
+    clear_api_key?: boolean;
+  }): Promise<MakeSettings> =>
+    req("/api/make/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  testSettings: (body: {
+    profile: string;
+    base_url?: string;
+    model?: string;
+    api_key?: string;
+  }): Promise<{ ok: boolean; error?: string }> =>
+    req("/api/make/settings/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
   createProject: (title?: string): Promise<{ id: string; title: string }> =>
     req("/api/make/projects", {
       method: "POST",

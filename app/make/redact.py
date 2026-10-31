@@ -38,6 +38,13 @@ def secret_values(extra: list[str] | None = None) -> list[str]:
     for value in extra or []:
         if value and len(value) >= 8:
             found.append(value)
+    try:
+        from app.make.db import settings_values
+        for value in settings_values("make.llm.%.api_key"):
+            if value and len(value) >= 8:
+                found.append(value)
+    except Exception:
+        pass
     unique = [value for value in dict.fromkeys(found) if value not in REDACTED]
     unique.sort(key=len, reverse=True)
     return unique

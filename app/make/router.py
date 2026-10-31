@@ -10,7 +10,7 @@ import time
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -18,7 +18,7 @@ from app import store
 from app.make import db
 from app.make.agent import merge_overrides
 from app.make.attachments import AttachmentError, store_upload
-from app.make.llm import list_models
+from app.make.llm import LLMConfigError, list_models, public_settings, save_profile, test_connection
 from app.make.queue import enqueue
 from app.make.redact import redact
 
@@ -188,6 +188,73 @@ def render_version(project_id: str, number: int, body: RenderIn | None = None):
     quality = "draft" if body is None or body.quality == "auto" else body.quality
     job_id = enqueue(project_id, "render", {"version_n": number, "quality": quality})
     return {"job_id": job_id}
+
+
+@router.get("/settings")
+def get_settings():
+    """Profile form. Base URL and model are visible. The key is only ``api_key_set``."""
+    return public_settings()
+
+
+@router.put("/settings")
+async def put_settings(request: Request):
+    body = await _object(request)
+    profile = body.get("profile")
+    if not isinstance(profile, str) or not profile.strip():
+        raise HTTPException(400, "invalid settings")
+    base_url = body.get("base_url", "")
+    model = body.get("model", "")
+    api_key = body.get("api_key")
+    if not isinstance(base_url, str) or not isinstance(model, str):
+        raise HTTPException(400, "invalid settings")
+    if api_key is not None and not isinstance(api_key, str):
+        raise HTTPException(400, "invalid settings")
+    if not isinstance(body.get("clear_api_key", False), bool):
+        raise HTTPException(400, "invalid settings")
+    try:
+        return save_profile(
+            profile.strip(),
+            base_url=base_url,
+            model=model,
+            api_key=api_key,
+            clear_api_key=bool(body.get("clear_api_key")),
+        )
+    except LLMConfigError as exc:
+        raise HTTPException(400, redact(str(exc))) from None
+
+
+@router.post("/settings/test")
+async def post_settings_test(request: Request):
+    """Try the saved or typed credentials. The response is ok or a redacted error."""
+    body = await _object(request)
+    profile = body.get("profile")
+    if not isinstance(profile, str) or not profile.strip():
+        raise HTTPException(400, "invalid settings")
+    base_url = body.get("base_url")
+    model = body.get("model")
+    api_key = body.get("api_key")
+    if base_url is not None and not isinstance(base_url, str):
+        raise HTTPException(400, "invalid settings")
+    if model is not None and not isinstance(model, str):
+        raise HTTPException(400, "invalid settings")
+    if api_key is not None and not isinstance(api_key, str):
+        raise HTTPException(400, "invalid settings")
+    return test_connection(
+        profile.strip(),
+        base_url=base_url,
+        model=model,
+        api_key=api_key or None,
+    )
+
+
+async def _object(request: Request) -> dict:
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(400, "invalid settings") from None
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "invalid settings")
+    return payload
 
 
 @router.get("/settings/models")

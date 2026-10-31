@@ -17,7 +17,7 @@ from app.make import db
 from app.make.ast_check import check
 from app.make.llm import LLMCallError, complete as default_complete, system_prompt
 from app.make.redact import redact
-from app.make.worker import run as default_run
+from app.make.blender_backend import run as default_run
 from app import store
 
 MAX_ATTEMPTS = 4
@@ -490,7 +490,7 @@ def rebuild(job_id: str, project_id: str, version_n: int, overrides: dict, *,
 def render_scene(job_id: str, project_id: str, version_n: int, quality: str, *,
                  render_fn=None, timeout: int = 540) -> dict:
     """Render the saved script of one version and store render.png on that row."""
-    from app.make.worker import render as default_render
+    from app.make.blender_backend import render as default_render
     render_fn = render_fn or default_render
     version = db.get_version(project_id, version_n)
     if version is None:

@@ -13,6 +13,7 @@ export default function TabBar({ tabs, active, onNew }: {
   return (
     <div className="make-tabs">
       <a className="back" href="#/">← Library</a>
+      <a className="make-tab" href="#/make/settings">Settings</a>
       {tabs.map((tab) => (
         <a key={tab.id} className={tab.id === active ? "make-tab on" : "make-tab"} href={`#/make/${encodeURIComponent(tab.id)}`}>
           {tab.title || "Untitled"}

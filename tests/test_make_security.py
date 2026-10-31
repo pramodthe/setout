@@ -1,11 +1,38 @@
-"""Worker rejection and timeout. Blender is only required for the in-process loop."""
+"""Worker rejection, timeout, output cap, and credential scrubbing."""
 from pathlib import Path
 import stat
 
 import pytest
 
+from app.make.ast_check import check
+from app.make.db import put_setting
 from app.make.harness import restricted_globals
-from app.make.worker import run, scrub_env
+from app.make.redact import redact
+from app.make.worker import MAX_STDOUT, _read_files, run, scrub_env
+from eval.make.muse_bpy_eval import render_report
+
+
+def test_ast_allowlist_rejects_imports_calls_open_and_getattr():
+    rejected = [
+        "import os",
+        "import subprocess",
+        "import socket",
+        "from os import path",
+        "__import__('os')",
+        "eval('1')",
+        "exec('1')",
+        "open('/etc/passwd')",
+        "open('../secret')",
+        "getattr(obj, '__class__')",
+        "getattr(obj, name)",
+        "getattr(obj, 'eval')",
+        "getattr(obj, '__' + 'class__')",
+    ]
+    for source in rejected:
+        result = check(source)
+        assert not result.ok, source
+    assert check("import math\nimport bpy\n").ok
+    assert check("getattr(obj, 'location')").ok
 
 
 def test_open_socket_os_and_import_never_start_blender(monkeypatch):
@@ -45,6 +72,56 @@ def test_scrub_env_drops_credential_names(monkeypatch):
     assert "LLM_API_KEY" not in cleaned
     assert "sk-testsecretvalue999" not in " ".join(cleaned.values())
     assert cleaned["PATH"] == "/usr/bin"
+
+
+def test_stdout_is_capped_and_a_printed_key_is_redacted(tmp_path, monkeypatch):
+    secret = "sk-testsecretvalue999"
+    monkeypatch.setenv("LLM_API_KEY", secret)
+    binary = tmp_path / "fakeblender"
+    binary.write_text("#!/bin/sh\npython3 -c 'print(\"x\"*200000); print(\"sk-testsecretvalue999\")'\n")
+    binary.chmod(binary.stat().st_mode | stat.S_IEXEC)
+    result = run("import math\n", timeout=10, preview=False, blender_bin=str(binary))
+    assert secret not in result["stdout_tail"]
+    assert len(result["stdout_tail"]) <= MAX_STDOUT
+
+
+def test_an_oversized_artifact_is_not_returned(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.make.worker.MAX_ARTIFACT", 8)
+    (tmp_path / "scene.glb").write_bytes(b"0123456789")
+    (tmp_path / "tree.json").write_bytes(b"{}")
+    files, oversized = _read_files(tmp_path, preview=False, mode="preview")
+    assert oversized == ["scene.glb"]
+    assert "scene.glb" not in files
+    assert files["tree.json"] == b"{}"
+
+
+def test_a_saved_key_is_redacted_from_the_eval_report(monkeypatch):
+    from app.make.db import delete_settings_prefix
+    secret = "muse-settings-key-abc123xyz"
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    put_setting("make.llm.muse.api_key", secret)
+    try:
+        text = redact(render_report([{
+        "id": "muse",
+        "label": "Muse Spark 1.3",
+        "model": "muse-spark-1.3",
+        "verdict": "NO-GO",
+        "passed": 0,
+        "rows": [{
+            "prompt_id": "floor_waste",
+            "runs": False,
+            "objects": 0,
+            "collections_present": False,
+            "tree_valid": False,
+            "repairs": 0,
+            "pass": False,
+            "error_tail": "provider said " + secret,
+        }],
+    }], target="local"))
+        assert secret not in text
+        assert "floor_waste" in text
+    finally:
+        delete_settings_prefix("make.llm.")
 
 
 def test_worker_kills_a_hung_process_at_the_timeout(tmp_path):
