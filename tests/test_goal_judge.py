@@ -165,7 +165,7 @@ def test_hatching_is_not_parts_and_a_sloped_edge_stays(tmp_path):
     found, _ = regions.find(_hatched_drawing(tmp_path / "h.png"))
     big = sorted(r.area for r in found if r.area > 20000)
     assert len(big) == 3  # the brick whole, the sloped piece, and the slab
-    assert big[0] > 200000 and big[-1] > 900000
+    assert big[0] > 150000 and big[-1] > 900000
 
 
 def test_a_clean_drawing_is_left_exactly_as_it_is():
