@@ -16,6 +16,8 @@ from .reference import DB, extents
 
 GRID = 72  # voxels along the longest side
 ALIGN_GRID = 28
+CANDIDATES = 8  # turns compared as solids
+SCALES = (0.85, 0.9, 0.95, 1.0, 1.05, 1.1, 1.15)  # a generator's overall size is a choice too
 RAYS = 240  # per axis
 BARS = {"pieces": 0.7, "iou": 0.6, "layers": 0.7, "families": 0.7, "repetition": 0.7}
 
@@ -128,23 +130,56 @@ def posed(pieces, matrix, scale=1.0, shift=0.0):
     return [{**p, "triangles": (p["triangles"] @ matrix.T) * scale + shift} for p in pieces]
 
 
+def _best_shift(mine, target):
+    """The whole-voxel shift of `mine` that overlaps `target` most, every shift at once by FFT."""
+    size = [a + b for a, b in zip(mine.shape, target.shape)]
+    match = np.fft.irfftn(np.fft.rfftn(target.astype(float), size) * np.conj(np.fft.rfftn(mine.astype(float), size)), size)
+    peak = np.array(np.unravel_index(np.argmax(match), match.shape))
+    return np.where(peak > np.array(size) // 2, peak - np.array(size), peak)
+
+
+def _moved(grid, shift):
+    out = np.zeros_like(grid)
+    source = tuple(slice(max(-s, 0), max(n - s, 0) if s > 0 else n) for s, n in zip(shift, grid.shape))
+    place = tuple(slice(max(s, 0), n + min(s, 0)) for s, n in zip(shift, grid.shape))
+    out[place] = grid[source]
+    return out
+
+
 def align(built, reference):
     """The turn or mirror, one scale and the shift that overlap best. Fair to any frame a generator
-    picks: only the drawing fixes a frame, and a section has no north."""
+    picks: only the drawing fixes a frame, and a section has no north. Centring by bounding boxes
+    pushed anything shorter than the reference off by several voxels, so the shift is searched."""
     low, high = _bounds(reference)
     spacing, shape = _grid_for(low, high, ALIGN_GRID)
     target = _skin(reference, low, spacing, shape)
-    best, best_score = built, -1.0
-    for matrix in rotations():
+    poses = []
+    for number, matrix in enumerate(rotations()):
         turned = posed(built, matrix)
         a, b = _bounds(turned)
-        scale = max(high - low) / max(max(b - a), 1e-9)
-        shifted = posed(turned, np.eye(3), scale, (low + high) / 2 - (a + b) / 2 * scale)
-        mine = _skin(shifted, low, spacing, shape)
-        union = np.count_nonzero(mine | target)
-        score = np.count_nonzero(mine & target) / union if union else 0.0
-        if score > best_score:
-            best, best_score = shifted, score
+        for stretch in SCALES:
+            scale = stretch * max(high - low) / max(max(b - a), 1e-9)
+            pose = posed(turned, np.eye(3), scale, (low + high) / 2 - (a + b) / 2 * scale)
+            mine = _skin(pose, low, spacing, shape)
+            shift = _best_shift(mine, target)
+            poses.append((overlap(_moved(mine, shift), target), number, stretch, pose, shift * spacing))
+    fine, cells = _grid_for(low, high, GRID)
+    solid = voxels(reference, low, fine, cells)[0] > 0
+    best, best_score = built, -1.0
+    each = {}  # the best scale of each turn: a near-symmetric detail ties many, so scales can't crowd out turns
+    for item in sorted(poses, key=lambda item: item[0]):
+        each[item[1]] = item
+    turns = [item[1] for item in sorted(each.values(), key=lambda item: item[0], reverse=True)[:CANDIDATES]]
+    # Skins tie across scales, and the true size must not lose a tie, so it is tried first.
+    trials = [item for turn in turns for item in poses if item[1] == turn and item[2] == 1.0]
+    trials += [each[turn] for turn in turns if each[turn][2] != 1.0]
+    for _, _, _, pose, shift in trials:
+        pose = posed(pose, np.eye(3), 1.0, shift)
+        mine = voxels(pose, low, fine, cells)[0] > 0
+        step = _best_shift(mine, solid)
+        here = overlap(_moved(mine, step), solid)
+        if here > best_score:
+            best, best_score = posed(pose, np.eye(3), 1.0, step * fine), here
     return best
 
 
@@ -178,6 +213,30 @@ def layer_score(grid, families, other, other_families) -> float:
             mine, theirs = _order(grid[tuple(pick)], families), _order(other[tuple(pick)], other_families)
             if theirs:  # scored where the reference says something is
                 scores.append(2 * _common(mine, theirs) / (len(mine) + len(theirs)))
+    return float(np.mean(scores)) if scores else 0.0
+
+
+def soft_layer_score(grid, families, other, other_families) -> float:
+    """A diagnostic, not a bar: a ray may match its neighbours, a voxel off. A perfect copy moved one
+    voxel reads 0.65 to 0.87 on the strict measure, so that one partly measures the grid."""
+    rng, scores = np.random.default_rng(0), []
+    for axis in range(3):
+        rest = [k for k in range(3) if k != axis]
+        for _ in range(RAYS // 3):
+            a, b = rng.integers(grid.shape[rest[0]]), rng.integers(grid.shape[rest[1]])
+            pick = [slice(None)] * 3
+            pick[rest[0]], pick[rest[1]] = a, b
+            theirs = _order(other[tuple(pick)], other_families)
+            if not theirs:
+                continue
+            best = 0.0
+            for da, db in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)):
+                near = list(pick)
+                near[rest[0]] = int(np.clip(a + da, 0, grid.shape[rest[0]] - 1))
+                near[rest[1]] = int(np.clip(b + db, 0, grid.shape[rest[1]] - 1))
+                mine = _order(grid[tuple(near)], families)
+                best = max(best, 2 * _common(mine, theirs) / (len(mine) + len(theirs)))
+            scores.append(best)
     return float(np.mean(scores)) if scores else 0.0
 
 
@@ -215,5 +274,5 @@ def score(built, reference) -> dict:
               "families": len(wanted & made) / len(wanted) if wanted else 1.0,
               "repetition": repetition_score(built, reference)}
     result = {key: round(float(value), 3) for key, value in result.items()}
-    return result | {"precision": round(len(wanted & made) / len(made), 3) if made else 0.0,
+    return result | {"layers_soft": round(soft_layer_score(mine, mine_families, theirs, their_families), 3), "precision": round(len(wanted & made) / len(made), 3) if made else 0.0,
                      "passes": all(result[key] >= bar for key, bar in BARS.items())}

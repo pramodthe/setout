@@ -23,7 +23,8 @@ def held_out() -> list[str]:
 def cut(name):
     record = json.loads((DB / f"{name}.json").read_text())
     triangles = np.load(DB / f"{name}.npz")["triangles"].astype(float)
-    axis, position = section.best_plane(record["pieces"], triangles)
+    from .planes import representative
+    axis, position = representative(name)
     return record["pieces"], triangles, axis, position, section.section(record["pieces"], triangles, axis, position)
 
 

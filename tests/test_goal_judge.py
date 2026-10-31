@@ -50,6 +50,18 @@ def test_a_prism_of_the_section_fails():
     assert not result["passes"] and result["families"] == 0 and result["pieces"] < 0.3
 
 
+def test_aligning_never_loses_to_the_frame_it_was_given():
+    """Seen on real models: a detail nearly matching its own flip was mirrored, and an extrusion
+    measured 0.67 in place read 0.38 through the judge."""
+    reference = wall(courses=4) + [{"triangles": box((0, 0.5, 0), (0.3, 0.6, 0.4)), "family": "block"}]
+    built = reference[:-1] + [{"triangles": box((0.9, 0.5, 0), (1.2, 0.6, 0.4)), "family": "block"}]
+    low, high = judge._bounds(reference)
+    spacing, shape = judge._grid_for(low, high, judge.GRID)
+    target = judge.voxels(reference, low, spacing, shape)[0] > 0
+    in_place = judge.overlap(judge.voxels(built, low, spacing, shape)[0] > 0, target)
+    assert judge.score(built, reference)["iou"] >= in_place - 0.02
+
+
 def test_a_lump_with_the_right_outline_fails():
     reference = wall()
     lump = [{"triangles": box((0, 0, -0.2), (1.2, 0.6, 0.6)), "family": "concrete"}]

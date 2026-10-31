@@ -39,9 +39,12 @@ def trial(name) -> dict:
     reference = judge.load(name)
     box = np.array([p["box"] for p in pieces])
     floor = judge.score(section.extruded(cuts, axis, box[:, axis].min(), box[:, axis + 3].max()), reference)
+    run = box[:, axis + 3].max() - box[:, axis].min()
+    drawn = max(box[:, 4 - axis].max() - box[:, 1 - axis].min(), box[:, 5].max() - box[:, 2].min())
+    given = judge.score(compose.build(regions, marked, size, run / drawn), reference)
     return {"name": name, "regions": len(regions), "cut": len(cuts), "built": len(built), "real": len(reference),
             "assembly": answer.get("assembly", "")[:70], "tokens": (answer.get("usage") or {}).get("total_tokens"),
-            "score": judge.score(built, reference), "prism": floor}
+            "score": judge.score(built, reference), "prism": floor, "given": given}
 
 
 def main():
@@ -52,10 +55,10 @@ def main():
     keys = ("pieces", "iou", "layers", "families", "repetition")
     for row in rows:
         print(f"{row['name'][:20]:20} regions {row['regions']:4} (cut {row['cut']:4}) built {row['built']:5} of {row['real']:5} tokens {row['tokens']}  {row['assembly']}")
-        for kind in ("score", "prism"):
-            print(f"   {kind:6}" + " ".join(f"{k} {row[kind][k]:.2f}" for k in keys) + f" pass {row[kind]['passes']}")
-    print("mean  ", " ".join(f"{k} {np.mean([r['score'][k] for r in rows]):.2f}" for k in keys))
-    print("floor ", " ".join(f"{k} {np.mean([r['prism'][k] for r in rows]):.2f}" for k in keys))
+        for kind in ("score", "given", "prism"):
+            print(f"   {kind:6}" + " ".join(f"{k} {row[kind][k]:.2f}" for k in (*keys, "layers_soft")) + f" pass {row[kind]['passes']}")
+    for title, kind in (("mean  ", "score"), ("depth ", "given"), ("floor ", "prism")):
+        print(title, " ".join(f"{k} {np.mean([r[kind][k] for r in rows]):.2f}" for k in (*keys, "layers_soft")))
 
 
 if __name__ == "__main__":

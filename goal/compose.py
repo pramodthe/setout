@@ -27,11 +27,12 @@ def _extrude(region, height, y0, y1) -> np.ndarray:
     return np.vstack([_block(x0, x1, y0, y1, height - b, height - a) for x0, x1, a, b in region.bands()])
 
 
-def build(regions, labels, size) -> list[dict]:
+def build(regions, labels, size, depth_share=DEPTH_SHARE) -> list[dict]:
     """Pieces in picture units: x across, z up, y the depth. `labels` maps region id to
-    {"family", "depth"}, depth being continuous, units, spaced or empty."""
+    {"family", "depth"}, depth being continuous, units, spaced or empty. How far the assembly runs
+    is a choice of how much to draw, which a section can't show, so it can be given."""
     width, height = size
-    depth = DEPTH_SHARE * max(width, height)
+    depth = depth_share * max(width, height)
     pieces = []
     spacing = depth / 3
     rows = sorted({r.box[1] for r in regions})
