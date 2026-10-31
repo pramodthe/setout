@@ -6,7 +6,7 @@
 import * as THREE from "three";
 
 export type MaterialClass =
-  | "concrete" | "brick" | "screed" | "primer" | "membrane" | "sheet" | "tape"
+  | "concrete" | "brick" | "joint" | "screed" | "primer" | "membrane" | "sheet" | "tape"
   | "adhesive" | "tile" | "grout" | "sealant" | "foam" | "plastic"
   | "aluminium" | "steel" | "timber" | "fibre_cement" | "insulation"
   | "gravel" | "fabric" | "ceramic" | "glass" | "generic";
@@ -25,6 +25,7 @@ const RULES: [RegExp, MaterialClass][] = [
   [/adhesive/, "adhesive"],
   [/grout/, "grout"],
   [/brick/, "brick"],
+  [/masonry_joint/, "joint"],
   [/tile|stone|terracotta|terrazzo|paver/, "tile"],
   [/sealant|silicone|fillet|bead|mastic/, "sealant"],
   [/screed|leveller|mortar|render|bedding/, "screed"],
@@ -62,6 +63,8 @@ export const SPECS: Record<MaterialClass, Spec> = {
     noise: 0.28, octaves: [4, 8, 16, 32, 64, 128], paint: speckle(0.012, 38) },
   brick: { base: "#a5573f", roughness: 0.88, metalness: 0, repeatMm: 300, bump: 0.5,
     noise: 0.2, octaves: [8, 32, 128], paint: speckle(0.03, 34) },
+  joint: { base: "#bdb6a8", roughness: 0.95, metalness: 0, repeatMm: 120, bump: 0.2,
+    noise: 0.1, octaves: [16, 64, 128] },
   screed: { base: "#6c6964", roughness: 0.9, metalness: 0, repeatMm: 400, bump: 0.5,
     noise: 0.2, octaves: [8, 32, 128], paint: speckle(0.05, 26) },
   primer: { base: "#5e927a", roughness: 0.6, metalness: 0, repeatMm: 300, bump: 0.15,

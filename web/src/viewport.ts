@@ -282,9 +282,12 @@ export class Viewport3D {
       mat.side = THREE.DoubleSide; // generated shapes: never lose a face to winding
       mat.clippingPlanes = [this.clipPlane];
       mat.clipShadows = true;
-      mat.polygonOffset = true; // coplanar contacts: later installs draw on top
-      mat.polygonOffsetFactor = -idx;
-      mat.polygonOffsetUnits = -idx;
+      // Coplanar contacts: later installs draw on top. On a big assembly the push would grow large
+      // enough to paint mortar over the brick in front of it, and its parts don't share faces.
+      const push = s.solids.length > 24 ? 0 : idx;
+      mat.polygonOffset = true;
+      mat.polygonOffsetFactor = -push;
+      mat.polygonOffsetUnits = -push;
       const mesh = new THREE.Mesh(g, mat);
       mesh.castShadow = true;
       mesh.receiveShadow = true;

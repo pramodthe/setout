@@ -37,8 +37,11 @@ export default function ViewportView(p: Props): JSX.Element {
   }, [apiRef]);
 
   useEffect(() => {
-    if (p.scene) vp.current?.loadScene(p.scene, { intro: p.intro });
-    else vp.current?.clear();
+    if (p.scene) {
+      vp.current?.loadScene(p.scene, { intro: p.intro });
+      // A big assembly would be buried in tags: its parts are named in the list and on picking.
+      vp.current?.setLabels(p.scene.solids.length <= 24);
+    } else vp.current?.clear();
   }, [p.scene, p.intro]);
 
   useEffect(() => {

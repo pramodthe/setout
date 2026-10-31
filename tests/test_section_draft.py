@@ -126,7 +126,7 @@ def test_a_blender_scene_reads_as_a_detail_and_stays_a_trial(tmp_path, monkeypat
     blender_details.publish("blender-test", "A wall", "blender-trial", [row, {**row, "name": "fixing", "material": "galvanised"}])
     scene = blender_details.scene("blender-test")
     first = scene["solids"][0]
-    assert first["tris"][:3] == [20.0, 30.0, 10.0]  # across, up, along
+    assert first["tris"][:3] == [20.0, 30.0, 0.0]  # across, up, and the cut face nearest the section view
     assert scene["install_order"] == ["membrane", "fixing"] and scene["solids"][1]["layer"] == "steel"
     assert first["provenance"] == "assumption" and "verified" in first["note"] and scene["verification"] == []
     assert blender_details.scene("blender-../x") is None and blender_details.scene("other") is None

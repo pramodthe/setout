@@ -14,7 +14,7 @@ from .store import VAR
 
 IDENT = re.compile(r"^blender-[a-z0-9-]{1,60}$")
 # The kit's materials as the viewer's material words.
-VIEWER_MATERIAL = {"bed": "bedding", "backing": "backing_rod", "galvanised": "steel", "silicone": "sealant", "rubber": "plastic"}
+VIEWER_MATERIAL = {"bed": "bedding", "backing": "backing_rod", "galvanised": "steel", "silicone": "sealant", "rubber": "plastic", "mortar": "masonry_joint"}
 NOTE = "Built in Blender from one section. Sizes are assumed, and nothing here has been verified."
 
 
@@ -37,15 +37,19 @@ def drawing(ident) -> bytes | None:
 
 
 def scene_of(ident, title, origin, parts) -> dict:
-    """The viewer's scene. Across, up and along in the kit are x, y and z in the viewer."""
-    solids, run = [], 0.0
+    """The viewer's scene. Across and up in the kit are x and y in the viewer. The kit runs along +x from
+    the cut face, and the viewer's section view looks in from +z, so the run goes behind the cut face."""
+    solids = []
+    run = max((max(row["tris"][0::3]) for row in parts if row["tris"]), default=0.0)
     for row in parts:
         tris = row["tris"]
-        moved = [v for k in range(0, len(tris), 3) for v in (tris[k + 1], tris[k + 2], tris[k])]
+        moved = []
+        for k in range(0, len(tris), 9):  # the third axis turns round, so each triangle swaps two corners to face out
+            for corner in (0, 6, 3):
+                moved += [tris[k + corner + 1], tris[k + corner + 2], run - tris[k + corner]]
         word = VIEWER_MATERIAL.get(row["material"], row["material"])
         ids = {s["id"] for s in solids}
         ident_part = row["name"] if row["name"] not in ids else f"{row['name']}_{row['material']}"
-        run = max(run, *moved[2::3]) if moved else run
         solids.append({"id": ident_part, "name": word, "layer": word, "source_label": None, "representation": "solid", "color": "#9aa3ad",
                        "class_id": None, "provenance": "assumption", "confidence": None, "inferred_by": None,
                        "note": f"{row['pieces']} piece{'s' if row['pieces'] != 1 else ''} in group {row['group']}. {NOTE}",
