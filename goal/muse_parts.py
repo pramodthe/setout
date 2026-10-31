@@ -3,7 +3,7 @@
 It reads the section and names the components the assembly needs. It models each one alone, looks at a
 render and fixes it. Finished parts go in its own library, and the assembly is built from those.
 
-    modal run -m goal.muse_parts --drawing <png> --name <name>
+    modal run -m goal.muse_parts::parts --drawing <png> --name <name>
 Model code passes a static check, then runs with the network blocked. Everything lands under data/goal/blender.
 """
 from __future__ import annotations
@@ -71,7 +71,7 @@ def plan(source) -> tuple[dict, int]:
 
 
 @app.local_entrypoint()
-def main(drawing: str, name: str, part_rounds: int = 3, scene_rounds: int = 3):
+def parts(drawing: str, name: str, part_rounds: int = 3, scene_rounds: int = 3):
     kit = (HERE / "blender_kit.py").read_text()
     folder = DATA / "goal" / "blender" / name
     folder.mkdir(parents=True, exist_ok=True)
