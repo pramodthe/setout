@@ -53,9 +53,9 @@ export default function DraftView({ draftId }: { draftId: string | null }): JSX.
       const sent = await fetch("/api/documents", { method: "POST", body });
       if (!sent.ok) throw new Error((await sent.text()).slice(0, 200));
       const document_ = (await sent.json()) as { id: string };
-      const record = (await (await fetch(`/api/documents/${document_.id}`)).json()) as { crops: { crop_id: string }[] };
+      const record = (await (await fetch(`/api/documents/${document_.id}`)).json()) as { figures: { crop_id: string }[] };
       const started = await fetch("/api/section-drafts", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ doc_id: document_.id, crop_id: record.crops[0].crop_id }) });
+        body: JSON.stringify({ doc_id: document_.id, crop_id: record.figures[0].crop_id }) });
       if (!started.ok) throw new Error((await started.text()).slice(0, 200));
       location.hash = `#/draft/${((await started.json()) as { id: string }).id}`;
     } catch (failure) {
