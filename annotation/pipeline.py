@@ -205,7 +205,7 @@ def propose_file(path, store, root=None, force=False) -> list[dict]:
         source = {"sheet_id": sheet_id, "file": path.name, "sha256": digest, "relative_path": relative,
                   "file_id": file_id, "details_in_file": len(whole.analyses),
                   "detail": {"index": detail.index, "box": [_number(v) for v in detail.box], "framed": detail.framed,
-                             "groups_inside": detail.groups_inside}}
+                             "groups_inside": detail.groups_inside, "frame": detail.frame}}
         record = sheet_record(analysis, info, source)
         record["legend"] = legend
         records.append(record)

@@ -11,6 +11,7 @@ python annotation/cli.py report                               # what it found, p
 python annotation/cli.py contact                              # every detail on one page
 python annotation/cli.py review                               # http://127.0.0.1:8765/
 python annotation/cli.py export --out data/datasets/owner-v1 --project-folders
+python annotation/cli.py upload data/drawings/sheet.dxf --detail 7   # one detail for the app
 ```
 
 One file can hold many details, so a file is split first, and a **detail** is the unit of
@@ -72,6 +73,10 @@ Details are found by whitespace: boxes of linework closer than one text height a
 detail. So a frame gathers what it holds, however many groups that is, and an element poking
 through a frame stays with it. A rectangle holding most of the sheet is its border and does not
 count. A cluster of under five entities joins the nearest detail, or is counted as a stray.
+A frame holding several groups is split: each group is a detail, and the frame belongs to none.
+It must be a closed rectangle, within about half a degree of square. Groups are told apart by
+their boxes, so a long L-shaped part whose box bridges two groups keeps them together, and four
+loose lines round two groups are not seen as a frame.
 A column of at least three swatches with text beside them is a legend, not a detail.
 
 A layout is usually a cover sheet, so the only thing taken from one is a callout: a leader
@@ -113,11 +118,21 @@ From what the file prints, and from what a person has already said. Each proposa
   its class. Near-identical is measured: same kind of hatch, same size, the same place once the
   details are lined up, mirrored if need be, and the same shape by overlap. A variant may move
   the wall against the slab, so a second offset lines up what the first left over.
-- **No match stays `unknown`.** So does a text naming two classes, and a hatch whose callouts
-  disagree. The verbatim text and the reason stay on every proposal. A proposal is never
-  a decision: a person confirms it, one key per region or one key per detail.
+- **No match stays `unknown`.** So does a text naming two classes, a text joining two things
+  with a slash, `&`, "or" or "and" even if only one is a class, a hatch whose callouts disagree,
+  a hatch two legend rows share, and a hatch the legend gives a meaning other than the callout's.
+  The verbatim text and the reason stay on every proposal. A proposal is never a decision: a
+  person confirms it, one key per region or one key per detail.
 
 Layer names decide nothing. Linetypes do not name a component either.
+
+## One detail for the app
+
+`upload` renders one detail, numbered as in the store, to the 3.2 MP where the model's image
+input stops growing, and writes a PNG, a PDF holding that image losslessly, and a JSON saying
+how many pixels the thinnest part got: `good` from 8, `enough` from 4, else `too coarse`. The
+PDF goes up through the normal `POST /api/documents`. It holds a picture, and nothing is ever
+measured from it.
 
 ## Measuring
 
@@ -149,6 +164,7 @@ they are right. What it says about propagation assumes a person would agree with
 | `sheets.py` | The store, its path guard, a reviewer's edits |
 | `review.py`, `page.*` | The local server and the page |
 | `export.py` | Reviewed sheets to a dataset |
+| `upload.py` | One detail as an image, wrapped for the app's upload |
 | `measure.py` | Scoring on synthetic truth |
 | `report.py`, `contact.py` | What a file came to, with no truth needed; every detail on one page |
 

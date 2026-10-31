@@ -9,6 +9,10 @@ with it because its box still touches the frame. The gap is a share of text heig
 thing drawn at a known paper size. A rectangle holding most of the sheet is its border and
 does not count, or it would pull everything together.
 
+A frame holding several groups is then split: each group is a detail of its own, and the
+frame belongs to none of them. Only groups whose boxes clear each other are seen, so a long
+L-shaped part whose box bridges two groups keeps them together.
+
 A legend is a column of small swatches, each with text beside it. Its entries give hatches a
 meaning for this file, and it is not a detail. Nothing here reads a layer name.
 """
@@ -26,6 +30,7 @@ GAP = 1.0  # share of text height: whitespace this wide separates two details
 ATTACH = 12.0  # share of text height: how far a small fragment reaches for a detail
 FEW = 5  # a cluster of fewer entities than this is a fragment, not a detail
 FRAME_HOLDS = 0.6  # a rectangle holding this share of its cluster is its frame
+SQUARE = 0.01  # a rectangle's sides may run this far off the sheet's axes: drafted frames do
 BORDER = 0.75  # a bare rectangle holding this share of everything is the sheet's border
 SWATCH_ITEMS = 3  # a swatch is a rectangle and a hatch, maybe two
 LEGEND_ROWS = 3  # fewer rows than this is not a legend
@@ -41,7 +46,8 @@ class Detail:
     texts: list = field(default_factory=list)
     callouts: list = field(default_factory=list)
     framed: bool = False  # a rectangle runs round it
-    groups_inside: int = 1  # separate clusters a frame holds
+    groups_inside: int = 1  # details its frame was split into, this one among them
+    frame: str | None = None  # handle of its frame, when that is a closed rectangle
 
 
 @dataclass
@@ -110,11 +116,11 @@ def _labels(n, i, j) -> np.ndarray:
 
 
 def _is_rectangle(curve) -> bool:
-    """Closed, four corners, square to the sheet."""
+    """Closed, four corners, square to the sheet, give or take a slight skew."""
     if not curve.closed or len(curve.points) != 4:
         return False
     steps = np.roll(curve.points, -1, axis=0) - curve.points
-    return bool(np.all(np.min(np.abs(steps), axis=1) <= 1e-6 * np.max(np.abs(steps))))
+    return bool(np.all(np.min(np.abs(steps), axis=1) <= SQUARE * np.max(np.abs(steps), axis=1)))
 
 
 def _borders(drawing, boxes) -> set:
@@ -203,13 +209,41 @@ def _frame_of(drawing, members, boxes) -> int | None:
     return best
 
 
-def _groups_inside(members, boxes, gap, frame) -> int:
-    """How many separate clusters a frame holds once the frame itself is left out."""
+def _attach(big, small, boxes, reach) -> int:
+    """Small clusters join the nearest big one within reach. Returns how many did not."""
+    fragments = 0
+    box_of = {k: (boxes[v, 0].min(), boxes[v, 1].min(), boxes[v, 2].max(), boxes[v, 3].max()) for k, v in big.items()}
+    for members in small.values():
+        low, high = boxes[members, :2].min(axis=0), boxes[members, 2:].max(axis=0)
+        here = (*low, *high)
+        apart = {k: max(b[0] - here[2], here[0] - b[2], b[1] - here[3], here[1] - b[3], 0.0) for k, b in box_of.items()}
+        nearest = min(apart, key=apart.get)
+        if apart[nearest] <= reach:
+            big[nearest] = np.concatenate([big[nearest], members])
+        else:
+            fragments += 1
+    return fragments
+
+
+def _groups_in_frame(members, boxes, gap, reach, frame) -> tuple[list, int]:
+    """([indices of each group], fragments), or ([], 0) when the frame holds one group."""
     inner = members[members != frame]
     i, j = _touching(boxes[inner], gap)
     labels = _labels(len(inner), i, j)
-    sizes = np.bincount(np.unique(labels, return_inverse=True)[1])
-    return max(int(np.count_nonzero(sizes >= FEW)), 1)
+    found = {int(label): inner[labels == label] for label in np.unique(labels)}
+    big = {k: v for k, v in found.items() if len(v) >= FEW}
+    if len(big) < 2:
+        return [], 0
+    small = {k: v for k, v in found.items() if len(v) < FEW}
+    fragments = _attach(big, small, boxes, reach)
+    return list(big.values()), fragments
+
+
+def _detail(members, curve_count, boxes, **fields) -> Detail:
+    box = (float(boxes[members, 0].min()), float(boxes[members, 1].min()),
+           float(boxes[members, 2].max()), float(boxes[members, 3].max()))
+    return Detail(0, box, [int(m) for m in members if m < curve_count],
+                  [int(m) - curve_count for m in members if m >= curve_count], **fields)
 
 
 def split(drawing: Drawing) -> Sheet:
@@ -234,26 +268,19 @@ def split(drawing: Drawing) -> Sheet:
     small = {k: v for k, v in found.items() if len(v) < FEW}
     if not big:  # a tiny sheet: what there is, is the detail
         big, small = found, {}
-    fragments = 0
-    box_of = {k: (boxes[v, 0].min(), boxes[v, 1].min(), boxes[v, 2].max(), boxes[v, 3].max()) for k, v in big.items()}
-    for members in small.values():
-        low, high = boxes[members, :2].min(axis=0), boxes[members, 2:].max(axis=0)
-        here = (*low, *high)
-        apart = {k: max(b[0] - here[2], here[0] - b[2], b[1] - here[3], here[1] - b[3], 0.0) for k, b in box_of.items()}
-        nearest = min(apart, key=apart.get)
-        if apart[nearest] <= reach:
-            big[nearest] = np.concatenate([big[nearest], members])
-        else:
-            fragments += 1
+    fragments = _attach(big, small, boxes, reach)
     details = []
     curve_count = len(drawing.curves)
     for members in big.values():
-        box = (float(boxes[members, 0].min()), float(boxes[members, 1].min()),
-               float(boxes[members, 2].max()), float(boxes[members, 3].max()))
         frame = _frame_of(drawing, members, boxes)
-        details.append(Detail(0, box, [int(m) for m in members if m < curve_count],
-                              [int(m) - curve_count for m in members if m >= curve_count], framed=frame is not None,
-                              groups_inside=1 if frame is None else _groups_inside(members, boxes, gap, frame)))
+        groups, lost = ([], 0) if frame is None else _groups_in_frame(members, boxes, gap, reach, frame)
+        fragments += lost
+        for group in groups:
+            details.append(_detail(group, curve_count, boxes, framed=True, groups_inside=len(groups),
+                                   frame=drawing.curves[frame].handle))
+        if not groups:
+            details.append(_detail(members, curve_count, boxes, framed=frame is not None,
+                                   frame=None if frame is None else drawing.curves[frame].handle))
     band = max(reach, 1e-9)
     details.sort(key=lambda d: (-round(d.box[3] / (band * 8.0)), d.box[0]))
     for k, detail in enumerate(details, 1):

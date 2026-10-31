@@ -56,6 +56,32 @@ def test_ontology_data_agrees_with_the_program_grammar():
         assert yaml.safe_load(path.read_text())["status"] in ontology.STATUS, path
 
 
+def test_no_label_word_belongs_to_two_classes():
+    """A shared alias makes the word name nothing at all in the annotation tools."""
+    ont = ontology.load()
+    owners = {}
+    for ident in ont.component_ids():
+        for alias in ont.component(ident).aliases:
+            owners.setdefault(alias.casefold(), set()).add(ident)
+    assert not {alias: classes for alias, classes in owners.items() if len(classes) > 1}
+
+
+def test_the_door_threshold_still_takes_a_part_labelled_only_flashing():
+    """The bare word moved to the general class; the threshold's slot has to follow it."""
+    ont = ontology.load()
+    slot = ont.assembly("door_threshold").slot("flashing")
+    assert any("flashing" in ont.component(c).aliases for c in slot.classes)
+
+
+def test_owner_classes_carry_no_number_or_source():
+    ont = ontology.load()
+    for ident in ("hob", "plinth", "brick_wall", "termination_bar", "new_concrete_to_falls", "lift_overrun", "drain",
+                  "tape", "rod", "general_flashing"):
+        cls = ont.component(ident)
+        assert cls.dimension_slots and all(d.typical_min is None and d.typical_max is None and d.source is None
+                                           for d in cls.dimension_slots), ident
+
+
 def _copy(tmp_path, name):
     root = tmp_path / name
     shutil.copytree(ROOT, root)

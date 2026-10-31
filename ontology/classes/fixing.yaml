@@ -27,4 +27,4 @@ dimension_slots:
     source: null
     derive_from: null
 drawing_appearance: {}
-aliases: [fixing, fixings, screw, screws, bolt, bolts, anchor, anchors, booker rod, threaded rod, rod, masonry anchor, fastener]
+aliases: [fixing, fixings, screw, screws, bolt, bolts, anchor, anchors, booker rod, threaded rod, masonry anchor, fastener]

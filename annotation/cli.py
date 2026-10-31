@@ -5,6 +5,7 @@
     python annotation/cli.py batch data/drawings --workers 8      # a folder, resumable
     python annotation/cli.py review                               # http://127.0.0.1:8765/
     python annotation/cli.py export --out data/datasets/owner-v1 --project-folders
+    python annotation/cli.py upload data/drawings/sheet.dxf --detail 7   # one detail for the app
     python annotation/cli.py measure --sheets 100 --seed 7        # score on synthetic truth
 
 Everything it writes goes under data/ (gitignored) or outside any repository. Nothing here
@@ -23,7 +24,7 @@ HERE = Path(__file__).resolve().parent
 # would shadow anything of that name. The repo root belongs there instead.
 sys.path[:] = [str(ROOT)] + [p for p in sys.path if Path(p or ".").resolve() != HERE]
 
-from annotation import contact, export, measure, pipeline, report, review, sheets  # noqa: E402
+from annotation import contact, export, measure, pipeline, report, review, sheets, upload  # noqa: E402
 from tools.dxf_census import find_dxf  # noqa: E402
 
 DEFAULT_MEASURE = sheets.DEFAULT_STORE / "measure"
@@ -140,6 +141,13 @@ def cmd_export(args):
     return 0
 
 
+def cmd_upload(args):
+    result = upload.write(args.dxf, args.detail, args.out)
+    print(f"{result['pdf']}\n{result['width']} x {result['height']}, {result['megapixels']} MP, "
+          f"thinnest part {result['thinnest_px']} px: {result['verdict']}")
+    return 0
+
+
 def cmd_measure(args):
     report = measure.run(args.out, args.sheets, args.seed, keep=args.keep)
     print(measure.table(report["variants"]))
@@ -193,6 +201,12 @@ def parser():
     out.add_argument("--overwrite", action="store_true", help="replace a dataset already in --out")
     store(out)
     out.set_defaults(run=cmd_export)
+
+    send = sub.add_parser("upload", help="one detail as an image, in a PDF for POST /api/documents")
+    send.add_argument("dxf")
+    send.add_argument("--detail", type=int, required=True, help="its number, as in the store's -dNN")
+    send.add_argument("--out", default=str(sheets.DEFAULT_STORE / "uploads"), help="default data/annotation/uploads")
+    send.set_defaults(run=cmd_upload)
 
     score = sub.add_parser("measure", help="score the proposals on synthetic DXFs with known truth")
     score.add_argument("--sheets", type=int, default=100)

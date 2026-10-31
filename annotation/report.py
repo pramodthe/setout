@@ -60,7 +60,7 @@ def build(store, file_id=None) -> dict:
     return {
         "details": len(records),
         "framed": len(framed),
-        "frames_holding_several": sum(1 for d in framed if d.get("groups_inside", 1) > 1),
+        "frames_holding_several": len({d["frame"] for d in framed if d.get("groups_inside", 1) > 1}),
         "legend_rows": _unmapped(records),
         "regions": len(every),
         "regions_per_detail": {"mean": round(statistics.fmean(counts), 1) if counts else 0,
