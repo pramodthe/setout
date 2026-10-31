@@ -190,8 +190,7 @@ def test_a_part_is_squared_to_its_own_faces():
 
 
 def test_a_shell_is_not_a_whole_unit():
-    from goal.arrange import whole
-    from goal.library import canonical
+    from goal.library import canonical, whole
     box = np.vstack([canonical(_block_with_tilt())] * 2).astype(float)
     assert whole(box)
     assert not whole(box[box[:, :, 2].max(1) > 0.05])  # the bottom face is gone
@@ -201,3 +200,44 @@ def test_group_numbers_leave_a_part_name():
     from goal.arrange import plain_name
     assert plain_name("Brick_Group_2") == "Brick"
     assert plain_name("wall tie") == "wall tie"
+
+
+def test_facets_join_into_one_part_and_separate_parts_stay_apart():
+    from goal.catalogue import groups
+    from goal.compose import _block
+    first = _block(0.0, 0.2, 0.0, 0.1, 0.0, 0.06).astype(float)
+    second = _block(0.5, 0.7, 0.0, 0.1, 0.0, 0.06).astype(float)
+    triangles = np.vstack([first[:6], first[6:], second])
+    pieces = [{"node": 1, "tris": [0, 6]}, {"node": 1, "tris": [6, len(first)]}, {"node": 1, "tris": [len(first), len(triangles)]}, {"node": 2, "tris": [0, 6]}]
+    assert sorted(sorted(g) for g in groups(pieces, triangles)) == [[0, 1], [2], [3]]
+
+
+def test_a_tool_number_is_not_a_name():
+    from goal.catalogue import readable
+    assert readable("_3DGeom_1_Defintion_2") is None
+    assert readable("Brick_Group_2") == "Brick"
+    assert readable("wall tie") == "wall tie"
+
+
+def test_a_hollow_joint_around_a_brick_is_mortar_and_a_doubt_is_only_marked():
+    import sqlite3
+
+    from goal.catalogue import SCHEMA
+    from goal.catalogue_labels import doubts, mortar_shells
+    db = sqlite3.connect(":memory:")
+    db.executescript(SCHEMA)
+    db.execute("alter table components add column category text")
+    db.execute("alter table components add column muse_name text")
+    db.execute("alter table components add column review integer")
+    row = "insert into components (id, key, family, name, category, closed) values (?,?,?,?,?,?)"
+    db.execute(row, (1, "a", "brick", "Brick", "brick", 1.0))
+    db.execute(row, (2, "b", "brick", None, "wall tie", 0.5))
+    db.execute(row, (3, "c", "tile", None, "mortar", 1.0))
+    place = "insert into placements (model, component, path, x0, y0, z0, x1, y1, z1) values ('m',?,?,?,?,?,?,?,?)"
+    db.execute(place, (1, '["S","a"]', 0, 0, 0, 0.194, 0.092, 0.058))
+    db.execute(place, (2, '["S","b"]', -0.005, 0, -0.005, 0.199, 0.092, 0.063))
+    db.execute(place, (3, '["T","c"]', 1, 1, 1, 1.05, 1.05, 1.01))
+    assert mortar_shells(db) == 1
+    assert db.execute("select category from components where id=2").fetchone()[0] == "mortar"
+    assert doubts(db) == 1
+    assert db.execute("select category, review from components where id=3").fetchone() == ("mortar", 1)

@@ -23,7 +23,6 @@ from .library import STORE
 STORE_MESHES = STORE / "meshes"
 LABELS = STORE / "drawing_labels"
 RUN = 1.2  # metres of assembly along the run, a choice of how much to draw
-FACE_SHARE = 0.4  # of each outer face, for a part to count as a whole unit
 HELD = 0.25  # share of a hidden part's outline that must lie on something drawn
 JOINT = 0.17  # head joint, as a share of a unit's smaller side
 
@@ -160,27 +159,10 @@ def _cuboid(along0, along1, u0, u1, z0, z1):
     return _block(along0, along1, u0, u1, z0, z1)
 
 
-def whole(mesh) -> bool:
-    """All six outer faces of a unit are there. Models also hold shells and fragments under the same name."""
-    points = mesh.reshape(-1, 3)
-    low, high = points.min(0), points.max(0)
-    area = np.linalg.norm(np.cross(mesh[:, 1] - mesh[:, 0], mesh[:, 2] - mesh[:, 0]), axis=1) / 2
-    for axis in range(3):
-        others = [a for a in range(3) if a != axis]
-        face = np.prod((high - low)[others])
-        for side in (low[axis], high[axis]):
-            on = (np.abs(mesh[..., axis] - side) < 0.002).all(1)
-            # the meshes hold each face from both sides, and a face may be broken up by cores
-            if area[on].sum() / 2 < FACE_SHARE * face:
-                return False
-    return True
-
-
 def best_shape(db, family, width, height) -> tuple | None:
     """The whole library unit of a family closest to a layer's cross-section, in proportion and in size."""
-    rows = db.execute("select id, label, longest, middle, shortest, copies from shapes where family = ? and copies >= 2 and longest < 6 * shortest and longest >= 1.4 * middle",
+    rows = db.execute("select id, label, longest, middle, shortest, copies from shapes where family = ? and copies >= 2 and longest < 6 * shortest and longest >= 1.4 * middle and whole = 1",
                       (family,)).fetchall()
-    rows = [r for r in rows if whole(np.load(STORE_MESHES / f"{r[0]}.npy").astype(float))]
     if not rows:
         return None
     wide, thin = max(width, height), min(width, height)

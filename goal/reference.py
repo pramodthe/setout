@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import sys
+import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -37,9 +39,12 @@ def read_model(path) -> tuple[list[dict], np.ndarray, float]:
     meshes = {g.get("id"): _mesh(g.find(q("mesh")), q) for g in root.iter(q("geometry")) if g.find(q("mesh")) is not None}
     library = {n.get("id"): n for n in root.iter(q("node")) if n.get("id")}
     pieces, chunks, count = [], [], 0
+    visits = 0
 
     def walk(node, matrix, trail, depth):
-        nonlocal count
+        nonlocal count, visits
+        visits += 1
+        visit = visits  # a shared definition is walked once per use, so this tells its uses apart
         block = node.find(q("matrix"))
         if block is not None and block.text:
             matrix = matrix @ np.array(block.text.split(), float).reshape(4, 4)
@@ -55,7 +60,7 @@ def read_model(path) -> tuple[list[dict], np.ndarray, float]:
                 name = materials.get(bound.get(symbol), symbol or "")
                 used[name] = used.get(name, 0) + len(world)
             if count > start:
-                pieces.append({"path": [n for n in here if n], "tris": [start, count], "materials": used})
+                pieces.append({"path": [n for n in here if n], "node": visit, "tris": [start, count], "materials": used})
         if depth < 60:
             for child in node.findall(q("node")):
                 walk(child, matrix, here, depth + 1)
@@ -126,28 +131,60 @@ def real_name(path) -> str | None:
     return None
 
 
+def ingest(folder) -> dict:
+    """Read one model folder into the database. Returns its index row."""
+    path = next(folder.rglob("*.dae"))
+    pieces, triangles, metres = read_model(path)
+    for piece in pieces:
+        piece["box"], piece["sizes"] = extents(triangles[piece["tris"][0]:piece["tris"][1]])
+        piece["shape"] = shape_key(piece["sizes"], piece["tris"][1] - piece["tris"][0], metres)
+        piece["name"] = real_name(piece["path"])
+    np.savez_compressed(DB / f"{folder.name}.npz", triangles=triangles.astype(np.float32))
+    (DB / f"{folder.name}.json").write_text(json.dumps({"name": folder.name, "metres_per_unit": metres, "pieces": pieces}))
+    shapes = {}
+    for piece in pieces:
+        shapes[piece["shape"]] = shapes.get(piece["shape"], 0) + 1
+    box = np.array([p["box"] for p in pieces]) if pieces else np.zeros((1, 6))
+    return {"name": folder.name, "pieces": len(pieces), "triangles": len(triangles),
+            "unique_shapes": len(shapes), "most_repeated": max(shapes.values(), default=0),
+            "size_m": (box[:, 3:].max(0) - box[:, :3].min(0)).round(2).tolist(),
+            "named_share": round(sum(p["name"] is not None for p in pieces) / max(len(pieces), 1), 2)}
+
+
 def build() -> list[dict]:
     DB.mkdir(parents=True, exist_ok=True)
-    rows = []
-    for folder in sorted(p for p in RAW.iterdir() if p.is_dir()):
-        path = next(folder.rglob("*.dae"))
-        pieces, triangles, metres = read_model(path)
-        for piece in pieces:
-            piece["box"], piece["sizes"] = extents(triangles[piece["tris"][0]:piece["tris"][1]])
-            piece["shape"] = shape_key(piece["sizes"], piece["tris"][1] - piece["tris"][0], metres)
-            piece["name"] = real_name(piece["path"])
-        np.savez_compressed(DB / f"{folder.name}.npz", triangles=triangles.astype(np.float32))
-        (DB / f"{folder.name}.json").write_text(json.dumps({"name": folder.name, "metres_per_unit": metres, "pieces": pieces}))
-        shapes = {}
-        for piece in pieces:
-            shapes[piece["shape"]] = shapes.get(piece["shape"], 0) + 1
-        box = np.array([p["box"] for p in pieces]) if pieces else np.zeros((1, 6))
-        rows.append({"name": folder.name, "pieces": len(pieces), "triangles": len(triangles),
-                     "unique_shapes": len(shapes), "most_repeated": max(shapes.values(), default=0),
-                     "size_m": (box[:, 3:].max(0) - box[:, :3].min(0)).round(2).tolist(),
-                     "named_share": round(sum(p["name"] is not None for p in pieces) / max(len(pieces), 1), 2)})
+    rows = [ingest(folder) for folder in sorted(p for p in RAW.iterdir() if p.is_dir())]
     (DB / "index.json").write_text(json.dumps(rows, indent=1))
     return rows
+
+
+def take_in(path) -> dict | None:
+    """Copy a new .dae, or the .dae inside a .zip, into RAW and ingest it, once. Only the model is taken:
+    a zip's other files are left where they are. None if it is already in."""
+    name = path.stem
+    if (DB / f"{name}.json").exists():
+        return None
+    folder = RAW / name
+    folder.mkdir(parents=True, exist_ok=True)
+    if zipfile.is_zipfile(path):  # by content: some .dae files are zips
+        with zipfile.ZipFile(path) as archive:
+            member = next((m for m in archive.namelist() if m.lower().endswith(".dae") and "__MACOSX" not in m), None)
+            if member is None:
+                shutil.rmtree(folder)
+                print("no model in", path.name, flush=True)
+                return None
+            (folder / "model.dae").write_bytes(archive.read(member))
+    else:
+        shutil.copyfile(path, folder / "model.dae")
+    try:
+        row = ingest(folder)
+    except (ET.ParseError, StopIteration, ValueError) as error:
+        shutil.rmtree(folder)
+        print("could not read", path.name, str(error)[:80], flush=True)
+        return None
+    index = DB / "index.json"
+    index.write_text(json.dumps([*json.loads(index.read_text()), row], indent=1))
+    return row
 
 
 if __name__ == "__main__":
