@@ -10,8 +10,14 @@ from dataclasses import dataclass
 import numpy as np
 from PIL import Image
 
+from . import hatching
+
 INK = 128
 SMALLEST = 24  # pixels: specks where lines nearly meet
+HATCHED = 20  # marks taken out before a drawing counts as hatched
+TINY = 0.0004  # of the sheet: a cell this small is a fragment, not a part
+NEAR = 4  # pixels: fragments this close touch across their ink
+GATHER = 4  # fragments that together make a part
 
 
 @dataclass
@@ -52,9 +58,44 @@ def _runs(row):
     return list(zip(edges[::2].tolist(), edges[1::2].tolist()))
 
 
+def _gathered(regions, sheet) -> list[Region]:
+    """A hatched thin layer comes through as a row of tiny cells: they are one part. Touching tiny
+    cells join up, and a tiny cell left alone is a mark, so it goes. Only done on a hatched drawing."""
+    tiny = [r for r in regions if r.area < TINY * sheet]
+    parent = list(range(len(tiny)))
+
+    def root(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for i, a in enumerate(tiny):
+        for j, b in enumerate(tiny[:i]):
+            if a.box[0] <= b.box[2] + NEAR and b.box[0] <= a.box[2] + NEAR and a.box[1] <= b.box[3] + NEAR and b.box[1] <= a.box[3] + NEAR:
+                parent[root(i)] = root(j)
+    groups: dict = {}
+    for i, region in enumerate(tiny):
+        groups.setdefault(root(i), []).append(region)
+    out = [r for r in regions if r.area >= TINY * sheet]
+    for members in groups.values():
+        if len(members) < GATHER:
+            continue
+        rows: dict = {}
+        for member in members:
+            for y, spans in member.rows.items():
+                rows.setdefault(y, []).extend(spans)
+        boxes = np.array([m.box for m in members])
+        out.append(Region(0, rows, (int(boxes[:, 0].min()), int(boxes[:, 1].min()), int(boxes[:, 2].max()), int(boxes[:, 3].max())),
+                          sum(m.area for m in members)))
+    return out
+
+
 def find(picture) -> tuple[list[Region], tuple]:
     """(regions largest first, (width, height)). White pixels, joined by row runs."""
     white = np.asarray(Image.open(picture).convert("L")) >= INK
+    white, taken = hatching.remove(white)
+    hatched = taken["specks"] + taken["hatch_lines"] >= HATCHED
     height, width = white.shape
     parent: list[int] = []
 
@@ -97,6 +138,8 @@ def find(picture) -> tuple[list[Region], tuple]:
             continue
         xs = [v for spans in rows.values() for span in spans for v in span]
         regions.append(Region(0, rows, (min(xs), min(rows), max(xs), max(rows) + 1), area))
+    if hatched:
+        regions = _gathered(regions, width * height)
     regions.sort(key=lambda r: -r.area)
     for number, region in enumerate(regions, 1):
         region.id = number

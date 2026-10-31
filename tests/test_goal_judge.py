@@ -2,7 +2,7 @@
 import numpy as np
 import pytest
 
-from goal import judge, section
+from goal import hatching, judge, regions, section
 from goal.families import family_of, spread
 
 
@@ -141,3 +141,35 @@ def test_a_hollow_block_is_mostly_empty_and_a_bolt_has_its_nuts():
     spacing, shape = judge._grid_for(low, high, 60)
     assert (judge.voxels(grid_pieces, low, spacing, shape)[0] > 0).mean() < 0.75 * (judge.voxels(solid, low, spacing, shape)[0] > 0).mean()
     assert len(bolt((0, 0, 0), (0, 0, 0.1), 0.006)) > 3 * len(prism((0, 0, 0), (0, 0, 0.1), 0.006))
+
+
+def _hatched_drawing(path):
+    """At a real drawing's size: a brick cut by parallel hatch lines, a sloped piece beside it, and a
+    slab full of aggregate marks too small to count as outlines."""
+    from PIL import Image, ImageDraw
+    image = Image.new("L", (1800, 1800), 255)
+    pen = ImageDraw.Draw(image)
+    pen.rectangle((180, 180, 900, 600), outline=0, width=6)
+    for x in range(200, 680, 60):
+        pen.line((x, 594, x + 200, 186), fill=0, width=3)
+    pen.rectangle((180, 900, 1620, 1560), outline=0, width=6)
+    for x in range(300, 1560, 120):
+        pen.polygon([(x, 1140), (x + 18, 1140), (x + 9, 1122)], outline=0)
+        pen.polygon([(x + 30, 1380), (x + 48, 1380), (x + 39, 1362)], outline=0)
+    pen.polygon([(1020, 180), (1620, 180), (1620, 600), (1020, 360)], outline=0, width=6)
+    image.save(path)
+    return path
+
+
+def test_hatching_is_not_parts_and_a_sloped_edge_stays(tmp_path):
+    found, _ = regions.find(_hatched_drawing(tmp_path / "h.png"))
+    big = sorted(r.area for r in found if r.area > 20000)
+    assert len(big) == 3  # the brick whole, the sloped piece, and the slab
+    assert big[0] > 200000 and big[-1] > 900000
+
+
+def test_a_clean_drawing_is_left_exactly_as_it_is():
+    white = np.ones((300, 300), bool)
+    white[50:52, 40:260] = white[200:202, 40:260] = white[50:202, 40:42] = white[50:202, 258:260] = False
+    cleaned, taken = hatching.remove(white)
+    assert (cleaned == white).all() and taken == {"specks": 0, "hatch_lines": 0}
