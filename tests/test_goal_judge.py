@@ -173,3 +173,31 @@ def test_a_clean_drawing_is_left_exactly_as_it_is():
     white[50:52, 40:260] = white[200:202, 40:260] = white[50:202, 40:42] = white[50:202, 258:260] = False
     cleaned, taken = hatching.remove(white)
     assert (cleaned == white).all() and taken == {"specks": 0, "hatch_lines": 0}
+
+
+def _block_with_tilt():
+    from goal.compose import _block
+    box = _block(0.0, 0.4, 0.0, 0.2, 0.0, 0.1).astype(float)
+    turn = 0.3
+    spin = np.array([[np.cos(turn), -np.sin(turn), 0], [np.sin(turn), np.cos(turn), 0], [0, 0, 1]])
+    return box @ spin.T
+
+
+def test_a_part_is_squared_to_its_own_faces():
+    from goal.library import canonical
+    part = canonical(_block_with_tilt())
+    assert np.allclose(part.reshape(-1, 3).max(0), [0.4, 0.2, 0.1], atol=1e-5)
+
+
+def test_a_shell_is_not_a_whole_unit():
+    from goal.arrange import whole
+    from goal.library import canonical
+    box = np.vstack([canonical(_block_with_tilt())] * 2).astype(float)
+    assert whole(box)
+    assert not whole(box[box[:, :, 2].max(1) > 0.05])  # the bottom face is gone
+
+
+def test_group_numbers_leave_a_part_name():
+    from goal.arrange import plain_name
+    assert plain_name("Brick_Group_2") == "Brick"
+    assert plain_name("wall tie") == "wall tie"

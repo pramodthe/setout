@@ -18,6 +18,8 @@ HATCHED = 20  # marks taken out before a drawing counts as hatched
 TINY = 0.0004  # of the sheet: a cell this small is a fragment, not a part
 NEAR = 4  # pixels: fragments this close touch across their ink
 GATHER = 4  # fragments that together make a part
+INK_RADIUS = 2  # pixels: ink this deep is a heavy line, not an outline
+INK_SMALLEST = 0.00012  # of the sheet: smaller heavy marks are arrowheads and the like
 
 
 @dataclass
@@ -144,3 +146,28 @@ def find(picture) -> tuple[list[Region], tuple]:
     for number, region in enumerate(regions, 1):
         region.id = number
     return regions, (width, height)
+
+
+def with_ink(picture) -> tuple[list[Region], tuple]:
+    """The regions, plus lines drawn heavy enough to be parts themselves: on a section, membranes and
+    flashings are often solid black, with no white inside to find."""
+    found, size = find(picture)
+    ink = np.asarray(Image.open(picture).convert("L")) < INK
+    thick = ink.copy()
+    for _ in range(INK_RADIUS):
+        thick = thick & np.roll(thick, 1, 0) & np.roll(thick, -1, 0) & np.roll(thick, 1, 1) & np.roll(thick, -1, 1)
+    for _ in range(INK_RADIUS):
+        thick = thick | np.roll(thick, 1, 0) | np.roll(thick, -1, 0) | np.roll(thick, 1, 1) | np.roll(thick, -1, 1)
+    thick &= ink
+    number = len(found)
+    for ys, xs in hatching._components(thick):
+        if len(ys) < INK_SMALLEST * size[0] * size[1]:
+            continue
+        rows: dict = {}
+        for y in np.unique(ys):
+            mask = np.zeros(size[0] + 2, bool)
+            mask[xs[ys == y] + 1] = True
+            rows[int(y)] = [(a - 1, b - 1) for a, b in _runs(mask)]
+        number += 1
+        found.append(Region(number, rows, (int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1), len(ys)))
+    return found, size

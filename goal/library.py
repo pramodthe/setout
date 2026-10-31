@@ -20,6 +20,8 @@ from .reference import DATA, DB
 STORE = DATA / "goal" / "library"
 TOUCH = 0.003  # metres: pieces this close are in contact
 SIZE_STEP = 0.005  # metres: pieces this alike are the same part
+FLAT = 0.999  # how nearly two normals must agree to be one face direction
+FACED = 0.6  # share of a part\'s area on three square directions, for it to count as squared-off
 SCHEMA = """
 create table shapes (id integer primary key, key text unique, family text, label text, source text, copies integer, models integer,
                      longest real, middle real, shortest real, triangles integer);
@@ -29,6 +31,32 @@ create table models (name text primary key, held_out integer, pieces integer, sh
 """
 
 
+def squared(triangles, axes) -> np.ndarray:
+    """A part's axes from its own flat faces where it has them. A best-fit frame tilts on anything uneven,
+    such as a block with cores, and a tilted part shears when it is scaled."""
+    normals = np.cross(triangles[:, 1] - triangles[:, 0], triangles[:, 2] - triangles[:, 0])
+    areas = np.linalg.norm(normals, axis=1)
+    keep = areas > 0
+    normals, areas = normals[keep] / areas[keep, None], areas[keep]
+    if not len(areas):
+        return axes
+
+    def share(direction, width=FLAT):
+        return areas[np.abs(normals @ direction) > width].sum() / areas.sum()
+
+    first = max(normals[np.argsort(-areas)[:200]], key=share)
+    across = normals[np.abs(normals @ first) < 1 - FLAT]
+    if not len(across):
+        return axes
+    second = max(across[:400], key=share)
+    second = second - first * (second @ first)
+    second /= np.linalg.norm(second)
+    third = np.cross(first, second)
+    if share(first) + share(second) + share(third) < FACED:
+        return axes
+    return np.array([first, second, third])
+
+
 def canonical(triangles) -> np.ndarray:
     """A part in its own frame: longest side along x, shortest along z, one corner at the origin."""
     points = triangles.reshape(-1, 3)
@@ -36,8 +64,9 @@ def canonical(triangles) -> np.ndarray:
     _, _, axes = np.linalg.svd(points - centre, full_matrices=False)
     if np.linalg.det(axes) < 0:
         axes[2] *= -1
-    turned = (points - centre) @ axes.T
-    return (turned - turned.min(0)).reshape(-1, 3, 3).astype(np.float32)
+    turned = (points - centre) @ squared(triangles, axes).T
+    extents = turned.max(0) - turned.min(0)
+    return ((turned - turned.min(0))[:, np.argsort(-extents)]).reshape(-1, 3, 3).astype(np.float32)
 
 
 def key_of(piece, count) -> str:
