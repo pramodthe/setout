@@ -84,6 +84,30 @@ def test_overrides_are_reapplied_after_the_script(monkeypatch):
     assert b"Substrate" in result["files"]["scene.glb"]
 
 
+def test_dimension_override_scales_when_the_script_ignores_it():
+    """A height edit still resizes the mesh when the script never reads OVERRIDES."""
+    binary = _blender()
+    script = (
+        'box_mm("Upturn", (2, 400, 100), (90, 0, 150), collection="Waterproofing", '
+        'dims={"upturn_hgt": 100, "floor_width": 400}, material="membrane")\n'
+    )
+    result = run(
+        script,
+        {"Upturn": {"dims": {"upturn_hgt": 160}}},
+        timeout=60,
+        preview=False,
+        blender_bin=binary,
+    )
+    assert result["ok"], result["traceback"] + "\n" + result["stdout_tail"]
+    tree = json.loads(result["files"]["tree.json"])
+    upturn = next(node for node in _meshes(tree) if node["name"] == "Upturn")
+    span = upturn["bbox_mm"]["max"][2] - upturn["bbox_mm"]["min"][2]
+    assert span == pytest.approx(160, abs=0.5)
+    assert upturn["dims"]["upturn_hgt"] == 160
+    depth = upturn["bbox_mm"]["max"][1] - upturn["bbox_mm"]["min"][1]
+    assert depth == pytest.approx(400, abs=0.5)
+
+
 def test_infinite_loop_inside_blender_is_killed():
     binary = _blender()
     result = run(

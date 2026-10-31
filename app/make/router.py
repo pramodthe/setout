@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app import store
 from app.make import db
+from app.make.agent import merge_overrides
 from app.make.attachments import AttachmentError, store_upload
 from app.make.llm import list_models
 from app.make.queue import enqueue
@@ -163,6 +164,13 @@ def patch_overrides(project_id: str, number: int, body: OverridesIn):
             overrides[item.name] = spec
     if not overrides:
         raise HTTPException(400, "overrides are empty")
+    stored = version.get("overrides")
+    if isinstance(stored, str):
+        try:
+            stored = json.loads(stored or "{}")
+        except json.JSONDecodeError:
+            stored = {}
+    overrides = merge_overrides(stored if isinstance(stored, dict) else {}, overrides)
     job_id = enqueue(project_id, "rebuild", {"version_n": number, "overrides": overrides})
     return {"job_id": job_id}
 

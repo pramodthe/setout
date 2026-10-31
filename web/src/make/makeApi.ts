@@ -73,4 +73,16 @@ export const makeApi = {
     }),
   glbUrl: (id: string, n: number): string =>
     `/api/make/projects/${encodeURIComponent(id)}/versions/${n}/scene.glb`,
+  tree: (id: string, n: number): Promise<import("./edits").TreeNode> =>
+    req(`/api/make/projects/${encodeURIComponent(id)}/versions/${n}/tree.json`),
+  overrides: (
+    id: string,
+    n: number,
+    body: { overrides: { name: string; location?: number[]; rotation_deg?: number[]; dims?: Record<string, number> }[] },
+  ): Promise<{ job_id: string }> =>
+    req(`/api/make/projects/${encodeURIComponent(id)}/versions/${n}/overrides`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
 };

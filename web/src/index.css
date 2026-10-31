@@ -275,7 +275,7 @@ a.make-tab{color:var(--muted)}
 .make-chip{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
 .make-chip select{background:#10151d;color:var(--ink);border:1px solid var(--line);border-radius:7px;
   padding:4px 8px;font-size:13px}
-.make-body{flex:1;min-height:0;display:grid;grid-template-columns:340px 1fr}
+.make-body{flex:1;min-height:0;display:grid;grid-template-columns:300px 1fr 280px}
 .make-chat{display:flex;flex-direction:column;min-height:0;background:var(--panel);border-right:1px solid var(--line)}
 .make-messages{flex:1;overflow:auto;padding:12px 14px}
 .make-msg{margin-bottom:10px;font-size:13px}
@@ -297,6 +297,25 @@ a.make-tab{color:var(--muted)}
 .make-view canvas{width:100%;height:100%;display:block}
 .make-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   color:var(--muted);font-size:13px;pointer-events:none;margin:0}
+.make-side{display:flex;flex-direction:column;min-height:0;background:var(--panel);border-left:1px solid var(--line)}
+.make-tree{flex:1;overflow:auto;padding:8px 10px 12px}
+.make-collection{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:8px 0 2px}
+.make-part{display:block;width:100%;text-align:left;background:transparent;border:none;color:var(--ink);
+  border-radius:6px;padding:3px 6px;font-size:13px}
+.make-part[aria-selected="true"]{background:#173a5e;outline:1px solid var(--accent)}
+.make-props{border-top:1px solid var(--line);padding:8px 12px 12px;overflow:auto;max-height:50%}
+.make-props-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.make-props-head h2{margin:0}
+.make-props label{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:var(--muted);margin:4px 0}
+.make-props input{width:92px;background:#10151d;color:var(--ink);border:1px solid var(--line);border-radius:5px;padding:2px 6px}
+.make-name{margin:0;font-weight:600}
+.make-muted{color:var(--muted);font-size:12px}
+.make-gizmo{position:absolute;top:10px;left:10px;display:flex;gap:6px;z-index:2}
+.make-tools{display:flex;gap:6px;padding:0 12px 8px}
+@media (max-width:1100px){
+  .make-body{grid-template-columns:1fr}
+  .make-side{border-left:none;border-top:1px solid var(--line);max-height:40vh}
+}
 @media (max-width:900px){
   .make-body{grid-template-columns:1fr;grid-template-rows:240px 1fr}
   .make-chat{border-right:none;border-bottom:1px solid var(--line)}

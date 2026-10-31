@@ -1,15 +1,27 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { JSX } from "react";
 import ChatPanel from "./ChatPanel";
+import {
+  diffOverrides,
+  historyReducer,
+  meshByName,
+  meshesOf,
+  type History,
+  type OverrideMap,
+  type TreeNode,
+} from "./edits";
 import { makeApi } from "./makeApi";
 import type { MakeDetail, MakeModel } from "./makeApi";
 import ProjectHeader from "./ProjectHeader";
+import PropertiesPanel from "./PropertiesPanel";
+import SceneTree from "./SceneTree";
 import TabBar from "./TabBar";
 import type { MakeTab } from "./TabBar";
 import { useJobStream } from "./useJobStream";
 import Viewport from "./Viewport";
 
 const TABS_KEY = "setout-make-tabs";
+const EMPTY: History = { past: [], present: {}, future: [] };
 
 function readTabs(): MakeTab[] {
   try {
@@ -28,6 +40,13 @@ export default function MakePage({ projectId }: { projectId: string | null }): J
   const [selected, setSelected] = useState<number | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [tree, setTree] = useState<TreeNode | null>(null);
+  const [part, setPart] = useState<string | null>(null);
+  const [history, dispatch] = useReducer(historyReducer, EMPTY);
+  const presentRef = useRef(history.present);
+  useEffect(() => {
+    presentRef.current = history.present;
+  });
 
   useEffect(() => {
     sessionStorage.setItem(TABS_KEY, JSON.stringify(tabs));
@@ -76,6 +95,25 @@ export default function MakePage({ projectId }: { projectId: string | null }): J
     reload(projectId).catch((error: Error) => setErr(error.message));
   }, [projectId, reload]);
 
+  useEffect(() => {
+    if (!projectId || selected == null) {
+      setTree(null);
+      return;
+    }
+    let cancel = false;
+    makeApi.tree(projectId, selected).then((next) => {
+      if (!cancel) setTree(next);
+    }).catch(() => {
+      if (!cancel) setTree(null);
+    });
+    return () => { cancel = true; };
+  }, [projectId, selected]);
+
+  useEffect(() => {
+    dispatch({ type: "reset" });
+    setPart(null);
+  }, [projectId, selected]);
+
   const onDone = useCallback((version: number) => {
     setJobId(null);
     setSelected(version);
@@ -83,6 +121,38 @@ export default function MakePage({ projectId }: { projectId: string | null }): J
   }, [projectId, reload]);
 
   const stream = useJobStream(jobId, onDone);
+  const busy = stream.state === "queued" || stream.state === "running";
+  const meshMap = useMemo(() => {
+    const map: Record<string, TreeNode> = {};
+    for (const mesh of meshesOf(tree)) map[mesh.name] = mesh;
+    return map;
+  }, [tree]);
+  const bases = useMemo(() => {
+    const map: Record<string, Record<string, number>> = {};
+    for (const mesh of Object.values(meshMap)) map[mesh.name] = mesh.dims || {};
+    return map;
+  }, [meshMap]);
+  const selectedMesh = meshByName(tree, part);
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "z") return;
+      event.preventDefault();
+      dispatch({ type: event.shiftKey ? "redo" : "undo" });
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  function merge(name: string, patch: OverrideMap[string]) {
+    const present = presentRef.current;
+    dispatch({
+      type: "commit",
+      present: { ...present, [name]: { ...present[name], ...patch } },
+    });
+  }
 
   async function createTab() {
     const created = await makeApi.createProject("Untitled");
@@ -108,7 +178,16 @@ export default function MakePage({ projectId }: { projectId: string | null }): J
     await reload(projectId);
   }
 
+  async function apply() {
+    if (!projectId || selected == null) return;
+    const body = diffOverrides(meshMap, presentRef.current);
+    if (!body.overrides.length) return;
+    const sent = await makeApi.overrides(projectId, selected, body);
+    setJobId(sent.job_id);
+  }
+
   const glb = projectId && selected != null ? makeApi.glbUrl(projectId, selected) : null;
+  const canApply = diffOverrides(meshMap, history.present).overrides.length > 0;
 
   return (
     <div className="make">
@@ -129,10 +208,48 @@ export default function MakePage({ projectId }: { projectId: string | null }): J
           lines={stream.lines}
           attempt={stream.attempt}
           state={stream.state}
-          busy={stream.state === "queued" || stream.state === "running"}
+          busy={busy}
           onSend={send}
         />
-        <Viewport url={glb} />
+        <Viewport
+          url={glb}
+          selected={part}
+          edits={history.present}
+          bases={bases}
+          mode="translate"
+          onSelect={setPart}
+          onCommit={(name, location, rotation) => merge(name, { location, rotation_deg: rotation })}
+        />
+        <aside className="make-side">
+          <div className="make-tools">
+            <button type="button" data-make="undo" onClick={() => dispatch({ type: "undo" })} disabled={!history.past.length}>Undo</button>
+            <button type="button" data-make="redo" onClick={() => dispatch({ type: "redo" })} disabled={!history.future.length}>Redo</button>
+          </div>
+          <SceneTree tree={tree} selected={part} onSelect={setPart} />
+          <PropertiesPanel
+            mesh={selectedMesh}
+            pending={part ? history.present[part] || null : null}
+            onDim={(key, value) => {
+              if (!part || !selectedMesh) return;
+              merge(part, { dims: { ...(selectedMesh.dims || {}), ...(presentRef.current[part]?.dims || {}), [key]: value } });
+            }}
+            onLocation={(index, value) => {
+              if (!part || !selectedMesh) return;
+              const location = [...(presentRef.current[part]?.location || selectedMesh.location || [0, 0, 0])] as [number, number, number];
+              location[index] = value;
+              merge(part, { location });
+            }}
+            onRotation={(index, value) => {
+              if (!part || !selectedMesh) return;
+              const rotation = [...(presentRef.current[part]?.rotation_deg || selectedMesh.rotation_deg || [0, 0, 0])] as [number, number, number];
+              rotation[index] = value;
+              merge(part, { rotation_deg: rotation });
+            }}
+            onApply={() => { void apply().catch((error: Error) => setErr(error.message)); }}
+            canApply={canApply}
+            busy={busy}
+          />
+        </aside>
       </div>
     </div>
   );

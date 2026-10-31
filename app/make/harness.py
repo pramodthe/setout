@@ -160,6 +160,7 @@ def _reapply_overrides(overrides: dict, namespace: dict) -> list[str]:
     params = namespace.get("PARAMS")
     if not isinstance(params, dict):
         params = None
+    bpy.context.view_layer.update()
     for name, spec in (overrides or {}).items():
         if not isinstance(spec, dict):
             warnings.append(f"unmatched override: {name}")
@@ -168,6 +169,9 @@ def _reapply_overrides(overrides: dict, namespace: dict) -> list[str]:
         if obj is None:
             warnings.append(f"unmatched override: {name}")
             continue
+        dims = spec.get("dims") or {}
+        if isinstance(dims, dict) and dims and obj.type == "MESH" and obj.data is not None:
+            _scale_matching_dims(obj, _read_dims(obj), dims)
         location = spec.get("location")
         if isinstance(location, (list, tuple)) and len(location) == 3:
             obj.location = tuple(float(value) / 1000.0 for value in location)
@@ -175,7 +179,6 @@ def _reapply_overrides(overrides: dict, namespace: dict) -> list[str]:
         if isinstance(rotation, (list, tuple)) and len(rotation) == 3:
             obj.rotation_mode = "XYZ"
             obj.rotation_euler = tuple(math.radians(float(value)) for value in rotation)
-        dims = spec.get("dims") or {}
         if isinstance(dims, dict) and dims:
             current = _read_dims(obj)
             for key, value in dims.items():
@@ -185,6 +188,53 @@ def _reapply_overrides(overrides: dict, namespace: dict) -> list[str]:
             obj["dims"] = json.dumps(current)
     bpy.context.view_layer.update()
     return warnings
+
+
+def axis_scales(spans_mm: list[float], old: dict, new: dict) -> list[float]:
+    """Scale each local axis when a changed dimension matches that axis's current span.
+
+    A script that never reads ``OVERRIDES`` still changes size: the harness
+    measures the span, and a dimension whose old value equals that span is
+    the one that sized it.
+    """
+    scale = [1.0, 1.0, 1.0]
+    for key, raw in (new or {}).items():
+        if key not in (old or {}):
+            continue
+        try:
+            previous = float(old[key])
+            updated = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if abs(previous) < 0.05 or abs(updated - previous) < 0.05:
+            continue
+        tolerance = max(0.75, 0.02 * abs(previous))
+        for index, span in enumerate(spans_mm):
+            if abs(span - previous) <= tolerance:
+                scale[index] = updated / previous
+                break
+    return scale
+
+
+def _scale_matching_dims(obj, old: dict, new: dict) -> None:
+    import bpy
+
+    corners = obj.bound_box
+    spans = []
+    for index in range(3):
+        values = [corner[index] for corner in corners]
+        spans.append((max(values) - min(values)) * 1000.0)
+    scales = axis_scales(spans, old, new)
+    if scales == [1.0, 1.0, 1.0]:
+        return
+    if obj.data.users > 1:
+        obj.data = obj.data.copy()
+    for vert in obj.data.vertices:
+        vert.co.x *= scales[0]
+        vert.co.y *= scales[1]
+        vert.co.z *= scales[2]
+    obj.data.update()
+    bpy.context.view_layer.update()
 
 
 def _sanity() -> list[str]:

@@ -400,6 +400,46 @@ def _image_count(messages: list) -> int:
     return count
 
 
+def merge_overrides(existing: dict, patch: dict) -> dict:
+    """Keep earlier overrides when a later edit only changes some fields.
+
+    A location drag after a height edit must still rebuild at that height.
+    Dimension keys merge; location and rotation replace the previous value.
+    """
+    merged: dict = {}
+    for name, spec in (existing or {}).items():
+        if isinstance(spec, dict):
+            merged[str(name)] = _copy_override(spec)
+    for name, spec in (patch or {}).items():
+        if not isinstance(spec, dict):
+            continue
+        current = merged.setdefault(str(name), {})
+        for key in ("location", "rotation_deg"):
+            value = spec.get(key)
+            if isinstance(value, (list, tuple)) and len(value) == 3:
+                current[key] = [float(item) for item in value]
+        dims = spec.get("dims")
+        if isinstance(dims, dict) and dims:
+            kept = current.get("dims")
+            kept = dict(kept) if isinstance(kept, dict) else {}
+            for key, value in dims.items():
+                kept[str(key)] = value
+            current["dims"] = kept
+    return merged
+
+
+def _copy_override(spec: dict) -> dict:
+    copied = {}
+    for key, value in spec.items():
+        if key == "dims" and isinstance(value, dict):
+            copied[key] = dict(value)
+        elif isinstance(value, (list, tuple)):
+            copied[key] = list(value)
+        else:
+            copied[key] = value
+    return copied
+
+
 def rebuild(job_id: str, project_id: str, version_n: int, overrides: dict, *,
             runner=None, timeout: int = 90) -> dict:
     """Re-run a saved script with overrides. No model call. Writes version n+1."""

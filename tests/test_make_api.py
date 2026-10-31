@@ -158,6 +158,26 @@ def test_feedback_and_override_create_the_next_versions():
     assert first.status_code == 200
 
 
+def test_a_later_override_keeps_earlier_dimension_edits():
+    project = _project()
+    created = client.post(f"/api/make/projects/{project}/messages", json={"text": "floor waste", "mode": "create"})
+    assert created.status_code == 200
+    _run()
+    height = client.patch(f"/api/make/projects/{project}/versions/1/overrides", json={
+        "overrides": [{"name": "Upturn", "dims": {"upturn_hgt": 160}}],
+    })
+    assert height.status_code == 200, height.text
+    _run()
+    moved = client.patch(f"/api/make/projects/{project}/versions/2/overrides", json={
+        "overrides": [{"name": "Upturn", "location": [10, 20, 30]}],
+    })
+    assert moved.status_code == 200, moved.text
+    _run()
+    stored = json.loads(get_version(project, 3)["overrides"])
+    assert stored["Upturn"]["dims"]["upturn_hgt"] == 160
+    assert stored["Upturn"]["location"] == [10, 20, 30]
+
+
 def test_attachment_png_reaches_the_model_payload():
     project = _project()
     png = _png()
