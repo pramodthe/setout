@@ -241,3 +241,19 @@ def test_a_hollow_joint_around_a_brick_is_mortar_and_a_doubt_is_only_marked():
     assert db.execute("select category from components where id=2").fetchone()[0] == "mortar"
     assert doubts(db) == 1
     assert db.execute("select category, review from components where id=3").fetchone() == ("mortar", 1)
+
+
+def test_a_section_overlaps_itself_better_than_another(tmp_path):
+    from PIL import Image, ImageDraw
+
+    from goal.retrieve_shape import score, signature, spectra
+    def drawn(name, box):
+        image = Image.new("L", (400, 400), 255)
+        pen = ImageDraw.Draw(image)
+        pen.rectangle((40, 40, 360, 360), outline=0, width=3)
+        pen.rectangle(box, outline=0, width=3)
+        image.save(tmp_path / name)
+        return tmp_path / name
+    first, second = drawn("a.png", (80, 80, 160, 320)), drawn("b.png", (100, 200, 340, 240))
+    query = np.fft.rfft2(signature(first))
+    assert score(query, spectra(first)) > score(query, spectra(second))

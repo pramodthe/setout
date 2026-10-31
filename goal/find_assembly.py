@@ -13,12 +13,15 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
-from . import section
+from . import hatching, section
 from .baseline import cut, held_out
 from .library import STORE
 from .reference import DB
 
 SIDE = 340
+CROP_CELLS = 48  # ink is grouped on a grid this many cells across
+CROP_REACH = 3  # cells: groups this close are one drawing
+CROP_SHARE = 0.1  # of the ink: smaller groups are strays
 SHEETS = STORE / "sections"
 SCHEMA = {"type": "object", "additionalProperties": False, "required": ["what", "matches"], "properties": {"what": {"type": "string"},
           "matches": {"type": "array", "items": {"type": "object", "additionalProperties": False, "required": ["number", "why"],
@@ -37,8 +40,20 @@ def catalogue() -> list:
 def trimmed(path) -> Image.Image:
     """A section cropped to where its ink really is: one stray far-off piece shrank whole details to specks."""
     picture = Image.open(path).convert("L")
-    ys, xs = np.nonzero(np.asarray(picture) < 128)
-    box = (int(np.percentile(xs, 2)) - 12, int(np.percentile(ys, 2)) - 12, int(np.percentile(xs, 98)) + 12, int(np.percentile(ys, 98)) + 12)
+    ink = np.asarray(picture) < 128
+    cell = max(max(ink.shape) // CROP_CELLS, 1)
+    coarse = np.add.reduceat(np.add.reduceat(ink, np.arange(0, ink.shape[0], cell), 0), np.arange(0, ink.shape[1], cell), 1)
+    near = coarse > 0
+    for _ in range(CROP_REACH):
+        near = near | np.roll(near, 1, 0) | np.roll(near, -1, 0) | np.roll(near, 1, 1) | np.roll(near, -1, 1)
+    groups = hatching._components(near)
+    mass = [coarse[g].sum() for g in groups]
+    kept = np.zeros_like(near)
+    for group, weight in zip(groups, mass):
+        if weight >= CROP_SHARE * sum(mass):
+            kept[group] = True
+    ys, xs = np.nonzero(kept & (coarse > 0))
+    box = (int(xs.min()) * cell - 12, int(ys.min()) * cell - 12, (int(xs.max()) + 1) * cell + 12, (int(ys.max()) + 1) * cell + 12)
     return picture.crop(box).convert("RGB")
 
 
