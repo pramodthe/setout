@@ -214,6 +214,12 @@ The stored step keeps the whole result, since `patch_program` resumes from a
 rejected `proposal` and the trace reads it. The full checks are in
 `verifications`. A failed render is tool feedback, never a lost run.
 
+A refused write says everything at once: every expression the unit rule refuses,
+each with where it is (`native_program.unit_faults`), and only the parts and
+params it names reach the model. A patch cannot define a name twice. With no
+version yet, the same refusal `SAME_REFUSALS` times over ends the run as
+`refused_again`: nothing moved, and there is no draft to continue from.
+
 A run records why it stopped when it stops, as `stop_reason` in the job result.
 One cut short (`repository.CUT_SHORT`) whose draft still has blocking checks
 (e.g. CAD placeholders) and made progress continues automatically as a
@@ -274,6 +280,57 @@ Cross-file contracts. These are not obvious from any single file:
   needs the exact version's verification with no FAIL or required UNVERIFIED, a
   passing independent critic on that version and manifest, and readable evidence.
   Publishing also needs a named reviewer's acceptance.
+- **A relation's pass mark belongs to the verifier** (`verification_v3.py`,
+  `CONTACT_FLOOR`, `COVER_FLOOR`). The contact kinds (`supported_by`, `bonded_to`,
+  `sealed_to`, `terminates_against`, `abuts`, `covers`, `laps_over`) measure the same
+  thing on planes the verifier picks: the share of the smaller face that touches. A
+  built solid with no flat face that way (a rod) has the strip of its curve within the
+  contact tolerance for a face, and `MESH_SAG`, the export tolerance, is all a gap is
+  forgiven; a flat face tilted that way is no curve and stays UNVERIFIED, or a foot
+  tilted to touch at its tip would clear the floor it fails lying flat. `covers` must
+  also hide the target's face. `laps_over` alone may have less, and
+  only between two layers by role, running past each other's ends by `LAP_WIDTHS`
+  times the thinner one; that bar is ours and rests on very little. `fixed_to` is
+  measured on the two solids along the fixing, which enters through a face and so lies
+  inside the target across its length, and `hosted_in` on the target's solid either
+  side of the part, so resting on a surface fails both. Interpenetration itself is not
+  measured, so a part set at least half into a target can still pass `hosted_in`.
+  `repeated_along` stays open. A declared `min_coverage` can only ask for more, and a declared axis changes
+  nothing. A covered layer's obligation adds up the real contact of what lies on it,
+  whatever the kinds, and a part measured against nothing stays open. A new kind must
+  be classified in `tests/test_pass_marks.py`, or its hostile cases fail. Values come
+  from measured runs; never change them to clear a check.
+- **A thickness is measured through a layer, not across it.** An `extent` reads a
+  part's whole span, so a bend or a fall would read as thickness. On a sheet the claim
+  is measured across a straight run, and on a profile at `THICKNESS_STATIONS` along it:
+  it stands only if the layer is that thick at every one, so a taper stays a FAIL.
+- **A drawing is looked at up close, never measured** (`app/close_up.py`). Before an
+  object is modelled, two model calls place it and it is cut from the full-resolution
+  figure; if they disagree the writer gets the whole drawing. A part narrower than
+  `SMALL_SIDE` gets a third call on an enlarged piece around where they looked, since
+  both can be 1 to 2% of the sheet out, and if it is not there it gets no close-up. The
+  crop is shape and topology only. Each object's form is then read in a low-effort call of its own, with
+  its close-up beside its built section (`Tools._shape_readings`): a reader lists the
+  drawing's features, ticks them, lists the built members and ticks those, and code
+  decides from the ticks. It is never shown the author's brief. The critic reads each
+  layer the same way, drawing first (`LAYER_RULE`, `apply_layer_checks`), in its own
+  call. A difference, or a part the critic names as missing, cannot pass. The READ lists what is drawn with no label
+  (`unlabelled`), and each entry gets a part.
+- **A run does not stop on what it can still fix** (`Tools._repairs`). While budget
+  remains, `finish(needs_review)` is sent back if the last critic named errors or the
+  version has FAILs or open relations; at most `REPAIR_REFUSALS` times, and only if
+  something changed. Past that, or with no room left, the run ends as `repairs_left`
+  whatever the agent says, and the worker continues it as a `revise_detail`, up to
+  `SETOUT_AUTO_CONTINUE` times, unless the run fixed none of what it was continued for
+  (`repairs_before`). A covered layer left open is the reviewer's, and does not hold a
+  run back.
+- **CAD runs before the agent's next turn** (`Tools.cad_call`), one try per object per
+  contract; `SETOUT_AUTO_CAD`, `SETOUT_CLOSE_UP` and `SETOUT_LABEL_PROOF` (`off`) stop
+  these harness steps. `tests/conftest.py` turns them off, as scripted models do not
+  answer them; the tests about each turn it on.
+- **A label is verbatim only as far as it was checked** (`read["label_check"]`). A
+  text layer settles it; a drawing with none is proofread by a model and stays
+  UNVERIFIED (`label-verbatim`). Never claim otherwise.
 - **Evidence is pinned to `VERIFIER_VERSION`** (a hash of the verifier code).
   Changing the verifier invalidates earlier verifications; they are recomputed.
 - **Guide grounding** (`guide.ungrounded`): every number spoken must be a param

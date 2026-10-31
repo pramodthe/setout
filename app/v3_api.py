@@ -39,6 +39,7 @@ class Revise(Strict):
     requested_changes: str
     manufacturer: str | None = None
     continuation: int = Field(default=0, ge=0, le=10)  # n-th automatic continuation
+    repairs_before: list[str] = []  # what the run before left: a chain stops once a run fixes none of it
 
 
 class Render(Strict):

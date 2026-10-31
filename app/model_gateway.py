@@ -109,9 +109,11 @@ class ModelGateway:
     def json(self, text, images, schema, purpose, operation_key, model=None):
         content = [{"type": "input_text", "text": text}]
         content += [{"type": "input_image", "image_url": "artifact:" + ident} for ident in images]
-        # Reasoning counts as output: seen live, a critic spent all of 8192 thinking.
-        payload = {"model": model or meta_client.default_model(), "max_output_tokens": 32768 if purpose in ("program","cad") else 16384 if purpose in ("read","critic") else 8192,
-                   "reasoning":{"effort":"low" if purpose == "read" else "medium"},
+        # Reasoning counts as output: seen live, a critic spent all of 8192 thinking,
+        # and a program 30.9k of 32768, one step from coming back empty.
+        limit = {"program": 49152, "cad": 32768, "read": 16384, "critic": 16384, "shape": 16384}.get(purpose, 8192)
+        payload = {"model": model or meta_client.default_model(), "max_output_tokens": limit,
+                   "reasoning":{"effort":"low" if purpose in ("read","locate","zoom","proof","shape") else "medium"},
                    "input": [{"role": "user", "content": content}],
                    "text": {"format": {"type": "json_schema", "name": purpose,
                                         "schema": schema, "strict": True}}}

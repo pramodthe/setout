@@ -180,7 +180,7 @@ def test_inferred_parts_are_not_verified_evidence(source_repo):
     component = ont.component(slot.classes[0])
     raw = layers()
     raw["assembly_class"] = DOOR
-    raw["parts"][0].update(role=component.role, class_id=component.id, provenance="inferred", confidence=0.5,
+    raw["parts"][0].update(role=component.role, class_id=component.id, provenance="inferred", confidence=0.5, label=None,
                            inferred_by=f"archetype:{DOOR}@{ont.version}:{slot.id}")
     _, report = verified(source_repo, raw)
     checks = by_id(report)

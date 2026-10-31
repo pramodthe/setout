@@ -247,6 +247,27 @@ def _page_figures(i: int, page, pdf) -> tuple[list[tuple], dict, str | None]:
             handle.close()
 
 
+def page_text(data: bytes, page: int) -> str:
+    """A PDF page's text layer, or nothing: a scan or an embedded image has none."""
+    import pypdfium2
+
+    with _PDFIUM:
+        try:
+            pdf = pypdfium2.PdfDocument(data)
+        except pypdfium2.PdfiumError:
+            return ""
+        try:
+            handle = pdf.get_page(page)
+            layer = handle.get_textpage()
+            try:
+                return layer.get_text_range()
+            finally:
+                layer.close()
+                handle.close()
+        finally:
+            pdf.close()
+
+
 def store_pdf(filename: str, data: bytes) -> dict:
     from pypdf import PdfReader  # local import: clearer error without dep
     import pypdfium2

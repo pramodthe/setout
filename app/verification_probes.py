@@ -10,7 +10,7 @@ from __future__ import annotations
 
 AXES = {"x": 0, "y": 1, "z": 2}
 # Relation kinds that put two parts in contact across an interface.
-CONTACT_KINDS = ("covers", "supported_by", "bonded_to", "sealed_to", "terminates_against", "laps_over")
+CONTACT_KINDS = ("covers", "supported_by", "bonded_to", "sealed_to", "terminates_against", "laps_over", "abuts")
 # Sample positions across each side of an overlap, clear of its edges.
 FRACTIONS = (0.15, 0.5, 0.85)
 
@@ -34,6 +34,33 @@ def line_hits(mesh, axis, points):
             if min(w0, w1, w2) >= -1e-9:
                 hits[n].append(w0 * p0[axis] + w1 * p1[axis] + w2 * p2[axis])
     return [sorted(h) for h in hits]
+
+
+def solid_spans(hits):
+    """The stretches of a line inside a closed mesh, from its sorted surface crossings.
+    A line through an edge two triangles share crosses both at one point: one crossing."""
+    crossings = []
+    for hit in hits:
+        if not crossings or hit - crossings[-1] > 1e-6:
+            crossings.append(hit)
+    return list(zip(crossings[::2], crossings[1::2]))
+
+
+def shared_length(first, second):
+    """How long two sets of solid stretches on one line overlap, in mm."""
+    return sum(max(0.0, min(a1, b1) - max(a0, b0)) for a0, a1 in first for b0, b1 in second)
+
+
+def lines_through(mesh, low, high, axis, most=14):
+    """Lines along `axis` through a mesh of any shape, inside the window (low, high)
+    on the other two axes. They run between neighbouring vertex coordinates, so a
+    thin shank is found however wide the part's box: a fixed grid can step over it."""
+    def coordinates(k, start, end):
+        values = sorted({v for v in mesh.positions[k::3] if start <= v <= end} | {start, end})
+        middles = [(p + q) / 2 for p, q in zip(values, values[1:]) if q - p > 1e-6]
+        return middles[::max(1, len(middles) // most)]
+    i, j = [k for k in range(3) if k != axis]
+    return [(u, v) for u in coordinates(i, low[0], high[0]) for v in coordinates(j, low[1], high[1])]
 
 
 def probe_points(a, b, axis):

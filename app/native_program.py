@@ -60,6 +60,29 @@ def expression_unit(expression, units):
         raise ValueError(f"invalid dimensional expression: {expression!r}") from error
 
 
+def unit_faults(parts, units):
+    """Every expression the unit rule refuses: {reason: ["part.dim = expression"]}.
+
+    All of them, each with where it is. Told only the first and not where, an agent with
+    25 of these spent 14 turns adding 90 params and changed none of the 25."""
+    found = {}
+    def check(where, expression, want):
+        try:
+            reason = None if expression_unit(expression, units) in (want, "zero") else f"use a named {want} value"
+        except ValueError as error:
+            reason = str(error).split(":")[0]
+        if reason:
+            found.setdefault(reason, []).append(f"{where} = {expression}")
+    for part in parts:
+        for dimension in part.dims:
+            check(f"{part.id}.{dimension.name}", dimension.expr, "ratio" if dimension.name == "fall_ratio" else "mm")
+        for point in part.path:
+            for expression in (point.x, point.y, point.z):
+                if expression:
+                    check(f"{part.id} path", expression, "mm")
+    return found
+
+
 class Feature(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str
@@ -104,7 +127,8 @@ class NativeRelation(BaseModel):
     source: str
     target: str
     kind: Literal["supported_by", "bonded_to", "covers", "laps_over", "terminates_against", "sealed_to", "installed_before",
-                  # ontology/relations.yaml kinds; the verifier reports them UNVERIFIED until it measures them
+                  # ontology/relations.yaml: abuts is measured as a contact, hosted_in and fixed_to on
+                  # their solids; repeated_along cannot be measured, so it stays open and blocks
                   "hosted_in", "fixed_to", "abuts", "repeated_along"]
     constraints: dict = Field(default_factory=dict)
 
@@ -145,14 +169,11 @@ class NativeProgram(DetailProgram):
             for expression in list(part.param_bindings.values()) + [f.expected_expr for f in part.features]:
                 if not expr_names(expression) <= names:
                     raise ValueError(f"{part.id}: unknown parameter binding")
-            for dimension in part.dims:
-                want = "ratio" if dimension.name == "fall_ratio" else "mm"
-                if expression_unit(dimension.expr, units) not in (want, "zero"):
-                    raise ValueError(f"{part.id}.{dimension.name}: use a named {want} value")
-            for point in part.path:
-                for expression in (point.x, point.y, point.z):
-                    if expression and expression_unit(expression, units) not in ("mm", "zero"):
-                        raise ValueError(f"{part.id}: path coordinates require named lengths")
+        faults = unit_faults(self.parts, units)
+        if faults:
+            listed = " ".join(f"{reason}: {'; '.join(where)}." for reason, where in faults.items())
+            raise ValueError(f"{sum(map(len, faults.values()))} expressions refused. Replace each one: a new param "
+                             f"changes nothing until an expression uses it. {listed}")
         return self
 
 
@@ -195,14 +216,16 @@ def normalize_identifiers(raw):
             return ast.unparse(Rename().visit(ast.parse(value,mode="eval"))) if value else value
         except SyntaxError as error:
             raise ValueError("invalid dimensional expression: "+str(value)) from error
-    unique = {}
-    for param in raw["params"]:
+    unique, first_at = {}, {}
+    for index, param in enumerate(raw["params"]):
         param["name"] = names[param["name"]]
         if param["name"] in ("min","max"):
             raise ValueError("min/max are reserved expression function names")
         if param["name"] in unique and unique[param["name"]] != param:
-            raise ValueError("conflicting parameter definitions after normalization: "+param["name"])
+            raise ValueError(f"conflicting parameter definitions after normalization: {param['name']} "
+                             f"at /params/{first_at[param['name']]} and /params/{index}")
         unique[param["name"]] = param
+        first_at.setdefault(param["name"], index)
     raw["params"] = list(unique.values())
     for part in raw["parts"]:
         part["id"] = parts[part["id"]]
@@ -275,6 +298,8 @@ def check_roles(program, read, human=False):
         if zones & set(part.install_after) or (part.id in zones and part.install_after):
             raise ValueError(f"{part.id}: zones are not installed; leave them out of install_after")
     for relation in program.relations:
+        if relation.source == relation.target:
+            raise ValueError(f"{relation.source}: a relation joins two parts; a part cannot be measured against itself")
         if {relation.source, relation.target} & zones:
             raise ValueError(f"{relation.source}->{relation.target}: a zone is not built, so it has no physical "
                              "relations; describe clearances with features or a note instead")
@@ -285,6 +310,17 @@ def check_roles(program, read, human=False):
         if coverage is not None and not 0 <= coverage <= 1:
             raise ValueError(f"{relation.source}->{relation.target}: min_coverage is a fraction from 0 to 1 "
                              f"(0.9 means 90%), not {coverage:g}")
+
+
+def check_form(program, base=None, human=False):
+    """A shaped object stays shaped. Seen live: a flat plate failed the form check,
+    and the agent cleared it by declaring the part a block. The form is a claim about
+    the drawing, so a solid that misses it is fixed, or settled by a reviewer."""
+    declared = {p["id"]: p.get("form") for p in (base or {}).get("parts", [])}
+    for part in program.parts:
+        if not human and declared.get(part.id) == "shaped" and part.form == "block":
+            raise ValueError(f"{part.id} was declared form=shaped, so the drawing shows form beyond its envelope; a block "
+                             "cannot stand in for it. Keep form=shaped and model that form with model_component.")
 
 
 def _slot_claimed(inferred_by):
@@ -313,6 +349,10 @@ def check_provenance(program, base=None, human=False):
             if part.provenance == "drawing" and before != "drawing":
                 raise ValueError(f"{part.id} was {before}; calling it drawing would claim the drawing shows it. "
                                  "Keep the provenance, or leave the part for a reviewer to confirm")
+            # A ghost is never measured, so this would be a way out of every check on the part.
+            if part.provenance == "inferred" and part.id in previous and before == "drawing":
+                raise ValueError(f"{part.id} is a part the drawing shows; calling it inferred would take it out of "
+                                 "verification. Model and measure it")
         for ident, old in previous.items():
             if old.get("provenance") == "user_input" and not any(
                     p.id == ident and p.provenance == "user_input" for p in program.parts):
@@ -321,6 +361,8 @@ def check_provenance(program, base=None, human=False):
     for part in program.parts:
         if part.provenance == "drawing" and part.inferred_by:
             raise ValueError(f"{part.id}: inferred_by is set but provenance is drawing; a part the drawing shows was not inferred")
+        if part.provenance == "inferred" and part.label:
+            raise ValueError(f"{part.id}: {part.label!r} is printed on the drawing, so the drawing shows this part; it is not inferred")
     inferred = [p for p in program.parts if p.provenance == "inferred"]
     if not inferred:
         return
@@ -425,6 +467,7 @@ def prepare(raw, source, detail_id, read, base=None, human=False, bound=()):
             part["cad_brief"] = original.get("cad_brief") or original.get("type")
     program = NativeProgram.model_validate(gated)
     check_roles(program, read, human)
+    check_form(program, base, human)
     check_provenance(program, base, human)
     compiled_input = program.model_dump(mode="json")
     compiled_input["version"] = "2.0"

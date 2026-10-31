@@ -17,6 +17,7 @@ from app.native_program import _slot_claimed, anchor_placements, prepare
 from app.program_edits import apply_edits
 from app.program_schema import program_schema
 from app.repository import REVIEW_TAIL, BudgetExceeded, billed_tokens, tokens_left
+from app.v3_api import Revise
 from app.verification_v3 import envelope_problem, slot_checks, spatial_checks
 from app.worker import CONTINUE_REQUEST, Worker, continue_if_cut_short
 from test_agent_v3 import FakeRenderer, response_json, source_repo  # noqa: F401
@@ -144,8 +145,8 @@ def test_a_turn_is_not_refused_for_input_the_provider_has_cached(source_repo):
         con.execute(d.steps.insert().values(id="turn", run_id=source_repo.run(job["id"])["id"], n=90, kind="model",
                     state="completed", request={"purpose": "agent", "operation_key": "turn-5"},
                     response={"output": []}, tokens=_usage(38000, 30000, 500)))
-    _set_consumed(source_repo, job, tokens=250_000)
-    assert tokens_left(source_repo.run(job["id"])) == 70_000
+    _set_consumed(source_repo, job, tokens=226_000)
+    assert tokens_left(source_repo.run(job["id"])) == 94_000
     seen = []
     def respond(payload):
         seen.append(payload["max_output_tokens"])
@@ -183,8 +184,9 @@ def test_the_floor_cannot_stop_a_run_that_has_budget_left(source_repo, monkeypat
     job = source_repo.enqueue("generate_detail", {"figure_id": "figure"})
     Worker(source_repo, responder=model).run_once(only_ids=[job["id"]])
     final = source_repo.get(d.jobs, job["id"])
-    assert model.calls == 13 and final["result"]["stop_reason"] == "finished"
-    assert source_repo.run(job["id"])["consumed"]["tokens"] == 13 * 8500 + 20  # and the nested read
+    # All 14 turns ran: not the floor but its own finish ended it, with its CAD still to do.
+    assert model.calls == 14 and final["result"]["stop_reason"] == "repairs_left"
+    assert source_repo.run(job["id"])["consumed"]["tokens"] == 14 * 8500 + 20  # and the nested read
 
 
 def test_a_run_keeps_the_model_calls_its_review_needs(source_repo, monkeypatch):
@@ -303,9 +305,42 @@ def test_a_rejection_that_names_no_part_shows_the_proposal_because_nothing_else_
     tools = Tools(source_repo, fence, ModelGateway(source_repo, fence, _read_response))
     tools.run("read", "read_drawing", {})
     candidate = threshold()
-    candidate["params"].append(dict(candidate["params"][1], value=999))
+    next(dim for dim in candidate["parts"][0]["dims"] if dim["name"] == "x1")["expr"] = "1 +"
     view = model_view("write_program", tools.run("w1", "write_program", {"program": candidate}))["error"]
-    assert view["proposal"]["parts"]
+    assert "1 +" in view["message"] and view["proposal"]["parts"]
+
+
+def test_a_conflict_says_where_both_definitions_are_and_shows_them_alone(source_repo):
+    """Seen live: told only the name, an agent counted indexes by hand and got them wrong,
+    and `@name` cannot reach one of two definitions."""
+    job, fence = _claim(source_repo)
+    tools = Tools(source_repo, fence, ModelGateway(source_repo, fence, _read_response))
+    tools.run("read", "read_drawing", {})
+    candidate, first = threshold(), 1
+    candidate["params"].append(dict(candidate["params"][first], value=999))
+    last = len(candidate["params"]) - 1
+    view = model_view("write_program", tools.run("w1", "write_program", {"program": candidate}))["error"]
+    assert f"{candidate['params'][first]['name']} at /params/{first} and /params/{last}" in view["message"]
+    assert "proposal" not in view and [p["value"] for p in view["named_params"]] == [candidate["params"][first]["value"], 999]
+    fixed = tools.run("p1", "patch_program", {"edits": [{"op": "remove", "path": f"/params/{last}"}]})
+    assert fixed.get("version_id"), fixed
+
+
+def test_a_patch_cannot_define_a_name_twice():
+    """Seen live: 59 added params, eight of them second definitions that took 12 turns to untangle."""
+    program, kept = threshold(), 1
+    param = program["params"][kept]
+    with pytest.raises(ValueError, match=f"params already has {param['name']}: replace /params/@{param['name']}"):
+        apply_edits(program, [{"op": "add", "path": "/params/-", "value": dict(param, value=999)}])
+    with pytest.raises(ValueError, match="already has"):
+        apply_edits(program, [{"op": "add", "path": f"/params/@{param['name']}", "value": dict(param, value=999)}])
+    assert apply_edits(program, [{"op": "add", "path": "/params/-", "value": dict(param)}])["params"] == program["params"]
+    swapped = [{"op": "remove", "path": f"/params/@{param['name']}"}, {"op": "add", "path": "/params/-", "value": dict(param, value=999)}]
+    assert apply_edits(program, swapped)["params"][-1]["value"] == 999
+    with pytest.raises(ValueError, match="/parts/@slab/dims already has x1: replace /parts/@slab/dims/@x1"):
+        apply_edits(program, [{"op": "add", "path": "/parts/@slab/dims/-", "value": {"name": "x1", "expr": "slab_depth"}}])
+    relation = dict(program["relations"][0])  # a list with no names is not touched
+    assert len(apply_edits(program, [{"op": "add", "path": "/relations/-", "value": relation}])["relations"]) == len(program["relations"]) + 1
 
 
 def test_a_result_names_the_objects_still_to_model(source_repo):
@@ -313,6 +348,114 @@ def test_a_result_names_the_objects_still_to_model(source_repo):
     view = model_view("write_program", written)
     assert view["next_step"].endswith("track, bottom_tray") and "before any more patches" in view["next_step"]
     assert "next_step" not in model_view("write_program", {"checks": [{"id": "cad-envelope-x", "status": "FAIL", "reason": "off"}]})
+
+
+def test_a_refusal_lists_every_fault_with_where_it_is_so_the_program_need_not_come_back(source_repo):
+    """Seen live: 25 of these, reported one at a time and with no location, took 14 turns
+    of adding params and fixed none of them."""
+    job, fence = _claim(source_repo)
+    tools = Tools(source_repo, fence, ModelGateway(source_repo, fence, _read_response))
+    tools.run("read", "read_drawing", {})
+    candidate = threshold()
+    dims = {d_["name"]: d_ for d_ in candidate["parts"][0]["dims"]}
+    dims["x1"]["expr"], dims["x0"]["expr"] = "slab_length + 25", "-70"
+    next(d_ for d_ in candidate["parts"][1]["dims"] if d_["name"] == "x1")["expr"] = "no_such_length"
+    view = model_view("write_program", tools.run("w1", "write_program", {"program": candidate}))["error"]
+    assert "3 expressions refused" in view["message"]
+    for fault in ("slab.x1 = slab_length + 25", "slab.x0 = -70", "layer.x1 = no_such_length"):
+        assert fault in view["message"]
+    assert "matching units" in view["message"] and "use a named mm value" in view["message"]
+    assert "invalid dimensional expression" in view["message"]
+    assert "proposal" not in view and [p["id"] for p in view["named_parts"]] == ["slab", "layer"]
+    assert [p["name"] for p in view["named_params"]] == ["slab_length"]
+
+
+def test_a_refusal_has_room_for_a_long_list(source_repo):
+    job, fence = _claim(source_repo)
+    tools = Tools(source_repo, fence, ModelGateway(source_repo, fence, _read_response))
+    tools.run("read", "read_drawing", {})
+    candidate = threshold()
+    for n in range(15):
+        extra = copy.deepcopy(candidate["parts"][0])
+        extra["id"] = f"copy_{n}"
+        for dim in extra["dims"]:
+            if dim["name"] in ("x1", "y1"):
+                dim["expr"] = "structural_slab_top_level + 25"
+        candidate["parts"].append(extra)
+    view = model_view("write_program", tools.run("w1", "write_program", {"program": candidate}))["error"]
+    assert "30 expressions refused" in view["message"] and view["message"].count("+ 25") == 30
+
+
+def test_a_rejected_path_coordinate_says_which_part():
+    raw = threshold()
+    raw["parts"][1].update(shape="sheet", dims=_dims(thickness="liquid_applied_layer_thickness", z0="0", z1="run_length"),
+                           path=[{"x": "0", "y": "slab_length + 25"}, {"x": "slab_length", "y": "0"}])
+    with pytest.raises(ValueError, match=r"layer path = slab_length \+ 25"):
+        _prepared(raw)
+
+
+class Refused:
+    """Writes a program with faults, then sends the patches it is given, one a turn."""
+    def __init__(self, program, patches):
+        self.program, self.patches, self.turns = program, patches, 0
+
+    def __call__(self, payload):
+        if payload.get("text", {}).get("format", {}).get("name") == "read":
+            return _read_response(payload)
+        self.turns += 1
+        if self.turns == 1:
+            call = ("read_drawing", {})
+        elif self.turns == 2:
+            call = ("write_program", {"program": self.program})
+        elif self.patches:
+            call = ("patch_program", {"edits": self.patches.pop(0)})
+        else:
+            call = ("finish", {"version_id": None, "verification_id": None, "critic_verdict_id": None,
+                               "status": "needs_review", "summary": "stop", "open_issues": []})
+        return {"output": [{"type": "function_call", "name": call[0], "call_id": f"call-{self.turns}", "arguments": json.dumps(call[1])}],
+                "usage": _usage(100, 0, 10)}
+
+
+def _faulty(*dims):
+    program = threshold()
+    for dim in program["parts"][0]["dims"]:
+        if dim["name"] in dims:
+            dim["expr"] = "structural_slab_top_level + 25"
+    return program
+
+
+def test_the_same_refusal_three_times_ends_a_run_that_has_no_version(source_repo):
+    """Seen live: 268k tokens on a program that was never accepted."""
+    idle = [{"op": "replace", "path": "/title", "value": "another try"}]
+    model = Refused(_faulty("x1"), [idle] * 40)
+    job = source_repo.enqueue("generate_detail", {"figure_id": "figure"})
+    Worker(source_repo, responder=model).run_once(only_ids=[job["id"]])
+    ended = source_repo.get(d.jobs, job["id"])
+    assert ended["state"] == "needs_review" and ended["result"]["stop_reason"] == "refused_again"
+    assert model.turns == 4 and ended["result"]["version_id"] is None  # the write and two patches
+    assert continue_if_cut_short(source_repo, job["id"], limit=2) is None  # nothing to continue from
+
+
+def test_a_run_with_a_draft_is_not_stopped_by_refused_patches(source_repo):
+    """It has a version to keep, a refused patch leaves that version as it was, and the
+    repair loop and the budget bound what follows."""
+    refused = [{"op": "replace", "path": "/parts/@slab/role", "value": "object"}]
+    model = Refused(threshold(), [refused] * 4)
+    job = source_repo.enqueue("generate_detail", {"figure_id": "figure"})
+    Worker(source_repo, responder=model).run_once(only_ids=[job["id"]])
+    assert source_repo.run(job["id"])["working_version_id"] and model.turns >= 6
+    assert source_repo.get(d.jobs, job["id"])["result"].get("stop_reason") != "refused_again"
+
+
+def test_a_run_getting_through_its_faults_is_not_stopped(source_repo):
+    """Three refusals in a row, each with less on it: only sameness means nothing moved."""
+    model = Refused(_faulty("x1", "y1", "z1"), [
+        [{"op": "replace", "path": "/parts/@slab/dims/@x1/expr", "value": "slab_length"}],
+        [{"op": "replace", "path": "/parts/@slab/dims/@y1/expr", "value": "structural_slab_top_level"}],
+        [{"op": "replace", "path": "/parts/@slab/dims/@z1/expr", "value": "run_length"}]])
+    job = source_repo.enqueue("generate_detail", {"figure_id": "figure"})
+    Worker(source_repo, responder=model).run_once(only_ids=[job["id"]])
+    assert source_repo.run(job["id"])["working_version_id"]
 
 
 def test_a_repeated_gate_note_reaches_the_model_once(source_repo, monkeypatch):
@@ -389,7 +532,7 @@ def _stopped(repo, stop_reason, consumed=209_000, reserved=0):
     return job
 
 
-@pytest.mark.parametrize("stop_reason", ["budget_floor", "budget_exhausted", "output_limit", "model_stopped"])
+@pytest.mark.parametrize("stop_reason", ["budget_floor", "budget_exhausted", "output_limit", "model_stopped", "repairs_left"])
 def test_a_run_cut_short_continues_whatever_it_spent(source_repo, stop_reason):
     """Seen live: stopped on the floor at 209k, and 209k + 100k < 320k said it had not."""
     job = _stopped(source_repo, stop_reason)
@@ -441,6 +584,167 @@ def test_running_out_of_cad_calls_ends_in_a_review_that_says_so(source_repo, mon
     assert final["state"] == "needs_review" and final["result"]["stop_reason"] == "budget_exhausted"
     assert source_repo.list(d.critics)  # the draft was reviewed before the run stopped
     assert final["result"]["continued_by"]
+
+
+def test_a_run_may_not_give_up_on_what_it_can_fix_while_budget_remains(source_repo, monkeypatch):
+    """Seen live: a run ended on its first failing critic with 71k tokens left."""
+    monkeypatch.setenv("SETOUT_COMPLETION", "off")
+    job, tools, written = _written(source_repo)
+    answer = {"version_id": written["version_id"], "verification_id": None, "critic_verdict_id": None,
+              "status": "needs_review", "summary": "giving up", "open_issues": []}
+    refused = tools.run("f1", "finish", answer)
+    assert refused["error"]["code"] == "repairs_left" and "cad-track" in refused["error"]["repairs"]
+    assert source_repo.get(d.jobs, job["id"])["state"] == "running"
+
+
+def test_a_finish_sent_back_with_nothing_done_stops_and_goes_on_in_a_new_run(source_repo, monkeypatch):
+    """Seen live: a second finish with nothing done passed as finished, at 143k of 320k,
+    with three repairs open, and nothing continued it. It neither spins nor gives up."""
+    monkeypatch.setenv("SETOUT_COMPLETION", "off")
+    job, tools, written = _written(source_repo)
+    answer = {"version_id": written["version_id"], "verification_id": None, "critic_verdict_id": None,
+              "status": "needs_review", "summary": "giving up", "open_issues": []}
+    tools.run("f1", "finish", answer)
+    ended = tools.run("f2", "finish", answer)
+    final = source_repo.get(d.jobs, job["id"])
+    assert "error" not in ended and final["state"] == "needs_review" and final["result"]["stop_reason"] == "repairs_left"
+    follow = continue_if_cut_short(source_repo, job["id"], limit=2)
+    assert source_repo.get(d.jobs, follow)["kind"] == "revise_detail"
+    assert source_repo.get(d.jobs, follow)["payload"]["repairs_before"] == final["result"]["repairs"]
+    assert Revise.model_validate(source_repo.get(d.jobs, follow)["payload"]).repairs_before  # the job API takes what the worker writes
+
+
+def test_a_finish_is_sent_back_a_bounded_number_of_times_however_much_changes(source_repo, monkeypatch):
+    from app.repository import REPAIR_REFUSALS
+    monkeypatch.setenv("SETOUT_COMPLETION", "off")
+    job, tools, written = _written(source_repo)
+    answers = []
+    for i in range(REPAIR_REFUSALS + 1):
+        version = source_repo.run(job["id"])["working_version_id"]
+        answers.append(tools.run(f"f{i}", "finish", {"version_id": version, "verification_id": None, "critic_verdict_id": None,
+                                                     "status": "needs_review", "summary": "stop", "open_issues": []}))
+        if "error" in answers[-1]:
+            tools.run(f"p{i}", "patch_program", {"edits": [{"op": "replace", "path": "/params/@slab_length/value", "value": 500 + 10 * i}]})
+    assert ["error" in answer for answer in answers] == [True] * REPAIR_REFUSALS + [False]
+    assert answers[-1]["stop_reason"] == "repairs_left"
+
+
+def test_a_run_with_nothing_left_to_fix_ends_at_once(source_repo, monkeypatch):
+    monkeypatch.setenv("SETOUT_COMPLETION", "off")
+    job, tools, written = _written(source_repo)
+    monkeypatch.setattr(tools, "_repairs", lambda run: [])
+    ended = tools.run("f1", "finish", {"version_id": written["version_id"], "verification_id": None, "critic_verdict_id": None,
+                                       "status": "needs_review", "summary": "done what can be", "open_issues": []})
+    assert "error" not in ended and ended["stop_reason"] == "finished"
+
+
+def test_what_is_for_a_reviewer_does_not_hold_a_run_back(source_repo, monkeypatch):
+    monkeypatch.setenv("SETOUT_COMPLETION", "off")
+    job, tools, written = _written(source_repo)
+    with d.transaction(source_repo.engine) as con:
+        con.execute(d.verifications.update().where(d.verifications.c.version_id == written["version_id"]).values(checks=[
+            {"id": "coverage-layer", "status": "UNVERIFIED", "required": True},
+            {"id": "anchored-track", "status": "UNVERIFIED", "required": True},
+            {"id": "assembly-0-covers", "status": "UNVERIFIED", "required": True},
+            {"id": "label-verbatim", "status": "UNVERIFIED", "required": False}]))
+    assert tools._repairs(source_repo.run(job["id"])) == ["anchored-track", "assembly-0-covers"]
+
+
+def test_a_critics_errors_are_repairs_and_what_needs_a_human_is_not(source_repo, monkeypatch):
+    monkeypatch.setenv("SETOUT_COMPLETION", "off")
+    job, tools, written = _written(source_repo)
+    run = source_repo.run(job["id"])
+    with d.transaction(source_repo.engine) as con:
+        con.execute(d.verifications.update().where(d.verifications.c.version_id == written["version_id"]).values(checks=[]))
+        con.execute(d.steps.insert().values(id="crit", run_id=run["id"], n=90, kind="tool", state="completed", tool_name="critic",
+                    call_id="crit", output={"issues": [{"id": "shape-mismatch:track", "severity": "error"},
+                                                       {"id": "a-note", "severity": "warning"},
+                                                       {"id": "needs-eyes", "severity": "error", "needs_human": True}]}))
+    assert tools._repairs(source_repo.run(job["id"])) == ["shape-mismatch:track"]
+
+
+def test_a_run_out_of_budget_with_repairs_left_continues_as_a_revision(source_repo, monkeypatch):
+    """71k left against a 64k tail is no room for one more repair, so it must go on."""
+    monkeypatch.setenv("SETOUT_COMPLETION", "off")
+    job, tools, written = _written(source_repo)
+    _set_consumed(source_repo, job, tokens=249_000, model_calls=20)
+    ended = tools.run("f1", "finish", {"version_id": written["version_id"], "verification_id": None, "critic_verdict_id": None,
+                                       "status": "needs_review", "summary": "out of room", "open_issues": []})
+    final = source_repo.get(d.jobs, job["id"])
+    assert "error" not in ended and final["result"]["stop_reason"] == "repairs_left" and final["result"]["repairs"]
+    follow = continue_if_cut_short(source_repo, job["id"], limit=2)
+    assert source_repo.get(d.jobs, follow)["kind"] == "revise_detail"
+
+
+def test_out_of_cad_calls_what_needs_cad_goes_on_in_a_new_run(source_repo, monkeypatch):
+    """A new run has a new CAD budget: sending the finish back could only waste turns."""
+    monkeypatch.setenv("SETOUT_COMPLETION", "off")
+    job, tools, written = _written(source_repo)
+    monkeypatch.setattr(tools, "_repairs", lambda run: ["shape-mismatch:track", "cad-bottom_tray"])
+    _set_consumed(source_repo, job, cad_calls=12)
+    ended = tools.run("f1", "finish", {"version_id": written["version_id"], "verification_id": None, "critic_verdict_id": None,
+                                       "status": "needs_review", "summary": "no more CAD", "open_issues": []})
+    assert "error" not in ended and ended["stop_reason"] == "repairs_left"
+
+
+def test_out_of_cad_calls_what_a_patch_can_fix_is_still_sent_back(source_repo, monkeypatch):
+    monkeypatch.setenv("SETOUT_COMPLETION", "off")
+    job, tools, written = _written(source_repo)
+    monkeypatch.setattr(tools, "_repairs", lambda run: ["shape-mismatch:track", "anchored-track"])
+    _set_consumed(source_repo, job, cad_calls=12)
+    refused = tools.run("f1", "finish", {"version_id": written["version_id"], "verification_id": None, "critic_verdict_id": None,
+                                         "status": "needs_review", "summary": "no more CAD", "open_issues": []})
+    assert refused["error"]["code"] == "repairs_left"
+
+
+def test_repairs_named_by_a_critic_continue_though_every_check_passes(source_repo, monkeypatch):
+    monkeypatch.setenv("SETOUT_COMPLETION", "off")
+    job, tools, written = _written(source_repo)
+    with d.transaction(source_repo.engine) as con:
+        con.execute(d.verifications.update().where(d.verifications.c.version_id == written["version_id"]).values(
+                    checks=[{"id": "all-good", "status": "PASS"}]))
+    source_repo.end(tools.fence, "needs_review", {"version_id": written["version_id"], "stop_reason": "repairs_left",
+                                                  "repairs": ["shape-mismatch:track"]})
+    assert continue_if_cut_short(source_repo, job["id"], limit=2)
+
+
+def _continued(repo, tools, version_id, before, after):
+    """A continuation of a run that left `before`, itself stopping with `after`."""
+    repo.end(tools.fence, "needs_review", {"version_id": version_id, "stop_reason": "repairs_left", "repairs": after})
+    with d.transaction(repo.engine) as con:
+        con.execute(d.jobs.update().where(d.jobs.c.id == tools.fence.job_id).values(
+            payload={"continuation": 1, "repairs_before": before, "figure_id": "figure"}))
+
+
+def test_a_chain_stops_once_a_run_fixed_none_of_what_it_was_continued_for(source_repo, monkeypatch):
+    """Something no agent can fix must cost one run, not every run the limit allows."""
+    monkeypatch.setenv("SETOUT_COMPLETION", "off")
+    job, tools, written = _written(source_repo)
+    _continued(source_repo, tools, written["version_id"], ["check-a", "check-b"], ["check-a", "check-b", "check-c"])
+    assert continue_if_cut_short(source_repo, job["id"], limit=9) is None
+
+
+def test_a_chain_goes_on_while_runs_are_fixing_things(source_repo, monkeypatch):
+    monkeypatch.setenv("SETOUT_COMPLETION", "off")
+    job, tools, written = _written(source_repo)
+    _continued(source_repo, tools, written["version_id"], ["check-a", "check-b"], ["check-b"])
+    assert continue_if_cut_short(source_repo, job["id"], limit=9)
+
+
+def test_a_run_cut_short_before_it_could_say_what_is_left_still_goes_on(source_repo, monkeypatch):
+    """The budget stops a run with no finish, so it has no list to compare."""
+    monkeypatch.setenv("SETOUT_COMPLETION", "off")
+    job, tools, written = _written(source_repo)
+    source_repo.end(tools.fence, "needs_review", {"version_id": written["version_id"], "stop_reason": "budget_exhausted"})
+    with d.transaction(source_repo.engine) as con:
+        con.execute(d.jobs.update().where(d.jobs.c.id == job["id"]).values(payload={"continuation": 1, "repairs_before": ["check-a"], "figure_id": "figure"}))
+    assert continue_if_cut_short(source_repo, job["id"], limit=9)
+
+
+def test_a_chain_of_continuations_still_ends_at_its_limit(source_repo, monkeypatch):
+    monkeypatch.setenv("SETOUT_COMPLETION", "off")
+    job = _stopped(source_repo, "repairs_left")
+    assert continue_if_cut_short(source_repo, job["id"], limit=0) is None
 
 
 def test_a_truncated_turn_records_why_and_continues(source_repo, monkeypatch):
@@ -572,7 +876,7 @@ def test_completion_runs_after_the_first_accepted_version_with_no_model_turn(sou
     run = source_repo.run(job["id"])
     steps = source_repo.list(d.steps, d.steps.c.run_id == run["id"], order=d.steps.c.n)
     tools = [s["tool_name"] for s in steps if s["kind"] == "tool"]
-    assert tools[:3] == ["read_drawing", "write_program", "complete_assembly"] and len(model.turns) == 3
+    assert tools[:3] == ["read_drawing", "write_program", "complete_assembly"] and len(model.turns) == 4  # a finish sent back
     final = source_repo.get(d.versions, run["working_version_id"])
     assert [p["id"] for p in final["program"]["parts"] if p["provenance"] == "inferred"] == ["jamb_1", "jamb_2", "head", "leaf"]
     report = source_repo.list(d.verifications, d.verifications.c.version_id == final["id"])[-1]
@@ -674,7 +978,7 @@ def test_a_slot_the_completion_cannot_read_does_not_kill_the_run(source_repo, mo
 def test_the_instructions_put_completion_before_cad():
     assert "before any CAD work" in INSTRUCTIONS and "Once the drawn parts verify" not in INSTRUCTIONS
     assert "provenance=drawing, inferred_by=null, label=null" in INSTRUCTIONS  # drawn but unlabelled is not inferred
-    assert "never lower it or swap a relation's kind to clear a FAIL" in INSTRUCTIONS
+    assert "THE VERIFIER SETS THE PASS MARK" in INSTRUCTIONS and "min_coverage is of the target" not in INSTRUCTIONS
 
 
 # ------------------------------------------------------- F. inferred objects are boxes
@@ -1076,6 +1380,99 @@ def test_a_vertical_layer_bonded_to_a_face_it_does_not_touch_measures_nothing_a_
     native, spec, _ = prepare(raw, SOURCE, "door", dict(READ, elements=[]))
     check = {c["id"]: c for c in spatial_checks(native, build_assembly(spec))}["assembly-0-bonded_to"]
     assert check["status"] == "FAIL" and check["coverage"] == 0 and check["min_gap"] is None
+
+
+def _bent_sheet(claim):
+    raw = threshold()
+    raw["parts"] = raw["parts"][:2]
+    raw["parts"][1].update(shape="sheet", dims=_dims(thickness="liquid_applied_layer_thickness", z0="0", z1="run_length"), features=[claim],
+                           path=[{"x": "0", "y": "structural_slab_top_level"}, {"x": "slab_length", "y": "structural_slab_top_level"},
+                                 {"x": "slab_length", "y": "structural_slab_top_level + slab_depth"}])
+    raw["relations"] = []
+    return raw
+
+
+def _sheet_check(repo, claim):
+    job, tools, written = _written(repo, _bent_sheet(claim))
+    return {c["id"]: c for c in written["checks"]}
+
+
+def test_a_thickness_claimed_on_a_bent_sheet_is_measured_through_the_sheet(source_repo):
+    """Seen live: an extent across the bends read 18.8 mm against a 2 mm membrane, and the
+    critic took that for a thick slab."""
+    check = _sheet_check(source_repo, {"id": "t", "kind": "extent", "selector": {"axis": "y"},
+                                       "expected_expr": "liquid_applied_layer_thickness", "tolerance": 0.05})["feature-layer-t"]
+    assert check["status"] == "PASS" and check["actual"] == pytest.approx(2)
+
+
+def test_any_other_extent_of_a_bent_sheet_is_still_its_whole_span(source_repo):
+    check = _sheet_check(source_repo, {"id": "t", "kind": "extent", "selector": {"axis": "y"}, "expected_expr": "slab_depth"})["feature-layer-t"]
+    assert check["status"] == "FAIL" and check["actual"] > 150
+
+
+def test_a_sheet_with_no_straight_run_says_it_cannot_measure_a_thickness():
+    from types import SimpleNamespace
+    from app.geometry import Mesh, _box_tris
+    from app.verification_v3 import sheet_thickness_claim
+    mesh = Mesh("layer")
+    _box_tris(mesh, 0, 0, 0, 10, 10, 10)
+    part = SimpleNamespace(dim=lambda name: "2", path=[SimpleNamespace(x="0", y="0"), SimpleNamespace(x="10", y="10")])
+    feature = SimpleNamespace(kind="extent", selector={"axis": "y"})
+    result = sheet_thickness_claim(part, mesh, feature, {"expected": 2, "tolerance": 0.05, "status": "FAIL", "actual": 10}, {})
+    assert result["status"] == "UNVERIFIED" and "no straight run" in result["reason"]
+
+
+LEVEL_Y, FALL, DEPTH = "structural_slab_top_level", "levelling_packer_stack_thickness", "track_section_height"
+
+
+def _profile_layer(path, claim=DEPTH):
+    raw = threshold()
+    raw["parts"] = raw["parts"][:2]
+    raw["parts"][1].update(shape="profile", dims=_dims(z0="0", z1="run_length"), path=[{"x": x, "y": y} for x, y in path],
+                           features=[{"id": "t", "kind": "extent", "selector": {"axis": "y"}, "expected_expr": claim, "tolerance": 0.05}])
+    raw["relations"] = []
+    return raw
+
+
+def _layer_check(repo, path, claim=DEPTH):
+    job, tools, written = _written(repo, _profile_layer(path, claim))
+    return {c["id"]: c for c in written["checks"]}["feature-layer-t"]
+
+
+# Bottom left, bottom right, top right, top left: a 70 mm layer falling 12 mm to the right.
+LAID_TO_A_FALL = [("0", f"{LEVEL_Y} + {FALL}"), ("slab_length", LEVEL_Y), ("slab_length", f"{LEVEL_Y} + {DEPTH}"), ("0", f"{LEVEL_Y} + {FALL} + {DEPTH}")]
+
+
+def test_a_layers_thickness_is_measured_through_it_not_across_its_fall(source_repo):
+    """Seen live: 43.24 against 39 mm pavers, a false FAIL, and face_distance has no plane to
+    read on a slope, so nothing the agent could write would have passed."""
+    check = _layer_check(source_repo, LAID_TO_A_FALL)
+    assert check["status"] == "PASS" and check["actual"] == pytest.approx(70)
+
+
+def test_a_taper_is_not_a_thickness_even_if_it_is_right_in_the_middle(source_repo):
+    tapered = [("0", LEVEL_Y), ("slab_length", LEVEL_Y), ("slab_length", f"{LEVEL_Y} + {DEPTH} + {FALL}"), ("0", f"{LEVEL_Y} + {DEPTH} - {FALL}")]
+    assert _layer_check(source_repo, tapered)["status"] == "FAIL"
+
+
+def test_a_layer_that_is_the_claimed_thickness_at_one_end_only_stays_a_fail(source_repo):
+    bent = [("0", LEVEL_Y), ("slab_length", LEVEL_Y), ("slab_length", f"{LEVEL_Y} + {DEPTH} + {DEPTH}"),
+            ("track_centre_offset", f"{LEVEL_Y} + {DEPTH} + {DEPTH}"), ("track_centre_offset", f"{LEVEL_Y} + {DEPTH}"), ("0", f"{LEVEL_Y} + {DEPTH}")]
+    assert _layer_check(source_repo, bent)["status"] == "FAIL"
+
+
+def test_a_layer_of_another_thickness_than_claimed_stays_a_fail(source_repo):
+    check = _layer_check(source_repo, LAID_TO_A_FALL, claim="slab_depth")
+    assert check["status"] == "FAIL" and check["actual"] == pytest.approx(82)
+
+
+def test_a_face_distance_on_a_slope_says_what_to_claim_instead(source_repo):
+    raw = _profile_layer(LAID_TO_A_FALL)
+    raw["parts"][1]["features"] = [{"id": "t", "kind": "face_distance", "expected_expr": DEPTH, "tolerance": 0.05,
+                                    "selector": {"axis": "y", "face": "max", "other_face": "max", "other_part": "slab"}}]
+    job, tools, written = _written(source_repo, raw)
+    check = {c["id"]: c for c in written["checks"]}["feature-layer-t"]
+    assert check["status"] == "UNVERIFIED" and "as an extent" in check["reason"]
 
 
 def test_a_feature_expecting_another_number_loses_its_claim_on_a_printed_dimension():

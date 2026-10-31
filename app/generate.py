@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+from difflib import SequenceMatcher, get_close_matches
 from pathlib import Path
 
 from . import sam
@@ -38,6 +39,8 @@ READ_SCHEMA = _obj({
         "category": {"type": "string", "enum": ["layer", "object", "zone", "other"]}})},
     "dimensions": {"type": "array", "items": _obj({
         "value_mm": {"type": "number"}, "quote_verbatim": STR, "applies_to": STR})},
+    "unlabelled": {"type": "array", "items": _obj({
+        "what": STR, "where": STR, "category": {"type": "string", "enum": ["layer", "object"]}})},
 })
 
 READ_PROMPT = (
@@ -52,7 +55,28 @@ READ_PROMPT = (
     "circulation space, a set-out line, a datum, a dimension zone; other for "
     "notes and annotations. dimensions: every printed dimension, value in mm (a ratio like "
     "1:80 as 0.0125), the exact printed words, and what it applies to. Never "
-    "invent a value.")
+    "invent a value. Copy every label letter for letter as printed: keep spelling "
+    "mistakes, odd abbreviations, capitals and punctuation, even when a word looks "
+    "wrong. Never correct, expand or tidy the words. unlabelled: every distinct "
+    "part that is drawn but has no label of its own: a plate, strip, fixing, layer or "
+    "block that no leader points at. Go over the drawing from one end to the other and "
+    "list each with what it is, where it is and its category, saying how it bends or "
+    "turns. A printed note that names a part is its name. Skip dimension lines, "
+    "leaders, hatching and the drawing frame.")
+
+PROOF_SCHEMA = _obj({"labels": {"type": "array", "items": _obj({"read": STR, "printed": STR})}})
+PROOF_PROMPT = (
+    "Proofread these labels against the drawing like a typesetter comparing a proof with "
+    "its original. For each label find the printed words on the drawing and copy them "
+    "letter by letter in `printed`, keeping any misspelling exactly: a printed word may "
+    "contain a typing error, and we need to know. Do not assume the listed spelling is "
+    "right. Copy the listed label into `read`. Labels: ")
+# How alike two spellings must be to be the same words. A proofreader's answer that
+# differs by more than a slip is a different reading, not a correction of this one.
+SAME_WORDS = 0.8
+# Shorter words are never matched loosely: one letter makes another word of them,
+# and a label left unconfirmed is better than a label changed to something else.
+FUZZY_WORD = 5
 
 
 def _norm(s: str) -> str:
@@ -65,6 +89,34 @@ def _numbers(s: str) -> list[float]:
         if float(b):
             out.append(float(a) / float(b))
     return out
+
+
+def labels_in_text(labels: list[str], text: str) -> dict[str, str | None]:
+    """{label: the words as the text layer spells them, or None if one is not there}.
+    Word by word: a CAD export breaks a label across lines and text runs, in no order."""
+    printed = text.split()
+    words, folded = set(printed), {word.lower(): word for word in printed}
+    found = {}
+    for label in labels:
+        spelled = []
+        for word in label.split():
+            match = word if word in words else folded.get(word.lower())
+            if match is None and len(word) >= FUZZY_WORD:
+                match = next(iter(get_close_matches(word, printed, 1, SAME_WORDS)), None)
+            spelled.append(match)
+        found[label] = " ".join(spelled) if spelled and all(spelled) else None
+    return found
+
+
+def proofread(labels: list[str], answers: list[dict]) -> dict[str, str | None]:
+    """{label: the proofreader's spelling, or None when there is no usable answer}."""
+    given = {answer["read"]: answer["printed"].strip() for answer in answers}
+    found = {}
+    for label in labels:
+        printed = given.get(label)
+        close = printed and SequenceMatcher(None, label, printed).ratio() >= SAME_WORDS
+        found[label] = printed if close else None
+    return found
 
 
 def gate(raw: dict, read: dict) -> tuple[dict, list[str]]:

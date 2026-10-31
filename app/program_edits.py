@@ -4,11 +4,15 @@ import copy
 ROOTS = {"params", "parts", "relations", "unresolved", "title", "kind", "situation"}
 
 
+def label(item):
+    return (item.get("id") or item.get("name")) if isinstance(item, dict) else None
+
+
 def list_index(items,key,append=False):
     if key == "-" and append:
         return len(items)
     if key.startswith("@"):
-        matches = [i for i,item in enumerate(items) if isinstance(item,dict) and (item.get("id") or item.get("name")) == key[1:]]
+        matches = [i for i,item in enumerate(items) if label(item) == key[1:]]
         if len(matches) != 1:
             raise ValueError("edit reference is missing or ambiguous: "+key)
         return matches[0]
@@ -41,7 +45,13 @@ def apply_edits(program, edits):
             if index < 0 or index > len(target) or (op != "add" and index == len(target)):
                 raise ValueError("array edit index out of range")
             if op == "add":
-                target.insert(index, copy.deepcopy(edit["value"]))
+                # A second definition of a name could not then be reached by that name.
+                same = [item for item in target if label(edit["value"]) and label(item) == label(edit["value"])]
+                if same and same[0] != edit["value"]:
+                    parent = "/" + "/".join(keys[:-1])
+                    raise ValueError(f"{parent} already has {label(edit['value'])}: replace {parent}/@{label(edit['value'])}")
+                if not same:
+                    target.insert(index, copy.deepcopy(edit["value"]))
             elif op == "remove":
                 target.pop(index)
             else:
