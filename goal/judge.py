@@ -43,7 +43,7 @@ def _surface(triangles, spacing, rng):
     """Points over the triangles, close enough that no voxel of the skin is missed."""
     a, b, c = triangles[:, 0], triangles[:, 1], triangles[:, 2]
     area = np.linalg.norm(np.cross(b - a, c - a), axis=1) / 2
-    counts = np.clip((area / spacing ** 2 * 6).astype(int), 1, 4000) + 2
+    counts = (area / spacing ** 2 * 10).astype(int) + 2
     index = np.repeat(np.arange(len(triangles)), counts)
     u, v = rng.random(len(index)), rng.random(len(index))
     flip = u + v > 1
@@ -72,13 +72,19 @@ def _fill(shell):
     return (~outside)[1:-1, 1:-1, 1:-1]
 
 
+def _cells(points, low, spacing, shape):
+    """Grid cells of points. A top face sits exactly on the grid's far edge, so that edge stays in:
+    dropping it opened every piece there, and fills leaked out through the gap."""
+    cells = np.floor((points - low) / spacing + 1e-9).astype(int)
+    keep = ((cells >= 0) & (cells <= shape)).all(1)
+    return np.minimum(cells[keep], np.asarray(shape) - 1)
+
+
 def voxels(pieces, low, spacing, shape) -> tuple[np.ndarray, list]:
     """(grid of piece index + 1, 0 is empty, the families). A later piece overwrites an earlier."""
     grid, rng = np.zeros(shape, np.int32), np.random.default_rng(0)
     for index, piece in enumerate(pieces, 1):
-        cells = ((_surface(piece["triangles"], spacing, rng) - low) / spacing).astype(int)
-        keep = ((cells >= 0) & (cells < shape)).all(1)
-        cells = cells[keep]
+        cells = _cells(_surface(piece["triangles"], spacing, rng), low, spacing, shape)
         if not len(cells):
             continue
         start, stop = cells.min(0), cells.max(0) + 1
@@ -96,9 +102,9 @@ def _grid_for(low, high, cells):
 
 def _skin(pieces, low, spacing, shape):
     """Surfaces only, all at once: enough to compare poses, and far cheaper than solids."""
-    cells = ((_surface(np.vstack([p["triangles"] for p in pieces]), spacing, np.random.default_rng(0)) - low) / spacing).astype(int)
+    cells = _cells(_surface(np.vstack([p["triangles"] for p in pieces]), spacing, np.random.default_rng(0)), low, spacing, shape)
     grid = np.zeros(shape, bool)
-    grid[tuple(cells[((cells >= 0) & (cells < shape)).all(1)].T)] = True
+    grid[tuple(cells.T)] = True
     return grid
 
 

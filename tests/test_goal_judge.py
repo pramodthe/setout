@@ -121,3 +121,23 @@ def test_a_material_shared_by_unlike_parts_names_nothing():
 ])
 def test_families_read_the_words_a_model_carries(names, materials, family):
     assert family_of(names, materials) == family
+
+
+def test_a_big_solid_is_solid():
+    """Seen on real models: a top face on the grid's edge was dropped, the fill leaked out, and every
+    slab and insulation board there counted as a thin skin."""
+    solid = [{"triangles": box((0, 0, 0), (2, 1, 1)), "family": "concrete"}]
+    low, high = judge._bounds(solid)
+    spacing, shape = judge._grid_for(low, high, judge.GRID)
+    assert (judge.voxels(solid, low, spacing, shape)[0] > 0).mean() > 0.99
+
+
+def test_a_hollow_block_is_mostly_empty_and_a_bolt_has_its_nuts():
+    from goal.components import bolt, hollow_block, prism
+    block = hollow_block(0, 0.19, 0, 0.39, 0, 0.19)
+    grid_pieces = [{"triangles": block, "family": "block"}]
+    solid = [{"triangles": box((0, 0, 0), (0.19, 0.39, 0.19)), "family": "block"}]
+    low, high = judge._bounds(solid)
+    spacing, shape = judge._grid_for(low, high, 60)
+    assert (judge.voxels(grid_pieces, low, spacing, shape)[0] > 0).mean() < 0.75 * (judge.voxels(solid, low, spacing, shape)[0] > 0).mean()
+    assert len(bolt((0, 0, 0), (0, 0, 0.1), 0.006)) > 3 * len(prism((0, 0, 0), (0, 0, 0.1), 0.006))

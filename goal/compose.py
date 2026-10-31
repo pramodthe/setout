@@ -13,6 +13,7 @@ UNIT_LENGTH = {"brick": 3.4, "block": 2.05, "stone": 3.0, "tile": 1.0, "board": 
 JOINT = 0.17  # head joint, as a share of unit height
 UNIT_FAMILIES = tuple(UNIT_LENGTH)
 SPACED_FAMILIES = ("fixing", "reinforcement", "weep")
+SQUARE_ENOUGH = 0.95  # a region this full of its box is a rectangle: drawn lines wobble a pixel or two
 DEPTH_SHARE = 0.8  # depth of the assembly, as a share of the section's longest side
 
 
@@ -25,6 +26,16 @@ def _block(x0, x1, y0, y1, z0, z1):
 
 def _extrude(region, height, y0, y1) -> np.ndarray:
     return np.vstack([_block(x0, x1, y0, y1, height - b, height - a) for x0, x1, a, b in region.bands()])
+
+
+def _unit(region, family, height, y0, y1) -> np.ndarray:
+    """A unit as it really is. A block in a plain rectangle gets its cores; anything shaped keeps
+    the outline the section shows, which is exact."""
+    if family == "block" and region.area >= SQUARE_ENOUGH * region.width * region.height:
+        from .components import hollow_block
+        x0, a, x1, b = region.box
+        return hollow_block(x0, x1, y0, y1, height - b, height - a)
+    return _extrude(region, height, y0, y1)
 
 
 def build(regions, labels, size, depth_share=DEPTH_SHARE) -> list[dict]:
@@ -50,7 +61,7 @@ def build(regions, labels, size, depth_share=DEPTH_SHARE) -> list[dict]:
             while y < depth:
                 a, b = max(y, 0), min(y + unit, depth)
                 if b > a:
-                    pieces.append({"triangles": _extrude(region, height, a, b), "family": family})
+                    pieces.append({"triangles": _unit(region, family, height, a, b), "family": family})
                     if b + joint < depth:
                         pieces.append({"triangles": _extrude(region, height, b, b + joint), "family": "mortar"})
                 y += unit + joint

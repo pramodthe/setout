@@ -51,6 +51,26 @@ def ask(picture, regions, size, labelled) -> tuple[dict, dict]:
     return json.loads(text), result.get("usage") or {}
 
 
+def _piece(group, x, y, z, sizes) -> np.ndarray:
+    """The real component the group names, or a plain box when none fits. What it is decides its
+    form, and its size comes from the group."""
+    from . import components
+    what, across, up, along = group["what"].lower(), *sizes
+    thin = max(min(across, up, along), 1e-3) / 2
+    longest = max(across, up, along)
+    if group["family"] == "fixing" or "bolt" in what or "rod" in what or "anchor" in what:
+        return components.bolt((x, y, z - longest / 2), (x, y, z + longest / 2), thin)
+    if "ladder" in what or "wire" in what or "reinforc" in what:
+        return components.ladder_wire(x - across / 2, x + across / 2, y - along / 2, y + along / 2, z, thin * 0.6)
+    if "tie" in what:
+        return components.wall_tie(x - longest / 2, x + longest / 2, y, z, thin)
+    if group["family"] == "block" and group["shape"] == "unit":
+        return components.hollow_block(x - across / 2, x + across / 2, y - along / 2, y + along / 2, z - up / 2, z + up / 2)
+    if group["shape"] == "rod":
+        return components.prism((x, y, z - longest / 2), (x, y, z + longest / 2), thin)
+    return _block(x - across / 2, x + across / 2, y - along / 2, y + along / 2, z - up / 2, z + up / 2)
+
+
 def build(groups, regions, size, depth_share) -> list[dict]:
     """Each group as a grid of boxes at its region, along the depth and upward."""
     width, height = size
@@ -72,6 +92,5 @@ def build(groups, regions, size, depth_share) -> list[dict]:
             y = depth * (c + 0.5) / columns
             for r in range(rows):
                 z = low + (high - low) * (r + 0.5) / rows
-                pieces.append({"triangles": _block(x - sizes[0] / 2, x + sizes[0] / 2, y - sizes[2] / 2, y + sizes[2] / 2,
-                                                   z - sizes[1] / 2, z + sizes[1] / 2), "family": group["family"]})
+                pieces.append({"triangles": _piece(group, x, y, z, sizes), "family": group["family"]})
     return pieces
