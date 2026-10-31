@@ -257,7 +257,7 @@ def test_document_figures_name_their_ai_detail(client, tmp_path, monkeypatch):
         assert figure["detail_id"] == main.ai_detail_id(doc["sha256"], figure["crop_id"])
 
 
-def _cut_short(repo, failing=True, tokens=300_000, continuation=0, reserved=0):
+def _cut_short(repo, failing=True, tokens=300_000, continuation=0, reserved=0, stop_reason="budget_floor"):
     """A generation that ended needs_review after spending its budget."""
     base = _generated(repo)
     job = repo.enqueue("revise_detail", {"detail_id": base["detail_id"], "base_version_id": base["id"],
@@ -273,7 +273,7 @@ def _cut_short(repo, failing=True, tokens=300_000, continuation=0, reserved=0):
         con.execute(d.runs.update().where(d.runs.c.job_id == job["id"]).values(
                     working_version_id=made["version_id"], consumed={"tokens": tokens, "cad_calls": 2},
                     reserved={"tokens": reserved}))
-    repo.end(fence, "needs_review", {"version_id": made["version_id"]})
+    repo.end(fence, "needs_review", {"version_id": made["version_id"], "stop_reason": stop_reason})
     return job, made["version_id"]
 
 
@@ -287,10 +287,10 @@ def test_a_run_cut_short_with_work_left_continues_once(source_repo):
     assert source_repo.get(d.jobs, job["id"])["result"]["continued_by"] == follow
 
 
-@pytest.mark.parametrize("failing,tokens,continuation", [(False, 300_000, 0), (True, 50_000, 0), (True, 300_000, 2)])
-def test_no_continuation_without_work_budget_cut_or_room(source_repo, failing, tokens, continuation):
+@pytest.mark.parametrize("failing,stop_reason,continuation", [(False, "budget_floor", 0), (True, "finished", 0), (True, "budget_floor", 2)])
+def test_no_continuation_without_work_budget_cut_or_room(source_repo, failing, stop_reason, continuation):
     from app.worker import continue_if_cut_short
-    job, _ = _cut_short(source_repo, failing, tokens, continuation)
+    job, _ = _cut_short(source_repo, failing, continuation=continuation, stop_reason=stop_reason)
     assert continue_if_cut_short(source_repo, job["id"], limit=2) is None
 
 
@@ -311,11 +311,19 @@ def test_card_image_falls_back_to_an_earlier_versions_render(client, source_repo
 
 
 def test_tokens_held_by_an_interrupted_request_count_as_spent(source_repo):
-    """Seen live: a run resumed after a crash went to final review at 175k spent
-    because ~50k stayed reserved; it must still continue."""
-    from app.worker import continue_if_cut_short
-    job, _ = _cut_short(source_repo, tokens=175_000, reserved=60_000)
-    assert continue_if_cut_short(source_repo, job["id"], limit=2)
+    """Seen live: a run resumed after a crash went to final review while ~50k
+    stayed reserved. Those tokens are spent as far as the budget is concerned."""
+    from app.repository import tokens_left
+    base = _generated(source_repo)
+    revise = source_repo.enqueue("revise_detail", {"detail_id": base["detail_id"], "base_version_id": base["id"], "requested_changes": "x"})
+    with d.transaction(source_repo.engine) as con:
+        con.execute(d.runs.update().where(d.runs.c.job_id == revise["id"]).values(consumed={"tokens": 250_000},
+                    reserved={"tokens": 40_000}))
+    run = source_repo.run(revise["id"])
+    assert tokens_left(run) == 30_000
+    provider = ScriptedModel()
+    Worker(source_repo, responder=provider, renderer=FakeRenderer(source_repo)).run_once(only_ids=[revise["id"]])
+    assert provider.agent_calls == 0 and source_repo.get(d.jobs, revise["id"])["result"]["stop_reason"] == "budget_floor"
 
 
 # A verification carries its completeness tier; a clean program with no

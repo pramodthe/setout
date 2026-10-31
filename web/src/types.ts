@@ -108,6 +108,8 @@ export interface Figure {
   page: number;
   width: number;
   height: number;
+  kind: "embedded_image" | "rendered_page"; // how the PDF gave us this image
+  dpi: number | null; // the true render resolution; null for an extracted image
 }
 
 export interface Doc {
@@ -116,6 +118,7 @@ export interface Doc {
   sha256: string;
   pages: number;
   figures: Figure[];
+  warnings: string[]; // pages the renderer failed on; empty when all went well
 }
 
 export interface SpecSummary {

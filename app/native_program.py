@@ -10,8 +10,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .generate import gate, _norm, _numbers
-from .program import DetailProgram, ProgPart, ProgParam, compile_program, expr_names
+from .program import DetailProgram, ProgPart, ProgParam, compile_program, evaluate, expr_names
 from .spec import Provenance
+
+# The roles each READ category allows a part carrying that label (check_roles).
+READ_ROLES = {"object": ("object",), "layer": ("substrate", "covered_layer", "finish"), "zone": ("zone",)}
 
 
 def expression_unit(expression, units):
@@ -55,6 +58,29 @@ def expression_unit(expression, units):
         return infer(ast.parse(expression, mode="eval"))
     except (SyntaxError, KeyError) as error:
         raise ValueError(f"invalid dimensional expression: {expression!r}") from error
+
+
+def unit_faults(parts, units):
+    """Every expression the unit rule refuses: {reason: ["part.dim = expression"]}.
+
+    All of them, each with where it is. Told only the first and not where, an agent with
+    25 of these spent 14 turns adding 90 params and changed none of the 25."""
+    found = {}
+    def check(where, expression, want):
+        try:
+            reason = None if expression_unit(expression, units) in (want, "zero") else f"use a named {want} value"
+        except ValueError as error:
+            reason = str(error).split(":")[0]
+        if reason:
+            found.setdefault(reason, []).append(f"{where} = {expression}")
+    for part in parts:
+        for dimension in part.dims:
+            check(f"{part.id}.{dimension.name}", dimension.expr, "ratio" if dimension.name == "fall_ratio" else "mm")
+        for point in part.path:
+            for expression in (point.x, point.y, point.z):
+                if expression:
+                    check(f"{part.id} path", expression, "mm")
+    return found
 
 
 class Feature(BaseModel):
@@ -101,7 +127,8 @@ class NativeRelation(BaseModel):
     source: str
     target: str
     kind: Literal["supported_by", "bonded_to", "covers", "laps_over", "terminates_against", "sealed_to", "installed_before",
-                  # ontology/relations.yaml kinds; the verifier reports them UNVERIFIED until it measures them
+                  # ontology/relations.yaml: abuts is measured as a contact, hosted_in and fixed_to on
+                  # their solids; repeated_along cannot be measured, so it stays open and blocks
                   "hosted_in", "fixed_to", "abuts", "repeated_along"]
     constraints: dict = Field(default_factory=dict)
 
@@ -122,8 +149,11 @@ class NativeProgram(DetailProgram):
         for part in self.parts:
             if part.fixture:
                 raise ValueError("fixtures cannot be authored in v3")
-            if part.role == "object" and part.shape != "cad":
-                raise ValueError(f"{part.id}: objects require parametric CAD")
+            # A box may stand in for an object only while it is an inferred
+            # placeholder: ghosted, never a PASS. Anything the drawing shows or a
+            # reviewer confirmed is modelled.
+            if part.role == "object" and part.shape != "cad" and not (part.provenance == "inferred" and part.shape == "box"):
+                raise ValueError(f"{part.id}: objects require parametric CAD (only an inferred placeholder may be a box)")
             if part.role != "object" and part.shape == "cad":
                 raise ValueError(f"{part.id}: layers/substrates use exact primitives, not CAD")
             if part.form and part.role != "object":
@@ -139,15 +169,37 @@ class NativeProgram(DetailProgram):
             for expression in list(part.param_bindings.values()) + [f.expected_expr for f in part.features]:
                 if not expr_names(expression) <= names:
                     raise ValueError(f"{part.id}: unknown parameter binding")
-            for dimension in part.dims:
-                want = "ratio" if dimension.name == "fall_ratio" else "mm"
-                if expression_unit(dimension.expr, units) not in (want, "zero"):
-                    raise ValueError(f"{part.id}.{dimension.name}: use a named {want} value")
-            for point in part.path:
-                for expression in (point.x, point.y, point.z):
-                    if expression and expression_unit(expression, units) not in ("mm", "zero"):
-                        raise ValueError(f"{part.id}: path coordinates require named lengths")
+        faults = unit_faults(self.parts, units)
+        if faults:
+            listed = " ".join(f"{reason}: {'; '.join(where)}." for reason, where in faults.items())
+            raise ValueError(f"{sum(map(len, faults.values()))} expressions refused. Replace each one: a new param "
+                             f"changes nothing until an expression uses it. {listed}")
         return self
+
+
+def anchor_placements(raw, bound=()):
+    """Give a CAD part with no model yet a placement build(p) can reach.
+
+    Placement moves the solid; build(p) models it in its own frame using only
+    named sizes. An envelope away from the origin with placement left at 0,0,0
+    asks build(p) for absolute coordinates, and the CAD gate rightly refuses
+    those as literals (seen 30 Oct: 2 of 3 attempts ended there). The part's own
+    envelope already names the right values, so its corner becomes the local
+    origin and build(p) can start from (0,0,0). An explicit placement stands,
+    and so does a part with a model, which was built against the placement it had."""
+    env = {p["name"]: p["value"] for p in raw["params"]}
+    for part in raw["parts"]:
+        if part["shape"] != "cad" or part["id"] in bound or any(
+                value.strip() not in ("", "0", "0.0") for value in part["placement"].values()):
+            continue
+        dims = {d["name"]: d["expr"] for d in part["dims"]}
+        try:
+            low = [evaluate(dims[axis + "0"], env) for axis in "xyz"]
+            high = [evaluate(dims[axis + "1"], env) for axis in "xyz"]
+        except (KeyError, ValueError):
+            continue  # the program contract reports a missing or bad dimension
+        if not all(a <= 0 <= b for a, b in zip(low, high)):  # origin inside: named sizes reach every face
+            part["placement"] = {"x": dims["x0"], "y": dims["y0"], "z": dims["z1"]}
 
 
 def normalize_identifiers(raw):
@@ -164,14 +216,16 @@ def normalize_identifiers(raw):
             return ast.unparse(Rename().visit(ast.parse(value,mode="eval"))) if value else value
         except SyntaxError as error:
             raise ValueError("invalid dimensional expression: "+str(value)) from error
-    unique = {}
-    for param in raw["params"]:
+    unique, first_at = {}, {}
+    for index, param in enumerate(raw["params"]):
         param["name"] = names[param["name"]]
         if param["name"] in ("min","max"):
             raise ValueError("min/max are reserved expression function names")
         if param["name"] in unique and unique[param["name"]] != param:
-            raise ValueError("conflicting parameter definitions after normalization: "+param["name"])
+            raise ValueError(f"conflicting parameter definitions after normalization: {param['name']} "
+                             f"at /params/{first_at[param['name']]} and /params/{index}")
         unique[param["name"]] = param
+        first_at.setdefault(param["name"], index)
     raw["params"] = list(unique.values())
     for part in raw["parts"]:
         part["id"] = parts[part["id"]]
@@ -244,6 +298,8 @@ def check_roles(program, read, human=False):
         if zones & set(part.install_after) or (part.id in zones and part.install_after):
             raise ValueError(f"{part.id}: zones are not installed; leave them out of install_after")
     for relation in program.relations:
+        if relation.source == relation.target:
+            raise ValueError(f"{relation.source}: a relation joins two parts; a part cannot be measured against itself")
         if {relation.source, relation.target} & zones:
             raise ValueError(f"{relation.source}->{relation.target}: a zone is not built, so it has no physical "
                              "relations; describe clearances with features or a note instead")
@@ -254,6 +310,17 @@ def check_roles(program, read, human=False):
         if coverage is not None and not 0 <= coverage <= 1:
             raise ValueError(f"{relation.source}->{relation.target}: min_coverage is a fraction from 0 to 1 "
                              f"(0.9 means 90%), not {coverage:g}")
+
+
+def check_form(program, base=None, human=False):
+    """A shaped object stays shaped. Seen live: a flat plate failed the form check,
+    and the agent cleared it by declaring the part a block. The form is a claim about
+    the drawing, so a solid that misses it is fixed, or settled by a reviewer."""
+    declared = {p["id"]: p.get("form") for p in (base or {}).get("parts", [])}
+    for part in program.parts:
+        if not human and declared.get(part.id) == "shaped" and part.form == "block":
+            raise ValueError(f"{part.id} was declared form=shaped, so the drawing shows form beyond its envelope; a block "
+                             "cannot stand in for it. Keep form=shaped and model that form with model_component.")
 
 
 def _slot_claimed(inferred_by):
@@ -282,6 +349,10 @@ def check_provenance(program, base=None, human=False):
             if part.provenance == "drawing" and before != "drawing":
                 raise ValueError(f"{part.id} was {before}; calling it drawing would claim the drawing shows it. "
                                  "Keep the provenance, or leave the part for a reviewer to confirm")
+            # A ghost is never measured, so this would be a way out of every check on the part.
+            if part.provenance == "inferred" and part.id in previous and before == "drawing":
+                raise ValueError(f"{part.id} is a part the drawing shows; calling it inferred would take it out of "
+                                 "verification. Model and measure it")
         for ident, old in previous.items():
             if old.get("provenance") == "user_input" and not any(
                     p.id == ident and p.provenance == "user_input" for p in program.parts):
@@ -290,6 +361,8 @@ def check_provenance(program, base=None, human=False):
     for part in program.parts:
         if part.provenance == "drawing" and part.inferred_by:
             raise ValueError(f"{part.id}: inferred_by is set but provenance is drawing; a part the drawing shows was not inferred")
+        if part.provenance == "inferred" and part.label:
+            raise ValueError(f"{part.id}: {part.label!r} is printed on the drawing, so the drawing shows this part; it is not inferred")
     inferred = [p for p in program.parts if p.provenance == "inferred"]
     if not inferred:
         return
@@ -314,7 +387,9 @@ def check_provenance(program, base=None, human=False):
                              "reviewer confirmed; an inferred part cannot duplicate it")
 
 
-def prepare(raw, source, detail_id, read, base=None, human=False):
+def prepare(raw, source, detail_id, read, base=None, human=False, bound=()):
+    """Validate, gate and compile a program. `bound`: ids of the parts that
+    already have a CAD model, whose placement is theirs to keep."""
     raw = copy.deepcopy(raw)
     raw["version"] = "3.0"
     raw["detail_id"] = detail_id
@@ -328,6 +403,8 @@ def prepare(raw, source, detail_id, read, base=None, human=False):
     raw["parts"] = [NativePart.model_validate(p).model_dump(mode="json") for p in raw.get("parts", [])]
     raw["params"] = [NativeParam.model_validate(p).model_dump(mode="json") for p in raw.get("params", [])]
     raw = normalize_identifiers(raw)
+    if not human:
+        anchor_placements(raw, bound)
     previous = {p["name"]: p for p in (base or {}).get("params", [])}
     source_dimensions = {item.get("id", f"d{i}"): item for i, item in enumerate(read.get("dimensions", []))}
     native_notes = []
@@ -361,10 +438,17 @@ def prepare(raw, source, detail_id, read, base=None, human=False):
                     not new or (new["value"], new["provenance"]) != (old["value"], old["provenance"])):
                 raise ValueError(f"{name} is a reviewer's value ({old['value']:g}, {old['provenance']}); "
                                  "keep it and its provenance unchanged. Only a reviewer can change it.")
+    env = {p["name"]: p["value"] for p in raw["params"]}
     for part in raw["parts"]:
         for feature in part["features"]:
             evidence = source_dimensions.get(feature.get("source_dimension_id"))
-            if evidence:
+            if evidence and abs(abs(evaluate(feature["expected_expr"], env)) - evidence["value_mm"]) > 1e-6:
+                # A feature that expects another number does not measure this
+                # dimension. Claims like these left it with no single owner.
+                native_notes.append(f"{part['id']}.{feature['id']}: expects another value, so it cannot own "
+                                    f"{feature['source_dimension_id']} -> claim dropped")
+                feature["source_dimension_id"] = None
+            elif evidence:
                 text = evidence["quote_verbatim"].lower()
                 minimum = bool(re.search(r"\bmin(?:imum)?\b|at least|not less than", text))
                 maximum = bool(re.search(r"\bmax(?:imum)?\b|at most|not more than", text))
@@ -383,6 +467,7 @@ def prepare(raw, source, detail_id, read, base=None, human=False):
             part["cad_brief"] = original.get("cad_brief") or original.get("type")
     program = NativeProgram.model_validate(gated)
     check_roles(program, read, human)
+    check_form(program, base, human)
     check_provenance(program, base, human)
     compiled_input = program.model_dump(mode="json")
     compiled_input["version"] = "2.0"

@@ -16,8 +16,37 @@ from . import database as d
 from .artifacts import ArtifactStore
 
 TERMINAL = {"succeeded", "failed", "needs_review", "cancelled"}
-DEFAULT_BUDGET = {"model_calls": 32, "tool_calls": 48, "tokens": 320_000,
-                  "cad_calls": 8, "render_calls": 6, "seconds": 900}
+# `tokens` counts what is paid for: uncached input plus output (billed_tokens).
+# Cached input is recorded beside it as consumed["cached_tokens"]; model_calls,
+# tool_calls and seconds are what bound a run that is nearly all cache hits.
+# Seen 30 Oct: a patching run spent 30 of 32 calls at 161k of 320k tokens, 5.4k and 20 s
+# a call, so calls stopped it at half its paid budget. With CAD first a run spends 10k a
+# call, and tokens are what stop it. 48 calls lets either kind of run reach its tokens;
+# seconds and tool calls move with it, or one of them would be the limit instead, and
+# CAD gets room to redo what the critic rejects. The review now takes a call an object,
+# and REVIEW_CALLS holds those back, so 60 leaves the agent the same 47. A run of nothing
+# but cache hits still stops at 60 calls.
+DEFAULT_BUDGET = {"model_calls": 60, "tool_calls": 64, "tokens": 320_000,
+                  "cad_calls": 12, "render_calls": 6, "seconds": 1200}
+# Tokens an agent turn may not touch once a draft exists, kept for the final
+# render and critique. Seen live: 24-25k for a critic call and 5.3k for each object's
+# shape reading, so 26k and 38k for seven objects.
+REVIEW_TAIL = 64_000
+TAIL_MIN_BUDGET = 120_000  # a budget this small keeps no tail
+# Model calls an agent turn may leave: the critic needs one, a shape reading one for
+# each object (seven seen), two more if the close-ups were not found yet, and a turn can
+# spend three (itself, a CAD draft, its retry). Seen 30 Oct: two runs spent all their
+# calls and never had their draft reviewed, with a third of their tokens unspent.
+REVIEW_CALLS = 13
+# What one repair costs past the review: a turn and a CAD call, seen live at 3k and 12k.
+REPAIR_TOKENS = 16_000
+# How often a run may be sent back to work rather than end. Each one must have changed
+# something since the last, so this bounds a run that keeps failing to fix what it can.
+REPAIR_REFUSALS = 3
+# Why a run stopped, recorded in the job result as stop_reason at the moment it
+# stops. These leave work undone, so the worker continues them; the others are
+# "finished" (the agent called finish) and "provider_rejected".
+CUT_SHORT = ("budget_floor", "budget_exhausted", "output_limit", "model_stopped", "repairs_left")
 
 
 def _verifier_sources():
@@ -39,6 +68,40 @@ OUTCOMES = ("incomplete", "complete_with_inferred", "verified")  # quality["outc
 
 def uid():
     return uuid.uuid4().hex
+
+
+def cached_tokens(usage):
+    return (usage.get("input_tokens_details") or {}).get("cached_tokens") or 0
+
+
+def billed_tokens(usage):
+    """What a response costs the budget: uncached input plus output. The
+    provider counts cached input inside input_tokens, and each turn re-sends
+    the whole conversation, so charging it would spend the budget on repeats."""
+    return max(usage.get("input_tokens", 0) - cached_tokens(usage), 0) + usage.get("output_tokens", 0)
+
+
+def tokens_left(run):
+    """The run's unspent tokens: the one reading every budget check uses.
+    Tokens still reserved (say by a request a crash cut off) count as spent."""
+    return run["budget"]["tokens"] - run["consumed"].get("tokens", 0) - run["reserved"].get("tokens", 0)
+
+
+def review_tail(run):
+    """Tokens an agent turn must leave for the final review of the draft."""
+    return REVIEW_TAIL if run["working_version_id"] and run["budget"]["tokens"] >= TAIL_MIN_BUDGET else 0
+
+
+def review_due(run):
+    """Whether only what the final review needs is left, in tokens or model calls."""
+    calls = run["budget"]["model_calls"] - run["consumed"].get("model_calls", 0) - run["reserved"].get("model_calls", 0)
+    return bool(review_tail(run)) and (tokens_left(run) < review_tail(run) or calls <= REVIEW_CALLS)
+
+
+def repair_room(run):
+    """Whether one more repair fits past what the final review keeps back."""
+    calls = run["budget"]["model_calls"] - run["consumed"].get("model_calls", 0) - run["reserved"].get("model_calls", 0)
+    return tokens_left(run) - review_tail(run) >= REPAIR_TOKENS and calls > REVIEW_CALLS + 1
 
 
 def canonical(value):
@@ -438,10 +501,13 @@ class Repository:
                 run = self._run(con, fence.job_id)
                 consumed, reserved = dict(run["consumed"]), dict(run["reserved"])
                 usage = response.get("usage") or {}
-                actual_tokens = usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+                # No usage reported: the reservation stands, as for a lost response.
+                reported = usage.get("input_tokens") or usage.get("output_tokens")
                 for key, amount in reservation.items():
                     reserved[key] = max(0, reserved.get(key, 0) - amount)
-                    consumed[key] = consumed.get(key, 0) + (actual_tokens or amount if key == "tokens" else amount)
+                    consumed[key] = consumed.get(key, 0) + (billed_tokens(usage) if key == "tokens" and reported else amount)
+                if cached_tokens(usage):
+                    consumed["cached_tokens"] = consumed.get("cached_tokens", 0) + cached_tokens(usage)
                 con.execute(d.runs.update().where(d.runs.c.id == run["id"]).values(
                             consumed=consumed, reserved=reserved))
             self._event(con, fence.job_id, "model", data={"step_id": step_id})

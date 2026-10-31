@@ -53,7 +53,7 @@ when a milestone lands.
 - **Every value is named and sourced.** Every param carries `provenance`
   (`drawing` / `manufacturer_doc` / `user_input` / `assumption`). Assumptions
   and unresolved items must **never** produce a verified PASS.
-- **Decided, not yet in code:** a fifth provenance, `inferred`, for parts a model
+- **`inferred`** is a fifth provenance, for parts a model or archetype
   fills in that the drawing does not show (e.g. the door frame behind a threshold
   section). It is labelled inference, never `drawing`: shown ghosted with its
   source and confidence, never a verified PASS, and user confirmation turns it
@@ -67,7 +67,10 @@ when a milestone lands.
   sandbox (`app/cad_components.py`, `app/cad_sandbox.py`). Every size the code
   uses is a named value. A separate trusted process measures the solid; it is
   never scaled or fitted. A measured mismatch is a FAIL, and failed CAD is a
-  placeholder that can never PASS.
+  placeholder that can never PASS. An inferred object is the one exception: it
+  may be an exact box, a ghosted placeholder that spends no CAD call, raises no
+  `cad-*` FAIL and can never PASS, and a reviewer's confirmation turns it into a
+  CAD part with no model, labelled a placeholder and FAILing until it is modelled.
 - **No hand-modelled object in the registry.** The six v2 fixture generators
   (`LEGACY_FIXTURE_REGISTRY`) exist only to import archived v2 records.
 
@@ -171,7 +174,7 @@ old file library (`var/library/*.json`) is imported once at startup
 (`versioning.import_library`); a seed imported earlier never shadows its code.
 
 ```
-POST /api/documents  -> app/store.py: sha256, embedded raster figures (pypdf+pillow) -> var/docs/{id}/
+POST /api/documents  -> app/store.py: sha256, embedded images (pypdf+pillow) or rendered pages (pypdfium2) -> var/docs/{id}/
 GET/PATCH /api/specs -> seeds (PATCH only) or the detail's current database version
 POST /api/builds     -> build_assembly (geometry.py) -> verify_all (verify.py), or a version's v3 verification
                         -> var/builds/{id}/{spec.json, scene.json, model.glb, report.json | error.txt}
@@ -197,12 +200,42 @@ POST /api/versions/{id}/reviews  accept / correct / resolve / activate_memory ·
 GET/POST /api/memories           lessons (proposed until a reviewer activates them)
 ```
 
-A run that spends its budget while its draft still has FAILs (e.g. CAD
-placeholders) and made progress continues automatically as a `revise_detail`
-job, at most `SETOUT_AUTO_CONTINUE` times (default 2; `0` turns it off). The
-finished job records `continued_by`, and the workbench, detail page and trace
-follow the chain. A page reload picks a running job back up through
+The token budget counts what is paid for: uncached input plus output
+(`repository.billed_tokens`, settled into `consumed["tokens"]`; cached input is
+recorded as `consumed["cached_tokens"]`). Every check reads `tokens_left(run)`.
+An agent turn must leave `REVIEW_TAIL` (40k) and `REVIEW_CALLS` model calls for
+the final render and critique; `model_calls`, `tool_calls` and `seconds` are the
+hard limits on a run that is all cache hits.
+
+Tool results reach the model through `agent_tools.model_view`: `check_counts`,
+the checks that block completion or list work to do, the rest by id, and no
+rejected program it has already seen; `app/agent.py` says each gate note once.
+The stored step keeps the whole result, since `patch_program` resumes from a
+rejected `proposal` and the trace reads it. The full checks are in
+`verifications`. A failed render is tool feedback, never a lost run.
+
+A refused write says everything at once: every expression the unit rule refuses,
+each with where it is (`native_program.unit_faults`), and only the parts and
+params it names reach the model. A patch cannot define a name twice. With no
+version yet, the same refusal `SAME_REFUSALS` times over ends the run as
+`refused_again`: nothing moved, and there is no draft to continue from.
+
+A run records why it stopped when it stops, as `stop_reason` in the job result.
+One cut short (`repository.CUT_SHORT`) whose draft still has blocking checks
+(e.g. CAD placeholders) and made progress continues automatically as a
+`revise_detail` job, at most `SETOUT_AUTO_CONTINUE` times (default 2; `0` turns
+it off). The finished job records `continued_by`, and the workbench, detail page
+and trace follow the chain. A page reload picks a running job back up through
 `/api/jobs?detail_id=…&active=1`.
+
+`complete_assembly` runs by itself right after a version with an `assembly_class`
+is accepted, before CAD work and with no model turn (`SETOUT_COMPLETION=on`, the
+default), and applies its proposal through the normal gated path, once per
+version. `suggest` leaves applying to the agent; `off` removes the tool. Its
+coordinates stay expressions while short; a longer one becomes a named assumption
+whose note says it is a placeholder position. The viewer's default camera frames
+what the drawing shows (`provenance.framedParts`), so a 2 m ghost door frame
+cannot shrink the section it completes.
 
 The older routes stay for the UI and map onto jobs: `POST /api/generate`,
 `/api/specs/{id}/critique|cad|locate` enqueue jobs and are polled with
@@ -212,6 +245,12 @@ The older routes stay for the UI and map onto jobs: `POST /api/generate`,
 
 Cross-file contracts. These are not obvious from any single file:
 
+- **Figures come two ways** (`store._plan_page`): `embedded_image` is the PDF's
+  own pixels, `rendered_page` is PDFium's rasterisation at the `dpi` it records.
+  Downstream both are plain figure files, sent to the model byte for byte. `kind`
+  and `dpi` live in the document record, not the v3 `figures` table, where only
+  the crop id `p<page>_rendered` marks a rendering. PDFium is not thread-safe:
+  every call holds `store._PDFIUM`.
 - **Gates are the honesty boundary** (`generate.gate`, run inside
   `native_program.prepare` on every write and patch). A `drawing` param survives
   only if its quote matches a READ dimension and the number appears in the quote;
@@ -220,7 +259,9 @@ Cross-file contracts. These are not obvious from any single file:
   values. Never loosen this to make a demo look better.
 - **Roles come from the drawing, not our vocabulary.** The READ classifies each
   label as `layer`, `object`, `zone` or `other`; `check_roles` makes a part
-  carrying that label take the matching role. Objects declare `form` (`shaped` /
+  carrying that label take the matching role. An ontology class that disagrees
+  is then UNVERIFIED and not required (`class-role`), since the author cannot fix
+  it; an unlabelled part still FAILs. Objects declare `form` (`shaped` /
   `block`), and the verifier's form check reads the declaration. SAM chooses its
   prompts by role too. Never key a check off part names: the engine is
   trade-agnostic.
@@ -239,6 +280,57 @@ Cross-file contracts. These are not obvious from any single file:
   needs the exact version's verification with no FAIL or required UNVERIFIED, a
   passing independent critic on that version and manifest, and readable evidence.
   Publishing also needs a named reviewer's acceptance.
+- **A relation's pass mark belongs to the verifier** (`verification_v3.py`,
+  `CONTACT_FLOOR`, `COVER_FLOOR`). The contact kinds (`supported_by`, `bonded_to`,
+  `sealed_to`, `terminates_against`, `abuts`, `covers`, `laps_over`) measure the same
+  thing on planes the verifier picks: the share of the smaller face that touches. A
+  built solid with no flat face that way (a rod) has the strip of its curve within the
+  contact tolerance for a face, and `MESH_SAG`, the export tolerance, is all a gap is
+  forgiven; a flat face tilted that way is no curve and stays UNVERIFIED, or a foot
+  tilted to touch at its tip would clear the floor it fails lying flat. `covers` must
+  also hide the target's face. `laps_over` alone may have less, and
+  only between two layers by role, running past each other's ends by `LAP_WIDTHS`
+  times the thinner one; that bar is ours and rests on very little. `fixed_to` is
+  measured on the two solids along the fixing, which enters through a face and so lies
+  inside the target across its length, and `hosted_in` on the target's solid either
+  side of the part, so resting on a surface fails both. Interpenetration itself is not
+  measured, so a part set at least half into a target can still pass `hosted_in`.
+  `repeated_along` stays open. A declared `min_coverage` can only ask for more, and a declared axis changes
+  nothing. A covered layer's obligation adds up the real contact of what lies on it,
+  whatever the kinds, and a part measured against nothing stays open. A new kind must
+  be classified in `tests/test_pass_marks.py`, or its hostile cases fail. Values come
+  from measured runs; never change them to clear a check.
+- **A thickness is measured through a layer, not across it.** An `extent` reads a
+  part's whole span, so a bend or a fall would read as thickness. On a sheet the claim
+  is measured across a straight run, and on a profile at `THICKNESS_STATIONS` along it:
+  it stands only if the layer is that thick at every one, so a taper stays a FAIL.
+- **A drawing is looked at up close, never measured** (`app/close_up.py`). Before an
+  object is modelled, two model calls place it and it is cut from the full-resolution
+  figure; if they disagree the writer gets the whole drawing. A part narrower than
+  `SMALL_SIDE` gets a third call on an enlarged piece around where they looked, since
+  both can be 1 to 2% of the sheet out, and if it is not there it gets no close-up. The
+  crop is shape and topology only. Each object's form is then read in a low-effort call of its own, with
+  its close-up beside its built section (`Tools._shape_readings`): a reader lists the
+  drawing's features, ticks them, lists the built members and ticks those, and code
+  decides from the ticks. It is never shown the author's brief. The critic reads each
+  layer the same way, drawing first (`LAYER_RULE`, `apply_layer_checks`), in its own
+  call. A difference, or a part the critic names as missing, cannot pass. The READ lists what is drawn with no label
+  (`unlabelled`), and each entry gets a part.
+- **A run does not stop on what it can still fix** (`Tools._repairs`). While budget
+  remains, `finish(needs_review)` is sent back if the last critic named errors or the
+  version has FAILs or open relations; at most `REPAIR_REFUSALS` times, and only if
+  something changed. Past that, or with no room left, the run ends as `repairs_left`
+  whatever the agent says, and the worker continues it as a `revise_detail`, up to
+  `SETOUT_AUTO_CONTINUE` times, unless the run fixed none of what it was continued for
+  (`repairs_before`). A covered layer left open is the reviewer's, and does not hold a
+  run back.
+- **CAD runs before the agent's next turn** (`Tools.cad_call`), one try per object per
+  contract; `SETOUT_AUTO_CAD`, `SETOUT_CLOSE_UP` and `SETOUT_LABEL_PROOF` (`off`) stop
+  these harness steps. `tests/conftest.py` turns them off, as scripted models do not
+  answer them; the tests about each turn it on.
+- **A label is verbatim only as far as it was checked** (`read["label_check"]`). A
+  text layer settles it; a drawing with none is proofread by a model and stays
+  UNVERIFIED (`label-verbatim`). Never claim otherwise.
 - **Evidence is pinned to `VERIFIER_VERSION`** (a hash of the verifier code).
   Changing the verifier invalidates earlier verifications; they are recomputed.
 - **Guide grounding** (`guide.ungrounded`): every number spoken must be a param

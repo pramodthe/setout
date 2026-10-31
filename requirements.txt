@@ -6,6 +6,7 @@ pillow==13.0.0
 pydantic==2.14.1
 pydantic_core==2.50.1
 pypdf==6.21.3
+pypdfium2==5.14.0
 pytest==9.2.0
 python-multipart==0.0.32
 starlette==1.10.0
