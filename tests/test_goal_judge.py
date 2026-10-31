@@ -3,7 +3,7 @@ import numpy as np
 import pytest
 
 from goal import judge, section
-from goal.families import family_of
+from goal.families import family_of, spread
 
 
 def box(low, high):
@@ -62,6 +62,18 @@ def test_aligning_never_loses_to_the_frame_it_was_given():
     assert judge.score(built, reference)["iou"] >= in_place - 0.02
 
 
+def test_a_mirror_image_can_not_win_on_shape_alone():
+    """A wall overlaps its mirror almost perfectly with every material on the wrong side. Seen on
+    real models: only 1 to 17% of known voxels held the right family until this."""
+    reference = [{"triangles": box((0, 0, 0), (0.2, 1, 1)), "family": "brick"},
+                 {"triangles": box((0.2, 0, 0), (0.4, 1, 1)), "family": "insulation"},
+                 {"triangles": box((0.4, 0, 0), (0.6, 1, 1)), "family": "block"}]
+    result = judge.score(reference, reference)
+    assert result["layers"] == 1
+    flipped = judge.posed(reference, np.diag([-1.0, 1, 1]))
+    assert judge.score(flipped, reference)["layers"] == 1  # any frame is fair: it must find the true fit
+
+
 def test_a_lump_with_the_right_outline_fails():
     reference = wall()
     lump = [{"triangles": box((0, 0, -0.2), (1.2, 0.6, 0.6)), "family": "concrete"}]
@@ -87,6 +99,19 @@ def test_nothing_built_scores_nothing():
 def test_a_section_cuts_what_the_plane_crosses():
     segments = section.cut_triangles(box((0, 0, 0), (1, 1, 1)), 0, 0.5)
     assert len(segments) and np.allclose(segments[:, :, 0], 0.5, atol=1e-6)
+
+
+def test_a_nameless_piece_takes_the_family_of_its_shape_or_material():
+    piece = lambda name, material, shape: {"path": [name], "materials": {material: 1}, "shape": shape}  # noqa: E731
+    pieces = [piece("Brick_Group_2", "salmon", "a"), piece("group_1", "other", "a"), piece("group_2", "salmon", "b"),
+              piece("group_3", "nothing", "c")]
+    assert spread(pieces) == ["brick", "brick", "brick", "unknown"]
+
+
+def test_a_material_shared_by_unlike_parts_names_nothing():
+    piece = lambda name, material, shape: {"path": [name], "materials": {material: 1}, "shape": shape}  # noqa: E731
+    pieces = [piece("Brick_1", "grey", "a"), piece("Block_1", "grey", "b"), piece("group_1", "grey", "c")]
+    assert spread(pieces)[2] == "unknown"
 
 
 @pytest.mark.parametrize("names, materials, family", [

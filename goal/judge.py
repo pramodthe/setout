@@ -12,23 +12,26 @@ from itertools import permutations, product
 
 import numpy as np
 
+from .families import FAMILIES
 from .reference import DB, extents
 
+FAMILY_INDEX = {family: number for number, family in enumerate(FAMILIES)}
 GRID = 72  # voxels along the longest side
 ALIGN_GRID = 28
 CANDIDATES = 8  # turns compared as solids
+SAME_FIT = 0.05  # poses this close in overlap are a tie, broken by materials
 SCALES = (0.85, 0.9, 0.95, 1.0, 1.05, 1.1, 1.15)  # a generator's overall size is a choice too
 RAYS = 240  # per axis
 BARS = {"pieces": 0.7, "iou": 0.6, "layers": 0.7, "families": 0.7, "repetition": 0.7}
 
 
 def load(name) -> list[dict]:
-    from .families import family_of
+    from .families import spread
     record = json.loads((DB / f"{name}.json").read_text())
     triangles = np.load(DB / f"{name}.npz")["triangles"].astype(float)
-    return [{"triangles": triangles[p["tris"][0]:p["tris"][1]],
-             "family": family_of(p["path"][::-1], sorted(p["materials"], key=p["materials"].get, reverse=True))}
-            for p in record["pieces"]]
+    families = spread(record["pieces"])
+    return [{"triangles": triangles[p["tris"][0]:p["tris"][1]], "family": family}
+            for p, family in zip(record["pieces"], families)]
 
 
 def _bounds(pieces):
@@ -164,23 +167,41 @@ def align(built, reference):
             shift = _best_shift(mine, target)
             poses.append((overlap(_moved(mine, shift), target), number, stretch, pose, shift * spacing))
     fine, cells = _grid_for(low, high, GRID)
-    solid = voxels(reference, low, fine, cells)[0] > 0
-    best, best_score = built, -1.0
+    theirs, their_families = voxels(reference, low, fine, cells)
+    solid = theirs > 0
+    scored = []
     each = {}  # the best scale of each turn: a near-symmetric detail ties many, so scales can't crowd out turns
     for item in sorted(poses, key=lambda item: item[0]):
         each[item[1]] = item
-    turns = [item[1] for item in sorted(each.values(), key=lambda item: item[0], reverse=True)[:CANDIDATES]]
+    ranked = sorted(each.values(), key=lambda item: item[0], reverse=True)
+    # Turns that fit equally go through together: on a symmetric detail the true one is among many.
+    turns = [item[1] for k, item in enumerate(ranked) if k < CANDIDATES or item[0] >= ranked[0][0] - SAME_FIT]
     # Skins tie across scales, and the true size must not lose a tie, so it is tried first.
     trials = [item for turn in turns for item in poses if item[1] == turn and item[2] == 1.0]
     trials += [each[turn] for turn in turns if each[turn][2] != 1.0]
     for _, _, _, pose, shift in trials:
         pose = posed(pose, np.eye(3), 1.0, shift)
-        mine = voxels(pose, low, fine, cells)[0] > 0
-        step = _best_shift(mine, solid)
-        here = overlap(_moved(mine, step), solid)
-        if here > best_score:
-            best, best_score = posed(pose, np.eye(3), 1.0, step * fine), here
-    return best
+        grid, families = voxels(pose, low, fine, cells)
+        step = _best_shift(grid > 0, solid)
+        grid = _moved(grid, step)
+        scored.append((overlap(grid > 0, solid), _agreement(grid, families, theirs, their_families),
+                       posed(pose, np.eye(3), 1.0, step * fine)))
+    # A wall overlaps its own mirror image almost perfectly, with every material on the wrong side.
+    # So among poses that fit about equally, the one that puts materials in the right place wins.
+    top = max(item[0] for item in scored)
+    close = [item for item in scored if item[0] >= top - SAME_FIT]
+    return max(close, key=lambda item: (item[1], item[0]))[2]
+
+
+def _agreement(grid, families, other, other_families) -> float:
+    """Of the voxels where the reference has a known family, the share holding that family."""
+    if not families or not other_families:
+        return 0.0
+    mine = np.array([-1, *[FAMILY_INDEX[f] for f in families]])[grid]
+    theirs = np.array([-1, *[FAMILY_INDEX[f] for f in other_families]])[other]
+    known = theirs >= 0
+    known &= theirs != FAMILY_INDEX["unknown"]
+    return float(np.count_nonzero(mine[known] == theirs[known]) / max(np.count_nonzero(known), 1))
 
 
 def _order(column, families):
