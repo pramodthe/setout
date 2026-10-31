@@ -78,3 +78,29 @@ def test_a_drawing_with_no_outlines_fails_with_a_message(tmp_path, monkeypatch):
 @pytest.mark.parametrize("ident", ["../etc/passwd", "abc", "A" * 32])
 def test_a_draft_id_is_only_ever_a_token(ident):
     assert section_draft.get(ident) is None
+
+
+def test_hidden_parts_do_not_repeat_what_the_section_built(tmp_path):
+    found, size = regions.find(drawing(tmp_path / "s.png"))
+    marked = {r["id"]: r for r in LABELS(found)["regions"]}
+    repeat = {"family": "brick", "what": "more bricks", "shape": "unit", "near_region": 1, "columns": 9, "rows": 1,
+              "across": 0.1, "up": 0.05, "along": 0.2}
+    joints = {**repeat, "family": "mortar", "what": "head joints"}
+    tie = {**repeat, "family": "reinforcement", "what": "wall tie", "shape": "bar", "columns": 2}
+    alone = hidden.assemble(found, marked, [], size, compose.DEPTH_SHARE)
+    both = hidden.assemble(found, marked, [repeat, joints], size, compose.DEPTH_SHARE)
+    assert len(both) == len(alone)
+    assert len(hidden.assemble(found, marked, [tie], size, compose.DEPTH_SHARE)) == len(alone) + 2
+
+
+def test_ties_lie_in_the_mortar_beds_the_section_shows(tmp_path):
+    found, size = regions.find(drawing(tmp_path / "s.png"))
+    marked = {r["id"]: r for r in LABELS(found)["regions"]}
+    brick = next(r for r in found if r.width < 200)
+    bed = next(r for r in found if r.id != brick.id and r.width < 200)
+    marked[bed.id] = {"family": "mortar", "depth": "continuous"}
+    tie = {"family": "reinforcement", "what": "wall tie", "shape": "bar", "near_region": brick.id, "columns": 1, "rows": 5,
+           "across": 0.1, "up": 0.01, "along": 0.01}
+    built = hidden.build([tie], found, size, 0.8, marked)
+    assert len(built) == 1
+    assert abs(built[0]["triangles"][..., 2].mean() - (size[1] - (bed.box[1] + bed.box[3]) / 2)) < 12

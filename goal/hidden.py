@@ -64,12 +64,35 @@ def calibrated(groups, regions, seen) -> list[dict]:
     return [{**g, "columns": max(1, round(g["columns"] * share)), "rows": max(1, round(g["rows"] * share))} for g in groups]
 
 
+def _already_built(group, marked) -> bool:
+    """Units along the run and their joints come from the section itself, so a group repeating them
+    would sit on top of them."""
+    from .compose import UNIT_FAMILIES
+    units = {m["family"] for m in marked.values() if m.get("depth") == "units" and m["family"] in UNIT_FAMILIES}
+    return group["family"] in units or (group["family"] == "mortar" and bool(units))
+
+
+def _beds(region, regions, marked, height) -> list[float]:
+    """Heights of the mortar beds beside a region: where ties and wire really lie."""
+    x0, x1 = region.box[0], region.box[2]
+    middle = (x0 + x1) / 2
+    near = [r for r in regions if marked.get(r.id, {}).get("family") == "mortar" and r.width > r.height
+            and r.box[0] - (x1 - x0) <= middle <= r.box[2] + (x1 - x0)]
+    return sorted({round(height - (r.box[1] + r.box[3]) / 2, 1) for r in near})
+
+
 def assemble(regions, marked, groups, size, depth_share) -> list[tuple[dict, str]]:
     """Every piece, each with where it came from: `section` if the slice shows it, `hidden` if not."""
     from . import compose
     shown = compose.build(regions, marked, size, depth_share)
-    unseen = build(calibrated(groups, regions, len(shown)), regions, size, depth_share)
+    wanted = [g for g in groups if not _already_built(g, marked)]
+    unseen = build(calibrated(wanted, regions, len(shown)), regions, size, depth_share, marked)
     return [(p, "section") for p in shown] + [(p, "hidden") for p in unseen]
+
+
+def _in_joint(group) -> bool:
+    what = group["what"].lower()
+    return group["family"] == "reinforcement" or "wire" in what or "tie" in what
 
 
 def _piece(group, x, y, z, sizes) -> np.ndarray:
@@ -92,8 +115,9 @@ def _piece(group, x, y, z, sizes) -> np.ndarray:
     return _block(x - across / 2, x + across / 2, y - along / 2, y + along / 2, z - up / 2, z + up / 2)
 
 
-def build(groups, regions, size, depth_share) -> list[dict]:
-    """Each group as a grid of boxes at its region, along the depth and upward."""
+def build(groups, regions, size, depth_share, marked=None) -> list[dict]:
+    """Each group as a grid of real pieces at its region, along the depth and upward. What lies in
+    a joint goes in the joints the section shows."""
     width, height = size
     longest = max(width, height)
     depth = depth_share * longest
@@ -109,9 +133,11 @@ def build(groups, regions, size, depth_share) -> list[dict]:
         sizes = np.clip(np.array([group["across"], group["up"], group["along"]]), 0.002, 1.0) * longest
         x = (region.box[0] + region.box[2]) / 2
         low, high = height - region.box[3], height - region.box[1]
+        levels = [low + (high - low) * (r + 0.5) / rows for r in range(rows)]
+        if marked and _in_joint(group):
+            levels = _beds(region, regions, marked, height) or levels
         for c in range(columns):
             y = depth * (c + 0.5) / columns
-            for r in range(rows):
-                z = low + (high - low) * (r + 0.5) / rows
+            for z in levels:
                 pieces.append({"triangles": _piece(group, x, y, z, sizes), "family": group["family"]})
     return pieces
