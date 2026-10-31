@@ -142,9 +142,23 @@ def cmd_export(args):
 
 
 def cmd_upload(args):
-    result = upload.write(args.dxf, args.detail, args.out)
+    result = upload.write(args.dxf, args.detail, args.out, args.store)
     print(f"{result['pdf']}\n{result['width']} x {result['height']}, {result['megapixels']} MP, "
           f"thinnest part {result['thinnest_px']} px: {result['verdict']}")
+    return 0
+
+
+def cmd_split_frame(args):
+    store = sheets.require_store(args.store)
+    if not args.frames and not args.clear:
+        held = pipeline.frames_holding_several(args.dxf)
+        for handle, (index, groups) in held.items():
+            print(f"d{index:02d}  frame {handle}: {groups} groups")
+        print(f"{len(held)} frame(s) hold several groups. Each stays one detail unless marked.")
+        return 0
+    pipeline.mark_frames(args.dxf, store, args.frames)
+    print(f"{len(args.frames)} frame(s) marked. Run propose on this file again to apply it; "
+          "details are renumbered, so use the new numbers with upload.")
     return 0
 
 
@@ -206,7 +220,15 @@ def parser():
     send.add_argument("dxf")
     send.add_argument("--detail", type=int, required=True, help="its number, as in the store's -dNN")
     send.add_argument("--out", default=str(sheets.DEFAULT_STORE / "uploads"), help="default data/annotation/uploads")
+    store(send)
     send.set_defaults(run=cmd_upload)
+
+    cut = sub.add_parser("split-frame", help="list the frames holding several groups, or mark which to split")
+    cut.add_argument("dxf")
+    cut.add_argument("frames", nargs="*", help="frame handles to split, replacing any marked before; none lists them")
+    cut.add_argument("--clear", action="store_true", help="unmark them all, so every frame stays whole")
+    store(cut)
+    cut.set_defaults(run=cmd_split_frame)
 
     score = sub.add_parser("measure", help="score the proposals on synthetic DXFs with known truth")
     score.add_argument("--sheets", type=int, default=100)

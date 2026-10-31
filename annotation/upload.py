@@ -106,15 +106,17 @@ def pdf_of(image) -> bytes:
     return bytes(out)
 
 
-def write(path, index: int, out) -> dict:
+def write(path, index: int, out, store=sheets.DEFAULT_STORE) -> dict:
     """`<out>/<file id>-dNN.png`, `.pdf` and `.json`. What the render came to, for a person:
     the JSON stays beside the files, and never reaches the app."""
     path = Path(path)
     out = sheets.require_output(Path(out))
     out.mkdir(parents=True, exist_ok=True)
     doc = dxf_ingest.load(path)
-    render = render_detail(doc, pipeline.analyse_sheet(doc), index)
-    stem = out / pipeline.sheet_id_of(path, hashlib.sha256(path.read_bytes()).hexdigest(), index)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    marked = sheets.split_frames(store, pipeline.file_id_of(path, digest))
+    render = render_detail(doc, pipeline.analyse_sheet(doc, marked), index)
+    stem = out / pipeline.sheet_id_of(path, digest, index)
     png, pdf = stem.with_suffix(".png"), stem.with_suffix(".pdf")
     render.image.save(png)
     pdf.write_bytes(pdf_of(render.image))

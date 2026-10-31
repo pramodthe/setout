@@ -32,6 +32,7 @@ from tools.dxf_census import allowed_output as _census_guard  # noqa: E402
 SCHEMA = "setout-annotation-v1"
 DEFAULT_STORE = ROOT / "data" / "annotation"
 SHEET_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+SPLIT_FRAMES = "split_frames.json"
 
 
 class Refused(Exception):
@@ -49,6 +50,23 @@ def allowed_output(path) -> bool:
             data = (folder / "data").resolve()
             return path == data or data in path.parents
     return True
+
+
+def split_frames(store, file_id) -> list[str]:
+    """The frames a person marked to split, by handle. They sit beside the sheets, so every
+    command numbers a file's details the same way."""
+    path = Path(store) / SPLIT_FRAMES
+    return json.loads(path.read_text()).get(file_id, []) if path.exists() else []
+
+
+def mark_split_frames(store, file_id, handles) -> None:
+    path = Path(store) / SPLIT_FRAMES
+    marks = json.loads(path.read_text()) if path.exists() else {}
+    marks.pop(file_id, None)
+    if handles:
+        marks[file_id] = sorted(handles)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(marks, indent=2, sort_keys=True))
 
 
 def require_output(path) -> Path:

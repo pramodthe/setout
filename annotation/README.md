@@ -73,10 +73,25 @@ Details are found by whitespace: boxes of linework closer than one text height a
 detail. So a frame gathers what it holds, however many groups that is, and an element poking
 through a frame stays with it. A rectangle holding most of the sheet is its border and does not
 count. A cluster of under five entities joins the nearest detail, or is counted as a stray.
-A frame holding several groups is split: each group is a detail, and the frame belongs to none.
-It must be a closed rectangle, within about half a degree of square. Groups are told apart by
-their boxes, so a long L-shaped part whose box bridges two groups keeps them together, and four
-loose lines round two groups are not seen as a frame.
+
+A frame holding several groups stays one detail unless a person marks it, because a gap inside a
+frame is often the detail itself: a joint with a flashing across it, or a section drawn with a
+break. On the first real file, 7 of 8 such frames were one section, and only one was plausibly
+several details. The contact sheet shows these as `x2 frame <handle>`, and `split-frame` lists
+them and marks the ones to split:
+
+```sh
+python annotation/cli.py split-frame sheet.dxf --store data/annotation/<name>            # list
+python annotation/cli.py split-frame sheet.dxf 1F3A 2B07 --store data/annotation/<name>  # mark
+python annotation/cli.py propose sheet.dxf --store data/annotation/<name>                # apply
+```
+
+The marks stay in `<store>/split_frames.json`, and `--clear` removes them. Pass the same `--store`
+to `upload`, so it numbers details as the store does. A marked frame gives one detail per group,
+and the frame belongs to none. It must be a closed rectangle, within about half a degree of
+square. Groups are told apart by their boxes, so a long L-shaped part whose box bridges two
+groups keeps them together, and four loose lines round two groups are not seen as a frame.
+
 A column of at least three swatches with text beside them is a legend, not a detail.
 
 A layout is usually a cover sheet, so the only thing taken from one is a callout: a leader

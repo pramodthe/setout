@@ -1,12 +1,12 @@
 id: rod
-name: Rod
+name: Threaded rod
 status: draft
-definition: A plain straight round bar set into or through other parts, when the drawing does not show it as a threaded fixing or a joint backing.
+definition: A straight rod threaded along its length and cut to size, set into or through other parts and held with nuts or a bonded anchor.
 function: fixing
 role: object
 shape_hint: cad
 form: shaped
-relations_allowed: [fixed_to, supported_by, bonded_to, installed_before]
+relations_allowed: [fixed_to, repeated_along, supported_by, bonded_to, installed_before]
 dimension_slots:
   - name: diameter
     unit: mm
@@ -21,4 +21,4 @@ dimension_slots:
     source: null
     derive_from: null
 drawing_appearance: {}
-aliases: [rod, round bar, steel rod, metal rod]
+aliases: [rod, threaded rod, threaded bar, steel rod, metal rod]

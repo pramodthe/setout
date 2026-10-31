@@ -750,7 +750,7 @@ def index():
 @pytest.mark.parametrize("text, class_id", [
     ("CONCRETE SLAB", "slab"), ("Concrete slab", "slab"), ("SUSPENDED SLAB", "slab"), ("SUB-SILL", "sub_sill"),
     ("sub sill", "sub_sill"), ("SILL", "door_sill"), ("SILL FLASHING", "sub_sill_flashing"), ("PACKERS", "packer"),
-    ("BACKING ROD", "backing_rod"), ("ROD", "rod"), ("THREADED ROD", "fixing"), ("WATERPROOF\nMEMBRANE", "membrane"),
+    ("BACKING ROD", "backing_rod"), ("ROD", "rod"), ("THREADED ROD", "rod"), ("WATERPROOF\nMEMBRANE", "membrane"),
     ("2 MM SHEET MEMBRANE", "membrane"), ("SCREED TO FALL", "screed"), ("MEMBRANE TURNED UP", "membrane"),
     ("FLASHING", "general_flashing"), ("WEEPHOLES", "weep_hole"), ("LIFT OVERRUN", "lift_overrun"),
     ("NEW CONCRETE\nTO FALLS", "new_concrete_to_falls"), ("HOBS", "hob"), ("TERMINATION BAR", "termination_bar"),
@@ -1899,9 +1899,9 @@ def sheet_of(*origins, framed=False, gap_note=True):
     return doc, msp
 
 
-def split_of(doc):
+def split_of(doc, split_frames=()):
     d = drawing.read(doc)
-    return d, details.split(d)
+    return d, details.split(d, split_frames)
 
 
 def test_whitespace_splits_a_sheet_into_details():
@@ -1930,11 +1930,35 @@ def framed_pair(frame=None):
     return doc, msp, outline
 
 
-def test_a_frame_holding_several_groups_gives_one_detail_each_and_belongs_to_none():
+def test_a_frame_holding_several_groups_stays_one_detail_and_says_how_many():
+    """A gap in a frame can be the detail itself, a joint or a break, so nothing splits on it."""
     doc, _, outline = framed_pair()
     d, sheet = split_of(doc)
+    assert len(sheet.details) == 2
+    whole = next(k for k in sheet.details if k.framed)
+    assert whole.groups_inside == 2 and whole.frame == outline.dxf.handle and not whole.split
+    assert outline.dxf.handle in {d.curves[n].handle for n in whole.curves}
+
+
+def test_a_mark_on_another_frame_leaves_this_one_whole():
+    doc, _, _ = framed_pair()
+    _, sheet = split_of(doc, {"NOT-THIS-ONE"})
+    assert len(sheet.details) == 2 and not any(k.split for k in sheet.details)
+
+
+def test_a_mark_on_a_frame_holding_one_group_loses_nothing():
+    doc, _ = sheet_of((0, 0), (900, 0), framed=True)
+    d, plain = split_of(doc)
+    _, marked = split_of(doc, {k.frame for k in plain.details})
+    assert [k.curves for k in marked.details] == [k.curves for k in plain.details]
+
+
+def test_a_marked_frame_gives_one_detail_each_and_belongs_to_none():
+    doc, _, outline = framed_pair()
+    d, sheet = split_of(doc, {outline.dxf.handle})
     assert len(sheet.details) == 3
     split = [k for k in sheet.details if k.framed]
+    assert all(k.split for k in split)
     assert len(split) == 2 and all(k.groups_inside == 2 and k.frame == outline.dxf.handle for k in split)
     assert all(len(k.curves) == 10 and len(k.hatches) == 1 for k in split)
     handles = {d.curves[n].handle for k in sheet.details for n in k.curves}
@@ -1945,7 +1969,7 @@ def test_a_frame_holding_several_groups_gives_one_detail_each_and_belongs_to_non
 def test_a_skewed_frame_is_still_a_frame():
     """Half the frames on a real sheet ran a fraction of a degree off square."""
     doc, _, outline = framed_pair([(-40, -40), (520, -35), (518, 240), (-42, 235)])
-    d, sheet = split_of(doc)
+    d, sheet = split_of(doc, {outline.dxf.handle})
     assert len(sheet.details) == 3 and sum(k.framed for k in sheet.details) == 2
 
 
@@ -1967,10 +1991,10 @@ def test_a_frame_holding_one_group_stays_one_detail():
 
 
 def test_a_scrap_in_a_split_frame_joins_its_group_or_is_counted():
-    doc, msp, _ = framed_pair(box_points(-40, -40, 520, 640))
+    doc, msp, outline = framed_pair(box_points(-40, -40, 520, 640))
     tick = msp.add_line((212, 50), (219, 50))  # past the gap from the left group, within reach of it
     far = msp.add_line((0, 500), (5, 500))  # further from both groups than a scrap reaches
-    d, sheet = split_of(doc)
+    d, sheet = split_of(doc, {outline.dxf.handle})
     split = sorted((k for k in sheet.details if k.framed), key=lambda k: k.box[0])
     assert tick.dxf.handle in {d.curves[n].handle for n in split[0].curves}
     assert far.dxf.handle not in {d.curves[n].handle for k in sheet.details for n in k.curves}
@@ -1978,24 +2002,60 @@ def test_a_scrap_in_a_split_frame_joins_its_group_or_is_counted():
 
 
 def test_text_in_a_split_frame_goes_to_its_own_group():
-    doc, msp, _ = framed_pair()
+    doc, msp, outline = framed_pair()
     note(msp, "RIGHT HAND", (300, 150))
-    d, sheet = split_of(doc)
+    d, sheet = split_of(doc, {outline.dxf.handle})
     right = max((k for k in sheet.details if k.framed), key=lambda k: k.box[0])
     assert "RIGHT HAND" in [d.texts[n].text for n in right.texts]
 
 
-def test_a_split_frame_gives_a_record_per_group_and_the_report_counts_one_frame(tmp_path):
+def test_frames_stay_whole_until_marked_and_the_marks_reach_every_command(tmp_path):
+    doc, _, outline = framed_pair()
+    path = tmp_path / "sheet.dxf"
+    doc.saveas(path)
+    store, handle = tmp_path / "store", outline.dxf.handle
+    assert len(pipeline.propose_file(path, store)) == 2
+    summary = report.build(store)
+    assert summary["frames_holding_several"] == 1 and summary["frames_split"] == 0
+    assert pipeline.frames_holding_several(path)[handle][1] == 2
+    file_id = pipeline.mark_frames(path, store, [handle])
+    assert sheets.split_frames(store, file_id) == [handle]
+    assert len(pipeline.propose_file(path, store)) == 3
+    assert upload.write(path, 3, tmp_path / "out", store)["detail"] == 3
+    with pytest.raises(upload.NoSuchDetail):
+        upload.write(path, 3, tmp_path / "out", tmp_path / "another-store")  # unmarked, so two details
+    pipeline.mark_frames(path, store, [])
+    assert sheets.split_frames(store, file_id) == [] and len(pipeline.propose_file(path, store)) == 2
+
+
+def test_only_a_frame_holding_several_groups_can_be_marked(tmp_path):
     doc, _, _ = framed_pair()
     path = tmp_path / "sheet.dxf"
     doc.saveas(path)
+    with pytest.raises(sheets.Refused, match="Not a frame"):
+        pipeline.mark_frames(path, tmp_path / "store", ["FFFF"])
+    assert not (tmp_path / "store" / sheets.SPLIT_FRAMES).exists()
+
+
+def test_the_contact_sheet_gives_the_handle_to_mark():
+    source = {"detail": {"index": 1, "framed": True, "groups_inside": 2, "frame": "1F3A"}}
+    assert "x2 frame 1F3A" in contact.caption({"regions": [], "source": source})
+    source["detail"]["split"] = True
+    assert "split" in contact.caption({"regions": [], "source": source})
+
+
+def test_a_split_frame_gives_a_record_per_group_and_the_report_counts_one_frame(tmp_path):
+    doc, _, outline = framed_pair()
+    path = tmp_path / "sheet.dxf"
+    doc.saveas(path)
     store = tmp_path / "store"
+    pipeline.mark_frames(path, store, [outline.dxf.handle])
     records = pipeline.propose_file(path, store)
     assert len(records) == 3
-    split = [r for r in records if r["source"]["detail"]["groups_inside"] > 1]
+    split = [r for r in records if r["source"]["detail"]["split"]]
     assert len(split) == 2 and all(r["source"]["detail"]["groups_inside"] == 2 for r in split)
     summary = report.build(store)
-    assert summary["frames_holding_several"] == 1 and summary["details"] == 3
+    assert summary["frames_holding_several"] == 1 and summary["frames_split"] == 1 and summary["details"] == 3
     assert not any((r["dropped"] or "").startswith("a frame") for record in split for r in record["regions"])
 
 

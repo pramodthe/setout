@@ -9,9 +9,12 @@ with it because its box still touches the frame. The gap is a share of text heig
 thing drawn at a known paper size. A rectangle holding most of the sheet is its border and
 does not count, or it would pull everything together.
 
-A frame holding several groups is then split: each group is a detail of its own, and the
-frame belongs to none of them. Only groups whose boxes clear each other are seen, so a long
-L-shaped part whose box bridges two groups keeps them together.
+A frame holding several groups stays one detail unless a person marks it. A gap inside a frame
+can be the detail itself, such as a joint with a flashing across it, or a section drawn with a
+break, and nothing here can tell that from two details side by side. The groups are counted so
+a person can look. A marked frame is split: each group is a detail of its own, and the frame
+belongs to none of them. Only groups whose boxes clear each other are seen, so a long L-shaped
+part whose box bridges two groups keeps them together.
 
 A legend is a column of small swatches, each with text beside it. Its entries give hatches a
 meaning for this file, and it is not a detail. Nothing here reads a layer name.
@@ -46,8 +49,9 @@ class Detail:
     texts: list = field(default_factory=list)
     callouts: list = field(default_factory=list)
     framed: bool = False  # a rectangle runs round it
-    groups_inside: int = 1  # details its frame was split into, this one among them
+    groups_inside: int = 1  # groups its frame holds
     frame: str | None = None  # handle of its frame, when that is a closed rectangle
+    split: bool = False  # one group of a frame a person marked to split
 
 
 @dataclass
@@ -246,8 +250,9 @@ def _detail(members, curve_count, boxes, **fields) -> Detail:
                   [int(m) - curve_count for m in members if m >= curve_count], **fields)
 
 
-def split(drawing: Drawing) -> Sheet:
-    """The sheet's details, in reading order, and its legend."""
+def split(drawing: Drawing, split_frames=()) -> Sheet:
+    """The sheet's details, in reading order, and its legend. `split_frames` holds the handles
+    of the frames a person marked: only those are divided into their groups."""
     boxes = _item_boxes(drawing)
     if not len(boxes):
         return Sheet([], [], 0, [])
@@ -274,13 +279,14 @@ def split(drawing: Drawing) -> Sheet:
     for members in big.values():
         frame = _frame_of(drawing, members, boxes)
         groups, lost = ([], 0) if frame is None else _groups_in_frame(members, boxes, gap, reach, frame)
-        fragments += lost
-        for group in groups:
-            details.append(_detail(group, curve_count, boxes, framed=True, groups_inside=len(groups),
-                                   frame=drawing.curves[frame].handle))
-        if not groups:
+        handle = None if frame is None else drawing.curves[frame].handle
+        if groups and handle in split_frames:
+            fragments += lost
+            details += [_detail(group, curve_count, boxes, framed=True, groups_inside=len(groups),
+                                frame=handle, split=True) for group in groups]
+        else:
             details.append(_detail(members, curve_count, boxes, framed=frame is not None,
-                                   frame=None if frame is None else drawing.curves[frame].handle))
+                                   groups_inside=max(len(groups), 1), frame=handle))
     band = max(reach, 1e-9)
     details.sort(key=lambda d: (-round(d.box[3] / (band * 8.0)), d.box[0]))
     for k, detail in enumerate(details, 1):
