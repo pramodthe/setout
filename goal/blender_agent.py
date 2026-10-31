@@ -87,10 +87,10 @@ def flipped(png: bytes) -> bytes:
     return out.getvalue()
 
 
-def ask(content: list, extra: str = "") -> tuple[str, dict]:
+def ask(content: list, extra: str = "", instructions: str | None = None) -> tuple[str, dict]:
     from app import meta_client
     result = meta_client.respond_tools({"model": meta_client.default_model(), "reasoning": {"effort": "high"},
-                                        "instructions": SYSTEM + "\n\nThe shapes:\n" + api() + extra,
+                                        "instructions": instructions or SYSTEM + "\n\nThe shapes:\n" + api() + extra,
                                         "max_output_tokens": 32768, "input": [{"type": "message", "role": "user", "content": content}]}, timeout=290)
     text = "".join(part.get("text", "") for item in result["output"] if item.get("type") == "message" for part in item.get("content", []))
     return text, result.get("usage") or {}

@@ -29,3 +29,15 @@ def test_the_kit_holds_shapes_and_no_component():
 
 def test_the_scene_is_taken_from_its_code_block():
     assert code_of("Faults:\n- one\n```python\nfrom blender_kit import *\n```\n") == "from blender_kit import *\n"
+
+
+def test_a_readers_faults_survive_loose_text_and_bad_json():
+    from goal.muse_parts import faults_in
+    assert faults_in('Here: {"faults": [{"part": "sill", "fault": "floats"}]}') == [{"part": "sill", "fault": "floats"}]
+    assert faults_in("no json here") == [] and faults_in('{"faults": [{"part": "x"}]}') == []
+
+
+def test_the_way_of_working_holds_no_geometry():
+    """The owner's rule: this loop may direct the model, and may not model anything itself."""
+    source = (Path(goal.__file__).parent / "muse_parts.py").read_text()
+    assert not re.search(r"\b(box|prism|sheet|lathe|rod)\(\w", source.replace("box() or prism()", ""))
