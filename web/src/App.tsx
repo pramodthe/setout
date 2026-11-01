@@ -459,8 +459,8 @@ export default function App(): JSX.Element {
   return (
     <>
       <header>
-        <a href="#/library" className="back">
-          ← Library
+        <a href="#/" className="back">
+          ← Studio
         </a>
         <h1>Add a verified detail from a PDF</h1>
         <span className="sub" id="docline">

@@ -206,8 +206,8 @@ export default function DetailView({ detailId, part }: { detailId: string; part:
   return (
     <div className="dv">
       <header className="dvhead">
-        <a href="#/library" className="back">
-          ← Library
+        <a href="#/" className="back">
+          ← Studio
         </a>
         <div className="ttl">
           <div className="path">{situation.join(" › ")}</div>

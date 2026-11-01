@@ -10,11 +10,6 @@
 .appbar a { text-decoration: none; color: inherit; }
 .appbar .brand { display: flex; align-items: center; gap: 8px; font-weight: 650; }
 .appbar .brand i { width: 18px; height: 18px; border-radius: 5px; background: conic-gradient(from 210deg, #2f6fed, #7c5cff, #ec7a3a, #2f6fed); display: block; }
-.appbar .mainnav { display: flex; gap: 2px; margin-left: 10px; flex: none; }
-.lib .libhead { background: none; border: 0; padding: 0; }
-.appbar .mainnav a { padding: 4px 10px; border-radius: 8px; color: #6e6d68; }
-.appbar .mainnav a:hover { background: #f5f4f1; }
-.appbar .mainnav a.on { color: #18181a; font-weight: 600; background: #f5f4f1; }
 .appbar .topright { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: none; }
 .pagewrap { position: fixed; inset: 0; display: flex; flex-direction: column; }
 .pagebody { flex: 1; min-height: 0; overflow: auto; }

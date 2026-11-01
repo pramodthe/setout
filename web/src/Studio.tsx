@@ -273,7 +273,7 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
     if (response.ok) setScene((await response.json()) as Scene); else setError("That step couldn't be undone");
   };
 
-  if (!sceneId) return <div className="studio"><AppBar page="studio" /><Home scenes={scenes} onFile={(f) => void upload(f)} error={error} /></div>;
+  if (!sceneId) return <div className="studio"><AppBar /><Home scenes={scenes} onFile={(f) => void upload(f)} error={error} /></div>;
 
   const row = scene?.parts.find((r) => r.name === selected);
   const stepText = playing !== null && scene ? scene.intents[playing - 1] : null;
@@ -288,7 +288,7 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
 
   return (
     <div className="studio">
-      <AppBar page="studio" right={right} />
+      <AppBar right={right} />
       <div className="subbar">
         <a className="allback" href="#/">{ICONS.back}All details</a>
         <h1>{scene?.title ?? "Loading"}</h1>

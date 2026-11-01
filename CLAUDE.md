@@ -157,8 +157,8 @@ path is hard-coded) and the reference PDF at `/tmp/conpro_sills.pdf`, which is n
 committed. It drives the upload screen at `#/workbench`. Screenshots go to
 `/tmp/setout-drive/`.
 
-Web routes: `#/` studio home · `#/studio/<id>` a scene · `#/library` verified details ·
-`#/d/<detail_id>[?part=<id>]` detail page + AI guide · `#/workbench` add a verified detail from a PDF.
+Web routes: `#/` studio home · `#/studio/<id>` a scene · `#/d/<detail_id>[?part=<id>]` verified detail + AI guide ·
+`#/workbench` add a verified detail from a PDF. Those last two have no link from the studio.
 
 **The studio** (`app/studio.py`, `goal/`, `web/src/Studio.tsx`) is apart from verified versions: it never
 writes a version, never reaches the verifier and can't be published. Muse writes Blender Python against a live
