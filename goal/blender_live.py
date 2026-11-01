@@ -35,8 +35,10 @@ TOOLS = [
     {"type": "function", "name": "finish", "description": "End the work, only when the section view reads like the drawing and the whole assembly is there.",
      "parameters": {"type": "object", "additionalProperties": False, "required": ["what", "unsure"], "properties": {"what": {"type": "string", "description": "What this detail is"}, "unsure": {"type": "array", "items": {"type": "string"}}}}},
 ]
-SYSTEM = """You build one 2D construction section as a real local 3D assembly in a live Blender scene, the way a good detailer would show it to a builder. A person looks at it and must see at once
+SYSTEM = """You build one construction detail as a real local 3D assembly in a live Blender scene, the way a good detailer would show it to a builder. A person looks at it and must see at once
 what each part is, how it meets the next, and how it goes together.
+
+What you are given is either a 2D section or a picture of a 3D detail, perhaps several views of one. From a section, follow the rules for the section below. From a 3D picture, build what it shows, in the same arrangement and with the same parts: choose one cut face to be the section at x = 0, and judge your three_quarter view against the picture, not the section view. Titles, labels and logos in a picture are not parts. Name parts for what they are, never with a brand printed on them.
 
 First understand it. Before any code, say in a few lines what this detail is, every part in it, what the section can't show but must exist, such as the door above a sill or the ties across a cavity, and the order a builder would put them up. A section cuts one slice: the assembly runs on past it. Stop at the local assembly, never a whole building.
 
@@ -161,7 +163,7 @@ class Live:
         return out
 
     def run(self, brief=None):
-        text = brief or "Here is the section. Say what it is, then build it."
+        text = brief or "Here is the detail. Say what it is, then build it."
         content = [{"type": "input_text", "text": text}, self.show(self.drawing, 1400)]
         if self.steps:  # a revision: it sees the scene as it stands
             found = sandbox(self.steps, ("three_quarter", "section"))
