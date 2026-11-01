@@ -80,6 +80,10 @@ class Worker:
             if job["kind"] == "batch_eval":
                 from .evaluation import run_batch
                 run_batch(self, fence, job["payload"])
+            elif job["kind"] in ("plan_assembly", "build_assembly"):
+                from .assemblies import run_job
+                from .model_gateway import ModelGateway
+                run_job(self.repo, fence, job, ModelGateway(self.repo, fence, self.responder))
             elif job["kind"] in ("generate_detail", "revise_detail"):
                 Agent(self.repo, fence, self.responder, self.renderer, self.cad_builder).run()
                 continue_if_cut_short(self.repo, fence.job_id)

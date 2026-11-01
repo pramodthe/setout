@@ -20,7 +20,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 # A worktree has no data/ of its own: everything lives in the main checkout.
-DATA = next(p / "data" for p in (ROOT, *ROOT.parents) if (p / "data" / "reference-3d").is_dir())
+DATA = next((p / "data" for p in (ROOT, *ROOT.parents) if (p / "data" / "reference-3d").is_dir()), ROOT / "data")
 RAW, DB = DATA / "reference-3d" / "raw", DATA / "reference-3d" / "db"
 GENERIC = ("group_", "instance_", "sketchup", "skp", "id", "node", "component_", "s_", "ls_", "lh_", "image_")
 SHAPE_DECIMALS = 1  # model units (inches): two pieces this alike count as the same shape

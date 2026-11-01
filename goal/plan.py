@@ -107,42 +107,49 @@ def speckled(picture, regions, size) -> list:
     return regions_out
 
 
-def ask(drawing, regions, size) -> tuple[dict, dict]:
+def direct(prompt, pictures, schema, name, effort="medium") -> tuple[dict, int]:
+    """One Muse call straight to the provider, for running from the command line. The app passes its own, which is budgeted and checkpointed."""
     from app import meta_client
+    content = [{"type": "input_text", "text": prompt}] + [{"type": "input_image", "image_url": "data:image/png;base64," + base64.b64encode(p).decode()} for p in pictures]
+    result = meta_client.respond_tools({"model": meta_client.default_model(), "reasoning": {"effort": effort}, "input": [{"type": "message", "role": "user", "content": content}],
+                                        "text": {"format": {"type": "json_schema", "name": name, "schema": schema, "strict": True}}}, timeout=420)
+    reply = "".join(p.get("text", "") for item in result["output"] if item.get("type") == "message" for p in item.get("content", []))
+    return json.loads(reply), (result.get("usage") or {}).get("total_tokens", 0)
+
+
+def ask(model, drawing, regions, size, guidance="") -> tuple[dict, int]:
     rows = [{"id": r.id, "x": round((r.box[0] + r.box[2]) / 2 / size[0], 3), "y": round((r.box[1] + r.box[3]) / 2 / size[1], 3), "width": round(r.width / size[0], 3), "height": round(r.height / size[1], 3)} for r in regions]
-    picture = base64.b64encode(labels.overlay(drawing, regions)).decode()
-    content = [{"type": "input_text", "text": PROMPT + json.dumps(rows)}, {"type": "input_image", "image_url": f"data:image/png;base64,{picture}"}]
-    result = meta_client.respond_tools({"model": meta_client.default_model(), "reasoning": {"effort": "high"}, "input": [{"type": "message", "role": "user", "content": content}],
-                                        "text": {"format": {"type": "json_schema", "name": "detail_plan", "schema": SCHEMA, "strict": True}}}, timeout=420)
-    reply = "".join(p.get("text", "") for item in result["output"] if item.get("type") == "message" for p in item.get("content", []))
-    return json.loads(reply), result.get("usage") or {}
+    return model(guidance + PROMPT + json.dumps(rows), [labels.overlay(drawing, regions)], SCHEMA, "assembly_plan", "high")
 
 
-def complete(drawing, regions, plan) -> tuple[dict, dict]:
+def complete(model, drawing, regions, plan) -> tuple[dict, int]:
     """A second reading with the plan in hand: what the plan leaves out that a builder would still need. Whatever it adds is implied, and says so."""
-    from app import meta_client
-    picture = base64.b64encode(labels.overlay(drawing, regions)).decode()
-    text = CHECK + json.dumps({k: plan[k] for k in ("assembly", "parts", "relations")})
-    content = [{"type": "input_text", "text": text}, {"type": "input_image", "image_url": f"data:image/png;base64,{picture}"}]
-    result = meta_client.respond_tools({"model": meta_client.default_model(), "reasoning": {"effort": "medium"}, "input": [{"type": "message", "role": "user", "content": content}],
-                                        "text": {"format": {"type": "json_schema", "name": "additions", "schema": ADDITIONS, "strict": True}}}, timeout=280)
-    reply = "".join(p.get("text", "") for item in result["output"] if item.get("type") == "message" for p in item.get("content", []))
-    return json.loads(reply), result.get("usage") or {}
+    return model(CHECK + json.dumps({k: plan[k] for k in ("assembly", "parts", "relations")}), [labels.overlay(drawing, regions)], ADDITIONS, "assembly_check", "medium")
+
+
+def regions_of(drawing) -> tuple[list, tuple]:
+    found, size = regions_.with_ink(drawing)
+    regions = clean(found, size)
+    return regions + speckled(drawing, regions, size), size
+
+
+def read(model, drawing, guidance="") -> tuple[dict, list, tuple]:
+    regions, size = regions_of(drawing)
+    plan, first = ask(model, drawing, regions, size, guidance)
+    added, second = complete(model, drawing, regions, plan)
+    plan["parts"] += [{**part, "seen": "implied", "regions": []} for part in added["parts"]]
+    plan["relations"] += added["relations"]
+    plan["tokens"] = first + second
+    return plan, regions, size
 
 
 def make(drawing) -> tuple[dict, list, tuple]:
     """The plan for a drawing, kept once made, so a change to the engine spends no tokens."""
-    found, size = regions_.with_ink(drawing)
-    regions = clean(found, size)
-    regions += speckled(drawing, regions, size)
     path = OUT / f"{Path(drawing).stem}.plan.json"
     if path.exists():
+        regions, size = regions_of(drawing)
         return json.loads(path.read_text()), regions, size
-    plan, usage = ask(drawing, regions, size)
-    added, more = complete(drawing, regions, plan)
-    plan["parts"] += [{**part, "seen": "implied", "regions": []} for part in added["parts"]]
-    plan["relations"] += added["relations"]
-    plan["tokens"] = usage.get("total_tokens", 0) + more.get("total_tokens", 0)
+    plan, regions, size = read(direct, drawing)
     OUT.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(plan, indent=1))
     return plan, regions, size

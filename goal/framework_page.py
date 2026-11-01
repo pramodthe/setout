@@ -21,7 +21,7 @@ MORE = {"membrane": (45, 52, 70), "adhesive": (120, 105, 125), "metal trim": (11
 
 
 def write(drawing) -> dict:
-    scene = Scene(drawing)
+    scene = Scene.planned(drawing)
     scene.build()
     state = scene.contract()
     clashes = scene.clashes()

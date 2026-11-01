@@ -31,6 +31,7 @@ CREEP = 0.15  # a row or column this far short of the fullest one is an outline 
 STRETCHER = (1.6, 3.2)  # how much longer than wide a unit laid along the run is: shorter is a half or a header, longer is a lintel
 SAME_MEANING = 0.03  # search scores this close mean the same to the search, so fit decides between them
 SHEET_METRES = 0.5  # what a detail sheet shows when nothing on it gives a size
+UNIT_TOLERANCE, LENGTH_TOLERANCE = 0.2, 1.5  # beyond these a catalogue part is reported as not fitting what's drawn
 COMMON = 0.03  # how much being widely used counts against a small misfit in shape
 
 
@@ -157,21 +158,60 @@ def stretch(hit, wide, high) -> float:
 
 
 class Scene:
-    def __init__(self, drawing):
-        self.drawing = drawing
-        self.plan, self.regions, self.size = planner.make(drawing)
+    def __init__(self, drawing, plan, regions, size, choices=None):
+        self.drawing, self.plan, self.regions, self.size = drawing, plan, regions, size
+        self.choices = choices or {}  # part id -> what Muse chose from the shortlist. This carries them out and checks them
         self.ink = np.asarray(Image.open(drawing).convert("L")) < INK
         self.parts = {p["id"]: p for p in self.plan["parts"]}
         self.masks = closed(self.regions, self.plan, self.size)
-        self.items, self.notes, self.joints, self.before = [], [], {}, {}
+        self.items, self.notes, self.joints, self.before, self.misfits = [], [], {}, {}, []
         self.section = {}  # part id -> mask of where it stands in the section
         self.touch = max(int(TOUCH * max(self.size)), 2)
         self.bed = np.median([np.mean([r[3] - r[1] for r in merged_boxes([self.masks[i]])]) for p in self.parts.values() if p["category"] == "mortar" for i in p["regions"] if i in self.masks] or [0])
-        self.hits = dict(zip([p["id"] for p in self.plan["parts"] if p["form"] in ("units", "spaced")],
-                             search([(p["query"], p["category"]) for p in self.plan["parts"] if p["form"] in ("units", "spaced")], keep=40)))
+        built = [p for p in self.plan["parts"] if p["form"] in ("units", "spaced")]
+        self.hits = dict(zip([p["id"] for p in built], search([(p["query"], p["category"]) for p in built], keep=40))) if built else {}
+        self.unit_wide = next((float(np.median([b[2] - b[0] for b in merged_boxes([self.masks[r] for r in p["regions"] if r in self.masks])])) for p in built if p["form"] == "units" and any(r in self.masks for r in p["regions"])), None)
         self.scale = self.find_scale()
         self.left, self.bottom = min(int(np.flatnonzero(m.any(0))[0]) for m in self.masks.values()), max(int(np.flatnonzero(m.any(1))[-1]) + 1 for m in self.masks.values())
         self.joint = self.bed * self.scale or 0.01
+
+    @classmethod
+    def planned(cls, drawing):
+        plan, regions, size = planner.make(drawing)
+        return cls(drawing, plan, regions, size)
+
+    def chosen(self, part) -> dict | None:
+        """What Muse chose for a part, if it's a real entry from that part's shortlist. Anything else falls back to the best fit, with a note."""
+        choice = self.choices.get(part["id"])
+        if not choice:
+            return None
+        hit = next((h for h in self.hits.get(part["id"], []) if h["id"] == choice["component"]), None)
+        if hit is None:
+            self.notes.append(f"{part['name']}: {choice['component']} wasn't on its shortlist, so the best fit was used")
+        return hit
+
+    def shortlists(self, keep=6) -> list:
+        """For each catalogue part, the candidates Muse chooses between, with the size the drawing wants."""
+        out = []
+        for part in self.parts.values():
+            hits = self.hits.get(part["id"])
+            if not hits:
+                continue
+            if part["form"] == "units":
+                boxes = merged_boxes([self.masks[r] for r in part["regions"] if r in self.masks])
+                wide, high = np.median([b[2] - b[0] for b in boxes]), np.median([b[3] - b[1] for b in boxes])
+                order = sorted(self.stretchers(part), key=lambda h: stretch(h, wide, high) + abs(np.log(h["size"][1] / (wide * self.scale))))
+                wanted = f"section {wide * self.scale * 1000:.0f} x {high * self.scale * 1000:.0f} mm"
+            else:
+                rough = self.anchors(part)
+                if not rough:
+                    continue
+                length = float(np.median([np.hypot(e[1][0] - e[0][0], e[1][1] - e[0][1]) for e in rough])) * self.scale
+                top = max(h["score"] for h in hits)
+                order = sorted(hits, key=lambda h: abs(np.log(h["size"][0] / max(length, 0.01))) + 3 * (top - h["score"]))
+                wanted = f"{length * 1000:.0f} mm long"
+            out.append({"part": part["id"], "name": part["name"], "form": part["form"], "wanted": wanted, "candidates": order[:keep]})
+        return out
 
     def stretchers(self, part) -> list:
         return [h for h in self.hits[part["id"]] if STRETCHER[0] * h["size"][1] <= h["size"][0] <= STRETCHER[1] * h["size"][1]] or self.hits[part["id"]]
@@ -182,7 +222,7 @@ class Scene:
             if part["form"] == "units" and self.hits[part["id"]]:
                 boxes = merged_boxes([self.masks[r] for r in part["regions"] if r in self.masks])
                 wide, high = np.median([b[2] - b[0] for b in boxes]), np.median([b[3] - b[1] for b in boxes])
-                hit = min(self.stretchers(part), key=lambda h: stretch(h, wide, high))
+                hit = self.chosen(part) or min(self.stretchers(part), key=lambda h: stretch(h, wide, high))
                 self.notes.append(f"scale from {hit['name']} ({hit['id']}) against {part['name']}: {(hit['size'][1] / wide + hit['size'][2] / high) * 500:.3f} mm per pixel")
                 return (hit["size"][1] / wide + hit["size"][2] / high) / 2
         self.notes.append(f"no units to set a scale: {SHEET_METRES} m across the sheet, assumed")
@@ -212,7 +252,11 @@ class Scene:
     def units(self, part):
         boxes = merged_boxes([self.masks[r] for r in part["regions"] if r in self.masks])
         wide, high = np.median([b[2] - b[0] for b in boxes]), np.median([b[3] - b[1] for b in boxes])
-        hit = min(self.stretchers(part), key=lambda h: stretch(h, wide, high) + abs(np.log(h["size"][1] / (wide * self.scale))))
+        hit = self.chosen(part) or min(self.stretchers(part), key=lambda h: stretch(h, wide, high) + abs(np.log(h["size"][1] / (wide * self.scale))))
+        bond = (self.choices.get(part["id"]) or {}).get("bond") or "running"
+        misfit = max(abs(hit["size"][1] / (wide * self.scale) - 1), abs(hit["size"][2] / (high * self.scale) - 1))
+        if misfit > UNIT_TOLERANCE:
+            self.misfits.append(f"{part['name']}: {hit['name']} was stretched {misfit:.0%} to fill the drawn unit")
         mesh = np.load(STORE / "parts" / f"{hit['id']}.npy").astype(float)
         mesh -= mesh.reshape(-1, 3).min(0)
         length = hit["size"][0]
@@ -223,7 +267,7 @@ class Scene:
         for column in columns.values():
             for k, box in enumerate(sorted(column, key=lambda b: b[1])):
                 u0, u1, z1, z0 = self.across(box[0]), self.across(box[2]), self.up(box[1]), self.up(box[3])
-                along = -(length + self.joint) / 2 if k % 2 else 0.0
+                along = -(length + self.joint) / 2 if k % 2 and bond == "running" else 0.0
                 seams = []
                 while along < RUN:
                     a, b = max(along, 0.0), min(along + length, RUN)
@@ -313,7 +357,8 @@ class Scene:
 
     def spaced(self, part):
         """Repeats of one catalogue object through the section. The plan gives a rough place, the drawing and the relations give the exact one."""
-        spacing = (part["spacing_mm"] or 450) / 1000
+        choice = self.choices.get(part["id"]) or {}
+        spacing = (choice.get("spacing_mm") or part["spacing_mm"] or 450) / 1000
         rough = self.anchors(part)
         if not rough or not self.hits[part["id"]]:
             self.notes.append(f"Not built: {part['name']}, no place in the plan or nothing like it in the catalogue")
@@ -325,14 +370,16 @@ class Scene:
         if places:  # a part laid in a joint can't share it with a sheet
             taken = np.any([m for other, m in self.section.items() if self.parts.get(other, {}).get("form") == "sheet"] or [np.zeros_like(self.ink)], 0)
             places = [ends for ends in places if not (mask_of(list(ends), self.size, 5) & taken).any()] or places
-        places = places or rough
+        places = (places or rough)[::max(int(choice.get("every") or 1), 1)]
         wanted = float(np.median([np.hypot(ends[1][0] - ends[0][0], ends[1][1] - ends[0][1]) for ends in places])) * self.scale
         course = self.course_at((rough[0][0][0] + rough[0][1][0]) / 2, (rough[0][0][1] + rough[0][1][1]) / 2) if len(part["path"]) == 1 else None
         best = max(h["score"] for h in self.hits[part["id"]])
-        hit = min((h for h in self.hits[part["id"]] if h["score"] >= best - SAME_MEANING), key=lambda h: abs(np.log(h["size"][0] / max(wanted, 0.01))) + (2 if course and h["size"][2] > 2.5 * self.joint else 0) + (h["category"] != part["category"]) - COMMON * np.log(h["copies"]))
+        hit = self.chosen(part) or min((h for h in self.hits[part["id"]] if h["score"] >= best - SAME_MEANING), key=lambda h: abs(np.log(h["size"][0] / max(wanted, 0.01))) + (2 if course and h["size"][2] > 2.5 * self.joint else 0) + (h["category"] != part["category"]) - COMMON * np.log(h["copies"]))
         mesh = np.load(STORE / "parts" / f"{hit['id']}.npy").astype(float)
         mesh -= mesh.reshape(-1, 3).min(0)
         mesh -= [0, hit["size"][1] / 2, hit["size"][2] / 2]
+        if not 1 / LENGTH_TOLERANCE <= hit["size"][0] / max(wanted, 1e-6) <= LENGTH_TOLERANCE:
+            self.misfits.append(f"{part['name']}: {hit['name']} is {hit['size'][0] * 1000:.0f} mm long where {wanted * 1000:.0f} mm is wanted")
         count = 0
         for k, ((x0, y0), (x1, y1)) in enumerate(places):
             heading = np.array([self.across(x1) - self.across(x0), self.up(y1) - self.up(y0)])
@@ -374,7 +421,8 @@ class Scene:
         course = self.course_at(x, y)
         if course:
             return [((course["box"][0], (course["box"][1] + course["box"][3]) / 2), (course["box"][2], (course["box"][1] + course["box"][3]) / 2))]
-        return [((x - 40, y), (x + 40, y))]
+        half = (self.unit_wide or 80) / 2
+        return [((x - half, y), (x + half, y))]
 
     def region_mask(self, ident):
         region = next(r for r in self.regions if r.id == ident)
@@ -448,7 +496,7 @@ class Scene:
 
 
 if __name__ == "__main__":
-    scene = Scene(sys.argv[1])
+    scene = Scene.planned(sys.argv[1])
     scene.build()
     state = scene.contract()
     print("items", len(scene.items), "triangles", sum(len(i["triangles"]) for i in scene.items), "scale mm/px", round(scene.scale * 1000, 3), "joint mm", round(scene.joint * 1000, 1))
