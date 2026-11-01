@@ -17,6 +17,7 @@ const FOV = 32;
 const MARGIN = 1.22;  /* room left around a fitted view */
 const THIN = 0.02;  /* metres */
 const TALL = 0.6;  /* of the model's height */
+const SLENDER = 0.15;  /* a tall part this thin, against its height, is left out of framing */
 
 type Part = { mesh: THREE.Mesh; own: THREE.Material | THREE.Material[]; edges: THREE.LineSegments; home: THREE.Vector3; push: THREE.Vector3; step: number };
 
@@ -153,14 +154,15 @@ export class StudioViewport {
     this.setView("iso");
   }
 
-  /* What to frame: the whole model, less anything that stands far above the rest, such as a full-height door over a sill. */
+  /* What to frame: the whole model, less anything tall and thin standing above the rest, such as a door over a sill. A tall mass of concrete is the detail, and stays. */
   private detailBox(model: THREE.Object3D): THREE.Box3 {
     const height = this.box.max.y - this.box.min.y;
     const low = new THREE.Box3();
     model.traverse((node) => {
       if (!(node as THREE.Mesh).isMesh) return;
       const box = new THREE.Box3().setFromObject(node);
-      if (box.max.y - box.min.y < TALL * height) low.union(box);
+      const size = box.getSize(new THREE.Vector3());
+      if (size.y < TALL * height || Math.min(size.x, size.z) > SLENDER * size.y) low.union(box);
     });
     return low.isEmpty() ? this.box.clone() : low;
   }

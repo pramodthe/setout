@@ -180,7 +180,7 @@ def materials() -> None:
     })
 
 
-TALL = 0.6  # of the scene's height: a part this tall is left out of framing an angled view
+TALL, SLENDER = 0.6, 0.15  # a part this tall against the scene, and this thin against its height, is left out of framing an angled view
 
 
 def material(name, base, roughness=0.6, metallic=0.0, transmission=0.0) -> str:
@@ -208,7 +208,7 @@ def fit_view(view, section_at=0, size=(1000, 750), samples=14) -> None:
         shot("top.jpg", (middle.x, middle.y, high.z + 4000), tuple(middle), size=size, samples=samples, ortho=1.12 * max(high.y - low.y, 1.33 * (high.x - low.x)))
     else:
         tall = TALL * (high.z - low.z) / 1000
-        short = [o for o in meshes if o.dimensions.z < tall] or meshes
+        short = [o for o in meshes if o.dimensions.z < tall or min(o.dimensions.x, o.dimensions.y) > SLENDER * o.dimensions.z] or meshes
         low, high = extent(short)
         middle, span = (low + high) / 2, max(high - low)
         side = high.y + 1.0 * span if view == "other_side" else low.y - 1.0 * span

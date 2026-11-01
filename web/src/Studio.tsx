@@ -31,9 +31,9 @@ const ICONS = {
   undo: svg(<><path d="M8 5 3 10l5 5" /><path d="M3 10h11a6 6 0 0 1 0 12h-3" /></>),
   download: svg(<><path d="M12 4v11M7 11l5 5 5-5" /><path d="M5 20h14" /></>),
   panel: svg(<><rect x="3" y="4" width="18" height="16" rx="2.500" /><path d="M15 4v16" /></>),
-  plus: svg(<path d="M12 5v14M5 12h14" />),
   send: svg(<path d="M12 19V5M6 11l6-6 6 6" />),
   chevron: svg(<path d="m9 6 6 6-6 6" />, 13),
+  back: svg(<path d="m15 6-6 6 6 6" />, 14),
   eye: svg(<><path d="M2 12s3.600-7 10-7 10 7 10 7-3.600 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="2.800" /></>, 14),
   eyeOff: svg(<><path d="M3 3l18 18M10.500 5.200A10 10 0 0 1 12 5c6.400 0 10 7 10 7a17 17 0 0 1-3.200 4M6.200 6.300A17 17 0 0 0 2 12s3.600 7 10 7a10 10 0 0 0 4.500-1" /></>, 14),
   clay: svg(<><circle cx="12" cy="12" r="8" /><path d="M12 4a8 8 0 0 0 0 16z" fill="currentColor" stroke="none" /></>),
@@ -47,19 +47,6 @@ const VIEWS: [View, keyof typeof ICONS, string][] = [
 
 const pretty = (word: string) => word.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 const mm = (value: number) => (Math.abs(value) >= 100 ? value.toFixed(0) : value.toFixed(1));
-
-function Top({ scenes, current, right }: { scenes: Card[]; current: string | null; right?: ReactNode }): JSX.Element {
-  return (
-    <AppBar page="studio" right={right}>
-      <nav className="sc-tabs" aria-label="Scenes">
-        {scenes.slice(0, 4).map((s) => (
-          <a key={s.id} className={`sc-tab${s.id === current ? " on" : ""}`} href={`#/studio/${s.id}`} title={s.title}>{ICONS.cube}<span>{s.title}</span></a>
-        ))}
-        <a className="plus" href="#/" aria-label="New scene" title="New scene">{ICONS.plus}</a>
-      </nav>
-    </AppBar>
-  );
-}
 
 function Home({ scenes, onFile, error }: { scenes: Card[]; onFile: (file: File) => void; error: string | null }): JSX.Element {
   const [over, setOver] = useState(false);
@@ -286,7 +273,7 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
     if (response.ok) setScene((await response.json()) as Scene); else setError("That step couldn't be undone");
   };
 
-  if (!sceneId) return <div className="studio"><Top scenes={scenes} current={null} /><Home scenes={scenes} onFile={(f) => void upload(f)} error={error} /></div>;
+  if (!sceneId) return <div className="studio"><AppBar page="studio" /><Home scenes={scenes} onFile={(f) => void upload(f)} error={error} /></div>;
 
   const row = scene?.parts.find((r) => r.name === selected);
   const stepText = playing !== null && scene ? scene.intents[playing - 1] : null;
@@ -301,8 +288,9 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
 
   return (
     <div className="studio">
-      <Top scenes={scenes} current={sceneId} right={right} />
+      <AppBar page="studio" right={right} />
       <div className="subbar">
+        <a className="allback" href="#/">{ICONS.back}All details</a>
         <h1>{scene?.title ?? "Loading"}</h1>
         {scene && <span className="pill">{working ? "Muse is building" : `${scene.parts.length} parts`}</span>}
         <span className="pill">Not verified</span>
