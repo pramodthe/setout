@@ -257,3 +257,54 @@ def test_a_section_overlaps_itself_better_than_another(tmp_path):
     first, second = drawn("a.png", (80, 80, 160, 320)), drawn("b.png", (100, 200, 340, 240))
     query = np.fft.rfft2(signature(first))
     assert score(query, spectra(first)) > score(query, spectra(second))
+
+
+def test_a_plan_drops_hatch_slivers_and_keeps_a_heavy_line():
+    from goal.plan import clean
+    from goal.regions import Region
+    block = Region(1, {}, (0, 0, 100, 100), 9000)
+    sliver = Region(2, {}, (0, 0, 100, 100), 400)
+    heavy = Region(3, {}, (0, 0, 800, 600), 9000)
+    assert [r.id for r in clean([block, sliver, heavy], (1000, 1000))] == [1, 3]
+
+
+def test_a_plan_says_what_is_wrong_with_it():
+    from goal.plan import faults
+    from goal.regions import Region
+    part = {"id": "a", "form": "sheet", "regions": [1], "path": []}
+    bare = {"id": "b", "form": "sheet", "regions": [], "path": [[0.1, 0.1]]}
+    plan = {"parts": [part, bare], "relations": [{"subject": "a", "target": "ghost"}]}
+    found = faults(plan, [Region(1, {}, (0, 0, 1, 1), 1), Region(2, {}, (0, 0, 1, 1), 1)])
+    assert any("no line" in f for f in found) and any("[2]" in f for f in found) and any("ghost" in f for f in found)
+
+
+def test_an_outline_creeping_along_a_line_does_not_widen_its_box():
+    from goal.engine import solid_box
+    mask = np.zeros((100, 100), bool)
+    mask[20:60, 10:50] = True
+    mask[5:20, 10:12] = True
+    assert solid_box(mask) == [10, 20, 50, 60]
+
+
+def test_a_unit_split_by_a_symbol_is_one_course():
+    from goal.engine import merged_boxes
+    first, second, apart = (np.zeros((60, 60), bool) for _ in range(3))
+    first[10:30, 10:30] = True
+    second[12:30, 12:30] = True
+    apart[40:55, 40:55] = True
+    assert merged_boxes([first, second, apart]) == [[10, 10, 30, 30], [40, 40, 55, 55]]
+
+
+def test_a_dashed_line_is_followed_dash_by_dash():
+    from goal.engine import traced
+    ink = np.zeros((200, 400), bool)
+    for x in range(20, 340, 30):
+        ink[100:104, x:x + 18] = True
+    line = traced([(25, 105), (150, 130), (330, 90)], ink)
+    assert line is not None and len(line) >= 10
+    assert all(abs(y - 101.5) < 1 for _, y in line)
+
+
+def test_a_line_with_no_dashes_is_not_traced():
+    from goal.engine import traced
+    assert traced([(0, 0), (50, 50)], np.zeros((100, 100), bool)) is None
