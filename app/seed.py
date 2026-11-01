@@ -323,7 +323,7 @@ def door_sill_d3() -> DetailSpec:
     ]
     return DetailSpec(
         detail_id="conpro-door-sill-D3",
-        title="Standard sill section — door opening (D3)",
+        title="Standard sill section — door opening",
         origin="human-transcription-v1 (28 Oct 2026, embedded figure "
                "p0_Image21; documented seed, NOT model output)",
         source=SourceDoc(
@@ -601,7 +601,7 @@ def door_subsill_d4() -> DetailSpec:
     ]
     return DetailSpec(
         detail_id="conpro-subsill-D4",
-        title="Sub-sill fixing in slab set down (D4)",
+        title="Sub-sill fixing in slab set down",
         origin="human-transcription-v1 (28 Oct 2026, embedded figure "
                "p0_Image22; documented seed, NOT model output)",
         source=SourceDoc(

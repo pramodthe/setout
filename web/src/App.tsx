@@ -459,10 +459,10 @@ export default function App(): JSX.Element {
   return (
     <>
       <header>
-        <a href="#/" className="back">
+        <a href="#/library" className="back">
           ← Library
         </a>
-        <h1>Setout — add a detail from a PDF</h1>
+        <h1>Add a verified detail from a PDF</h1>
         <span className="sub" id="docline">
           {doc
             ? `${doc.filename} · sha256 ${doc.sha256.slice(0, 12)}…`

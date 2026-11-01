@@ -8,11 +8,11 @@ import json
 IMPORTANCE = ("must", "should")
 STATES = ("right", "wrong", "missing", "cant_tell")
 ITEM = {"type": "object", "additionalProperties": False, "required": ["id", "what", "importance"], "properties": {"id": {"type": "integer"}, "what": {"type": "string"}, "importance": {"type": "string", "enum": list(IMPORTANCE)}}}
-FEATURES = {"type": "object", "additionalProperties": False, "required": ["detail", "items"], "properties": {"detail": {"type": "string"}, "items": {"type": "array", "items": ITEM}}}
+FEATURES = {"type": "object", "additionalProperties": False, "required": ["title", "detail", "items"], "properties": {"title": {"type": "string"}, "detail": {"type": "string"}, "items": {"type": "array", "items": ITEM}}}
 TICK = {"type": "object", "additionalProperties": False, "required": ["id", "state", "note"], "properties": {"id": {"type": "integer"}, "state": {"type": "string", "enum": list(STATES)}, "note": {"type": "string"}}}
 TICKS = {"type": "object", "additionalProperties": False, "required": ["ticks", "not_in_source"], "properties": {"ticks": {"type": "array", "items": TICK}, "not_in_source": {"type": "array", "items": {"type": "string"}}}}
 READ = """The image shows a building detail: a 2D section, or a picture of a 3D detail. Someone will build it in 3D, and you will judge that later, so list now what a correct model has to show.
-List every part you can see, and how the main parts meet, each as one item a person could tick by looking at a model. Say which side or level it is on where that matters, as in "brick wall standing on the left end of the slab" or "membrane turned up the wall face".
+title: a short name a person would call this detail, 2 to 5 words. detail: what it is, in a sentence. List every part you can see, and how the main parts meet, each as one item a person could tick by looking at a model. Say which side or level it is on where that matters, as in "brick wall standing on the left end of the slab" or "membrane turned up the wall face".
 Be concrete, and list only what this image shows. Titles, labels, logos and dimensions are not items. Don't list colours or textures.
 importance: must = the detail is wrong without it. should = it is shown, but a reader would still understand the detail without it.
 """

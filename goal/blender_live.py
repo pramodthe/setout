@@ -34,7 +34,7 @@ TOOLS = [
      "parameters": {"type": "object", "additionalProperties": False, "required": [], "properties": {}}},
     {"type": "function", "name": "undo", "description": "Remove your last step from the scene.", "parameters": {"type": "object", "additionalProperties": False, "required": [], "properties": {}}},
     {"type": "function", "name": "finish", "description": "Ask to end the work, only when the source and your model match and the whole assembly is there. An independent checker then compares your model with the source from every side, and sends it back with what to fix if parts are missing or wrong.",
-     "parameters": {"type": "object", "additionalProperties": False, "required": ["what", "unsure"], "properties": {"what": {"type": "string", "description": "What this detail is"}, "unsure": {"type": "array", "items": {"type": "string"}}}}},
+     "parameters": {"type": "object", "additionalProperties": False, "required": ["title", "what", "unsure"], "properties": {"title": {"type": "string", "description": "A short name a person would call it, 2 to 5 words, such as Floor drain on screed"}, "what": {"type": "string", "description": "What this detail is, in a sentence or two"}, "unsure": {"type": "array", "items": {"type": "string"}}}}},
 ]
 SYSTEM = """You build one construction detail as a real local 3D assembly in a live Blender scene, the way a good detailer would show it to a builder. A person looks at it and must see at once
 what each part is, how it meets the next, and how it goes together.

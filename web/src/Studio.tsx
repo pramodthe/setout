@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, DragEvent, FormEvent, JSX, ReactNode } from "react";
+import AppBar from "./AppBar";
 import { StudioViewport } from "./studioViewport";
 import type { Look, Tool, View } from "./studioViewport";
-import "./studio.css";
 
 type Row = { name: string; part: string; group: string; material: string | null; from: number[]; to: number[]; triangles: number; step: number };
 type Feed = { kind: string; text: string };
@@ -50,16 +50,14 @@ const mm = (value: number) => (Math.abs(value) >= 100 ? value.toFixed(0) : value
 
 function Top({ scenes, current, right }: { scenes: Card[]; current: string | null; right?: ReactNode }): JSX.Element {
   return (
-    <header className="topbar">
-      <a className="brand" href="#/"><i />Setout</a>
+    <AppBar page="studio" right={right}>
       <nav className="sc-tabs" aria-label="Scenes">
-        {scenes.slice(0, 5).map((s) => (
+        {scenes.slice(0, 4).map((s) => (
           <a key={s.id} className={`sc-tab${s.id === current ? " on" : ""}`} href={`#/studio/${s.id}`} title={s.title}>{ICONS.cube}<span>{s.title}</span></a>
         ))}
-        <a className="plus" href="#/studio" aria-label="New scene" title="New scene">{ICONS.plus}</a>
+        <a className="plus" href="#/" aria-label="New scene" title="New scene">{ICONS.plus}</a>
       </nav>
-      <div className="topright">{right}</div>
-    </header>
+    </AppBar>
   );
 }
 

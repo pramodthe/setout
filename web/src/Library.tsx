@@ -86,8 +86,8 @@ export default function Library(): JSX.Element {
     <div className="lib">
       <header className="libhead">
         <div>
-          <h1>Setout</h1>
-          <div className="sub">Installation playground: every detail generated from its source, every value traceable</div>
+          <h1>Library</h1>
+          <div className="sub">Verified details: every value traced to its source</div>
         </div>
         <input
           className="search"
@@ -97,11 +97,8 @@ export default function Library(): JSX.Element {
         />
         {!pub && (
           <>
-            <a className="btn primary" href="#/studio">
-              3D Studio
-            </a>
             <a className="btn primary" href="#/workbench">
-              + Add from PDF
+              + Add verified detail
             </a>
           </>
         )}

@@ -61,7 +61,7 @@ async def public_mode(request: Request, call_next):
     if PUBLIC:
         path, method = request.url.path, request.method
         if path.startswith(("/api/jobs", "/api/runs", "/api/artifacts", "/api/versions", "/api/details",
-                            "/api/components", "/api/memories", "/api/eval/datasets")):
+                            "/api/components", "/api/memories", "/api/eval/datasets", "/api/studio")):
             return JSONResponse({"detail": "private generation and source evidence"}, status_code=403)
         drawing = path.startswith("/api/documents") or path.endswith(("/thumb", "/drawing"))
         if drawing or (method in ("POST", "PATCH") and path != "/api/guide"):

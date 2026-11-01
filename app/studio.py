@@ -199,7 +199,7 @@ def build(repo, job, gateway):
     values = _publish(repo, ident, live.steps)
     feed.append({"kind": "muse", "text": finished.get("what") or "Stopped before finishing: the budget ran out."})
     checks = {"features": live.features, "rounds": [{k: c[k] for k in ("right", "total", "passed")} for c in live.checks], "last": live.checks[-1] if live.checks else held.get("last")}
-    _set(repo, ident, state="ready", step=None, title=(finished.get("what") or row["title"])[:90], unsure=finished.get("unsure") or row["unsure"] or [], feed=feed[-FEED:],
+    _set(repo, ident, state="ready", step=None, title=(finished.get("title") or (live.features or {}).get("title") or finished.get("what") or row["title"])[:60], unsure=finished.get("unsure") or row["unsure"] or [], feed=feed[-FEED:],
          tokens=(row["tokens"] or 0) + live.spent, checks=checks, **values)
 
 
