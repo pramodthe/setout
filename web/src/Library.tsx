@@ -97,6 +97,9 @@ export default function Library(): JSX.Element {
         />
         {!pub && (
           <>
+            <a className="btn primary" href="#/studio">
+              3D Studio
+            </a>
             <a className="btn" href="#/assembly">
               3D from a section
             </a>

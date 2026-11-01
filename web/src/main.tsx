@@ -6,11 +6,12 @@ import App from "./App.tsx";
 import DetailView from "./DetailView.tsx";
 import Library from "./Library.tsx";
 import AssemblyView from "./AssemblyView.tsx";
+import Studio from "./Studio.tsx";
 import DraftView from "./DraftView.tsx";
 import RenderView from "./RenderView.tsx";
 import JobPanel from "./JobPanel.tsx";
 
-/* Hash routes: #/ library · #/d/<id>[?part=<id>] detail · #/workbench add-from-PDF · #/assembly[/<id>] planned 3D from a section */
+/* Hash routes: #/ library · #/d/<id>[?part=<id>] detail · #/workbench add-from-PDF · #/assembly[/<id>] planned 3D from a section · #/studio[/<id>] Muse builds in Blender */
 function Root(): JSX.Element {
   const [hash, setHash] = useState(location.hash);
   useEffect(() => {
@@ -23,6 +24,8 @@ function Root(): JSX.Element {
   const job = hash.match(/^#\/jobs\/([^?]+)/);
   if (job) return <><header><a href="#/">← Library</a></header><JobPanel jobId={decodeURIComponent(job[1])} /></>;
   if (hash.startsWith("#/workbench")) return <App />;
+  const studio = hash.match(/^#\/studio(?:\/([^?]+))?/);
+  if (studio) return <Studio key={studio[1] || "new"} sceneId={studio[1] ? decodeURIComponent(studio[1]) : null} />;
   const assembly = hash.match(/^#\/assembly(?:\/([^?]+))?/);
   if (assembly) return <AssemblyView key={assembly[1] || "new"} assemblyId={assembly[1] ? decodeURIComponent(assembly[1]) : null} />;
   const draft = hash.match(/^#\/draft(?:\/([^?]+))?/);

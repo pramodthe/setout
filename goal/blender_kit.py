@@ -14,7 +14,7 @@ from pathlib import Path
 import bpy
 from mathutils import Vector
 
-__all__ = ["start", "materials", "prism", "box", "sheet", "lathe", "rod", "PARTS", "tally", "finish", "export_parts"]
+__all__ = ["start", "materials", "material", "prism", "box", "sheet", "lathe", "rod", "PARTS", "tally", "finish", "export_parts"]
 
 MM = 0.001
 OUT = Path(os.environ.get("SETOUT_OUT", "."))
@@ -34,6 +34,7 @@ def _add(name, verts, faces, material, group):
     obj = bpy.data.objects.new(name, mesh)
     bpy.context.scene.collection.objects.link(obj)
     obj.data.materials.append(MATERIALS[material])
+    obj["group"], obj["part"] = group, name.split(".")[0]
     PARTS.append((obj, group, name.split(".")[0]))
     return obj
 
@@ -113,6 +114,8 @@ def rod(name, a, b, radius, material, group, sides=16):
 
 def _material(name, base, roughness=0.6, metallic=0.0, noise=0.0, bump=0.0, scale=60.0, vary=0.0, transmission=0.0, ior=1.45):
     material = bpy.data.materials.new(name)
+    material["base"] = list(base)
+    material.diffuse_color = (*base, 1)
     material.use_nodes = True
     tree = material.node_tree
     nodes, links = tree.nodes, tree.links
@@ -182,6 +185,45 @@ def materials() -> None:
     })
 
 
+def material(name, base, roughness=0.6, metallic=0.0, transmission=0.0) -> str:
+    """A new material by colour, each channel 0 to 1, for anything the named ones don't suit. Returns its name."""
+    MATERIALS[name] = _material(name, base, roughness, metallic=metallic, transmission=transmission)
+    return name
+
+
+def fit_view(view, section_at=0, size=(1000, 750), samples=14) -> None:
+    """One standard view of the whole scene, framed from what was built, so a model never places a camera."""
+    meshes = [o for o in bpy.context.scene.objects if o.type == "MESH"]
+    if not meshes:
+        return
+    points = [o.matrix_world @ Vector(c) for o in meshes for c in o.bound_box]
+    low = Vector((min(p[k] for p in points) / MM for k in range(3)))
+    high = Vector((max(p[k] for p in points) / MM for k in range(3)))
+    middle, span = (low + high) / 2, max(high - low)
+    if view == "section":
+        shot("section.jpg", (low.x - 4000, middle.y, middle.z), (low.x, middle.y, middle.z), size=size, samples=samples, ortho=1.12 * max(high.y - low.y, 1.33 * (high.z - low.z)))
+    elif view == "top":
+        shot("top.jpg", (middle.x, middle.y, high.z + 4000), tuple(middle), size=size, samples=samples, ortho=1.12 * max(high.y - low.y, 1.33 * (high.x - low.x)))
+    elif view == "other_side":
+        shot("other_side.jpg", (low.x - 1.25 * span, high.y + 1.0 * span, middle.z + 0.55 * span), tuple(middle), lens=42, size=size, samples=samples)
+    else:
+        shot("three_quarter.jpg", (low.x - 1.25 * span, low.y - 1.0 * span, middle.z + 0.55 * span), tuple(middle), lens=42, size=size, samples=samples)
+
+
+def inventory() -> list:
+    """What is in the scene, in mm, read back from Blender and not from what the code meant to do."""
+    rows = []
+    for obj in bpy.context.scene.objects:
+        if obj.type != "MESH":
+            continue
+        points = [obj.matrix_world @ Vector(c) for c in obj.bound_box]
+        low = [min(p[k] for p in points) / MM for k in range(3)]
+        high = [max(p[k] for p in points) / MM for k in range(3)]
+        rows.append({"name": obj.name, "part": obj.get("part") or obj.name.split(".")[0], "group": obj.get("group") or "other", "material": obj.data.materials[0].name if obj.data.materials else None,
+                     "from": [round(v, 1) for v in low], "to": [round(v, 1) for v in high], "triangles": sum(len(p.vertices) - 2 for p in obj.data.polygons), "step": obj.get("step", 0)})
+    return rows
+
+
 def explode(offsets) -> None:
     for obj, group, _ in PARTS:
         obj.location = tuple(c * MM for c in offsets.get(group, (0, 0, 0)))
@@ -241,9 +283,24 @@ def tally() -> dict:
     return counts
 
 
+def flatten_materials() -> None:
+    """A model file can't carry procedural surfaces, and would show them white: each goes to its plain colour."""
+    for item in bpy.data.materials:
+        if not item.node_tree or "base" not in item:
+            continue
+        shader = next((n for n in item.node_tree.nodes if n.type == "BSDF_PRINCIPLED"), None)
+        if shader is None:
+            continue
+        for key in ("Base Color", "Normal"):
+            for link in list(shader.inputs[key].links):
+                item.node_tree.links.remove(link)
+        shader.inputs["Base Color"].default_value = (*item["base"], 1)
+
+
 def export_glb(file) -> None:
+    flatten_materials()
     try:
-        bpy.ops.export_scene.gltf(filepath=str(OUT / file), export_format="GLB", export_apply=True)
+        bpy.ops.export_scene.gltf(filepath=str(OUT / file), export_format="GLB", export_apply=True, export_extras=True)
     except Exception as error:
         print("glb export failed:", str(error)[:300])
 

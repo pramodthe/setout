@@ -80,6 +80,10 @@ class Worker:
             if job["kind"] == "batch_eval":
                 from .evaluation import run_batch
                 run_batch(self, fence, job["payload"])
+            elif job["kind"] == "studio_build":
+                from .model_gateway import ModelGateway
+                from .studio import run_job
+                run_job(self.repo, fence, job, ModelGateway(self.repo, fence, self.responder))
             elif job["kind"] in ("plan_assembly", "build_assembly"):
                 from .assemblies import run_job
                 from .model_gateway import ModelGateway
