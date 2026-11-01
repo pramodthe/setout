@@ -160,6 +160,11 @@ def summary(plan) -> str:
     return plan["assembly"] + ". " + ", ".join(sorted({p["name"] for p in plan["parts"] if p["form"] != "none"}))
 
 
+def recategorise(part, category):
+    """A part that is something else is searched for as that: its old words would find the old thing."""
+    part["category"], part["query"] = category, category
+
+
 def learn(model, drawing, regions, plan, examples) -> tuple[list, int]:
     """Compare a finished reading with details a person confirmed. Muse reads first and alone, so an example can't replace the reading: all it can do is name a change to a
     part that already exists, and the person sees each one. Returns what changed and the tokens."""
@@ -169,7 +174,7 @@ def learn(model, drawing, regions, plan, examples) -> tuple[list, int]:
         part = parts.get(change["id"])
         if part and part["form"] != "none" and change["category"] != part["category"]:
             made.append(f"{part['name']}: {part['category']} changed to {change['category']}. {change['why']}")
-            part["category"] = change["category"]
+            recategorise(part, change["category"])
     return made, tokens
 
 

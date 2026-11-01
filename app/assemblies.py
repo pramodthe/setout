@@ -93,6 +93,7 @@ def _lesson(repo, text, tags):
 
 def confirm(ident, reviewer, assembly, edits) -> dict:
     """The person's reading of the drawing. Whatever they change is applied, kept as a lesson, and that part is chosen again."""
+    from goal.plan import recategorise
     repo = repository()
     row = repo.get(d.assemblies, ident)
     if row["state"] != "awaiting_confirmation":
@@ -112,7 +113,10 @@ def confirm(ident, reviewer, assembly, edits) -> dict:
             value = edit.get(field)
             if value and value != part[field]:
                 _lesson(repo, f"In \"{plan['assembly']}\", Muse called {part['name']} {field} {part[field]}. {reviewer} says {value}.", ["part", part["category"]])
-                part[field] = value
+                if field == "category":
+                    recategorise(part, value)
+                else:
+                    part[field] = value
                 choices.pop(part["id"], None)
     _set(repo, ident, plan=plan, choices=choices, confirmed_by=reviewer.strip())
     return _queue(repo, ident, "build_assembly", "building", "building")

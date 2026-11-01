@@ -130,6 +130,7 @@ def test_changing_a_part_chooses_it_again(drawn):
     work(muse, drawn)
     held = assemblies.get(made["id"])
     assert held["plan"]["assembly"] == "a brick wall on a slab" and held["state"] == "done"
+    assert next(p for p in held["plan"]["parts"] if p["id"] == "unit")["query"] == "block"
     assert sum("Choose one candidate" in p for p in muse.prompts) == before + 1
     lessons = repository().list(d.memories, d.memories.c.scope == assemblies.LESSON_SCOPE)
     assert sum("a brick wall on a slab" in m["text"] for m in lessons) == 2
