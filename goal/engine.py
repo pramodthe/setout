@@ -55,15 +55,20 @@ def closed(regions, plan, size) -> dict:
     for region in kept:
         if owner[region.id]["form"] == "spaced":
             label[label == region.id] = -1
-    holes = label == -1
-    for _ in range(max(size)):
-        if not holes.any():
-            break
-        for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-            near = np.roll(label, (dy, dx), (0, 1))
-            take = holes & (near > 0)
-            label[take] = near[take]
-            holes[take] = False
+    ys, xs = np.nonzero(label == -1)
+    if len(ys):  # only around the holes, and only while they are still filling: this runs on every scene
+        patch = label[max(ys.min() - 2, 0):ys.max() + 3, max(xs.min() - 2, 0):xs.max() + 3]
+        holes = patch == -1
+        while holes.any():
+            before = int(holes.sum())
+            for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                near = np.roll(patch, (dy, dx), (0, 1))
+                take = holes & (near > 0)
+                patch[take] = near[take]
+                holes[take] = False
+            if int(holes.sum()) == before:
+                patch[holes] = 0
+                break
     for _ in range(GROW):
         for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
             near = np.roll(label, (dy, dx), (0, 1))
