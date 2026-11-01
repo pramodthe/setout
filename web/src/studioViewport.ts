@@ -13,19 +13,24 @@ const CLAY = new THREE.MeshStandardMaterial({ color: 0xb9b6ae, roughness: 0.92, 
 const HOVER = 0x3b82f6;
 const CHOSEN = 0xf59e0b;
 const STEP_MS = 650;
+const FOV = 32;
+const FLAT_FOV = 5;
+const THIN = 0.02;  /* metres */
+const TALL = 0.6;  /* of the model's height */
 
 type Part = { mesh: THREE.Mesh; own: THREE.Material | THREE.Material[]; edges: THREE.LineSegments; home: THREE.Vector3; push: THREE.Vector3; step: number };
 
 export class StudioViewport {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
-  private camera = new THREE.PerspectiveCamera(32, 1, 0.01, 200);
+  private camera = new THREE.PerspectiveCamera(FOV, 1, 0.01, 200);
   private controls: OrbitControls;
   private root = new THREE.Group();
   private ground: THREE.Mesh;
   private parts = new Map<string, Part>();
   private hidden = new Set<string>();
   private box = new THREE.Box3();
+  private focus = new THREE.Box3();
   private slice = new THREE.Plane(new THREE.Vector3(1, 0, 0), 1000);
   private raycaster = new THREE.Raycaster();
   private pointer = new THREE.Vector2();
@@ -45,7 +50,7 @@ export class StudioViewport {
   constructor(host: HTMLElement, onPick: (name: string | null) => void) {
     this.host = host;
     this.onPick = onPick;
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true, logarithmicDepthBuffer: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.outputEncoding = THREE.sRGBEncoding;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -105,23 +110,34 @@ export class StudioViewport {
     this.root.add(gltf.scene);
     gltf.scene.updateMatrixWorld(true);
     this.box.setFromObject(gltf.scene);
-    const centre = this.box.getCenter(new THREE.Vector3());
-    const reach = this.box.getSize(new THREE.Vector3()).length();
+    this.focus = this.detailBox(gltf.scene);
+    const centre = this.focus.getCenter(new THREE.Vector3());
+    const reach = this.focus.getSize(new THREE.Vector3()).length();
     const edge = new THREE.LineBasicMaterial({ color: 0x17181a, transparent: true, opacity: 0.32, clippingPlanes: [this.slice] });
     gltf.scene.traverse((node) => {
       const mesh = node as THREE.Mesh;
       if (!mesh.isMesh) return;
       const name = this.partName(mesh);
       mesh.castShadow = mesh.receiveShadow = true;
-      const materials = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) as THREE.MeshStandardMaterial[];
-      materials.forEach((m) => { m.clippingPlanes = [this.slice]; m.side = THREE.DoubleSide; m.envMapIntensity = 0.55; });
+      /* Each part has its own material, so one can light up alone. A thin layer lying on something draws just in front of it, or the two flicker where they meet. */
+      const thin = new THREE.Box3().setFromObject(mesh).getSize(new THREE.Vector3()).toArray().sort((a, b) => a - b)[0] < THIN;
+      const own = (m: THREE.Material) => {
+        const held = m.clone() as THREE.MeshStandardMaterial;
+        held.clippingPlanes = [this.slice];
+        held.side = THREE.DoubleSide;
+        held.envMapIntensity = 0.55;
+        held.polygonOffset = thin;
+        held.polygonOffsetFactor = held.polygonOffsetUnits = -2;
+        return held;
+      };
+      mesh.material = Array.isArray(mesh.material) ? mesh.material.map(own) : own(mesh.material);
       const edges = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, 32), edge);
       mesh.add(edges);
       const middle = new THREE.Box3().setFromObject(mesh).getCenter(new THREE.Vector3());
       const home = mesh.position.clone();
       const out = middle.clone().sub(centre);
       out.x = 0;
-      const push = (out.lengthSq() > 1e-8 ? out.normalize() : new THREE.Vector3(0, 1, 0)).multiplyScalar(reach * 0.34 * Math.min(out.length() / (reach / 2) + 0.25, 1.4));
+      const push = (out.lengthSq() > 1e-8 ? out.normalize() : new THREE.Vector3(0, 1, 0)).multiplyScalar(reach * 0.22 * Math.min(out.length() / (reach / 2) + 0.25, 1.2));
       this.parts.set(this.parts.has(name) ? `${name} ${mesh.uuid}` : name, { mesh, own: mesh.material, edges, home, push, step: Number(this.extras(mesh).step ?? 0) });
     });
     this.ground.position.y = this.box.min.y - 0.002;
@@ -129,6 +145,18 @@ export class StudioViewport {
     this.apply();
     this.setSlice(1);
     this.setView("iso");
+  }
+
+  /* What to frame: the whole model, less anything that stands far above the rest, such as a full-height door over a sill. */
+  private detailBox(model: THREE.Object3D): THREE.Box3 {
+    const height = this.box.max.y - this.box.min.y;
+    const low = new THREE.Box3();
+    model.traverse((node) => {
+      if (!(node as THREE.Mesh).isMesh) return;
+      const box = new THREE.Box3().setFromObject(node);
+      if (box.max.y - box.min.y < TALL * height) low.union(box);
+    });
+    return low.isEmpty() ? this.box.clone() : low;
   }
 
   private extras(mesh: THREE.Object3D): Record<string, unknown> {
@@ -165,6 +193,8 @@ export class StudioViewport {
         const clay = CLAY.clone();
         clay.clippingPlanes = [this.slice];
         clay.side = THREE.DoubleSide;
+        clay.polygonOffset = (Array.isArray(part.own) ? part.own[0] : part.own).polygonOffset;
+        clay.polygonOffsetFactor = clay.polygonOffsetUnits = -2;
         part.mesh.material = clay;
       } else {
         part.mesh.material = part.own;
@@ -199,16 +229,17 @@ export class StudioViewport {
   }
 
   setView(view: View, fit = 1.5): void {
-    const size = this.box.getSize(new THREE.Vector3());
-    const middle = this.box.getCenter(new THREE.Vector3());
-    const reach = size.length() / 2;
+    const shown = view === "section" ? this.box : this.focus;
+    const middle = shown.getCenter(new THREE.Vector3());
+    const reach = shown.getSize(new THREE.Vector3()).length() / 2;
     const away = {
       iso: new THREE.Vector3(-1.0, 0.62, 0.72),
       other: new THREE.Vector3(-1.0, 0.62, -0.72),
       section: new THREE.Vector3(-1, 0, 0),
       top: new THREE.Vector3(0, 1, 0.001),
     }[view].normalize();
-    const distance = (fit * reach) / Math.sin(THREE.MathUtils.degToRad(this.camera.fov / 2)) * (view === "section" ? 0.8 : 0.72);
+    this.camera.fov = view === "section" ? FLAT_FOV : FOV;  /* a narrow lens looks flat on, so the section lines up with the drawing */
+    const distance = (fit * reach) / Math.sin(THREE.MathUtils.degToRad(this.camera.fov / 2)) * (view === "section" ? 0.62 : 0.72);
     this.controls.target.copy(middle);
     this.camera.position.copy(middle).addScaledVector(away, distance);
     this.camera.near = distance / 100;

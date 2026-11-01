@@ -29,6 +29,8 @@ TOOLS = [
      "parameters": {"type": "object", "additionalProperties": False, "required": ["intent", "code"], "properties": {"intent": {"type": "string", "description": "What this step adds, in a few words a person can read"}, "code": {"type": "string"}}}},
     {"type": "function", "name": "look", "description": "Render the scene from other sides.",
      "parameters": {"type": "object", "additionalProperties": False, "required": ["views"], "properties": {"views": {"type": "array", "items": {"type": "string", "enum": list(VIEWS)}}}}},
+    {"type": "function", "name": "list_parts", "description": "Read what is in the scene: every object with its group, material and extent in mm. Use this to measure. Never run code only to read the scene.",
+     "parameters": {"type": "object", "additionalProperties": False, "required": [], "properties": {}}},
     {"type": "function", "name": "undo", "description": "Remove your last step from the scene.", "parameters": {"type": "object", "additionalProperties": False, "required": [], "properties": {}}},
     {"type": "function", "name": "finish", "description": "End the work, only when the section view reads like the drawing and the whole assembly is there.",
      "parameters": {"type": "object", "additionalProperties": False, "required": ["what", "unsure"], "properties": {"what": {"type": "string", "description": "What this detail is"}, "unsure": {"type": "array", "items": {"type": "string"}}}}},
@@ -126,7 +128,11 @@ class Live:
         self.intents.append(args["intent"])
         if self.on_step:
             self.on_step(self, scene, found)
-        return {"ok": True, "scene": summary(scene), "seconds": scene["seconds"]}, self.images(found, ("three_quarter", "section"))
+        return {"ok": True, "scene": summary(scene), "printed": scene.get("printed", ""), "seconds": scene["seconds"]}, self.images(found, ("three_quarter", "section"))
+
+    def list_parts(self, _):
+        scene = json.loads(sandbox(self.steps, ())["scene.json"])
+        return {"parts": [{k: row[k] for k in ("name", "group", "material", "from", "to")} for row in scene["parts"]][:150]}, []
 
     def look(self, args):
         wanted = [v for v in args["views"] if v in VIEWS][:3] or ["three_quarter"]

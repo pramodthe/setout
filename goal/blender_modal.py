@@ -44,6 +44,7 @@ def export_model_code(kit: str, scene: str):
 def live_step(kit: str, steps: list, views: list, export: bool = False):
     """A model's live scene. The scene is the list of code steps it has run, replayed in order, so it needs no saved file, an undo only drops the last step, and every
     size stays in readable code. The last step's failure comes back as feedback, and the steps before it still stand. Comes back in pieces, as the network is blocked."""
+    import io
     import json
     import os
     import sys
@@ -66,9 +67,11 @@ def live_step(kit: str, steps: list, views: list, export: bool = False):
     module.stage()
     names = {k: getattr(module, k) for k in module.__all__ if k not in ("start", "tally", "finish", "export_parts")}
     space = {"__name__": "__main__", "bpy": bpy, "math": __import__("math"), **names, "material": module.material}
-    started, error = time.time(), None
+    started, error, printed = time.time(), None, io.StringIO()
+    stdout = sys.stdout
     for number, step in enumerate(steps):
         try:
+            sys.stdout = printed if number == len(steps) - 1 else io.StringIO()  # only the newest step's prints reach the model
             exec(compile(step, f"step_{number + 1}.py", "exec"), space)
             for obj in bpy.context.scene.objects:  # which step made each part, for playing the build back
                 if obj.type == "MESH" and "step" not in obj:
@@ -78,8 +81,10 @@ def live_step(kit: str, steps: list, views: list, export: bool = False):
             if number < len(steps) - 1:
                 error = f"step {number + 1} failed on replay: {error}"
             break
+        finally:
+            sys.stdout = stdout
     rows = module.inventory()
-    meta = json.dumps({"error": error, "seconds": round(time.time() - started, 1), "parts": rows}).encode()
+    meta = json.dumps({"error": error, "seconds": round(time.time() - started, 1), "parts": rows, "printed": printed.getvalue()[-2000:]}).encode()
     yield "scene.json", meta
     for view in views:
         module.fit_view(view)

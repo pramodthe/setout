@@ -152,3 +152,12 @@ def test_the_routes(sandbox):
     assert client.get("/api/studio/none/drawing").status_code == 404
     assert client.post("/api/studio/none/feedback", json={"text": "x"}).status_code == 404
     assert "scenes" in client.get("/api/studio").json()
+
+
+def test_muse_can_measure_without_adding_a_step(sandbox):
+    muse = Muse([STEP], [("list_parts", {})])
+    made = studio.start("d.png", png())
+    work(muse)
+    assert studio.get(made["id"])["step_count"] == 1
+    told = [i for i in muse.payloads[2]["input"] if i.get("type") == "function_call_output"][-1]
+    assert "part 0" in told["output"]
