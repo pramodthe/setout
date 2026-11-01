@@ -13,15 +13,19 @@ type Card = { id: string; title: string; state: string; parts: number; has_previ
 
 const svg = (path: ReactNode, size = 16) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{path}</svg>;
 const CUBE = <><path d="M12 3 4 7.5v9L12 21l8-4.5v-9z" /><path d="M4 7.5 12 12l8-4.5M12 12v9" /></>;
+/* A cube with the face you'd be looking at filled in, as CAD programs show their views. */
+const viewCube = (face: string | null) => svg(<>{face && <path d={face} fill="currentColor" stroke="none" />}{CUBE}</>, 18);
 const ICONS = {
   cube: svg(CUBE, 15),
   pointer: svg(<path d="m5 3 14 8-6 2-2 6z" />),
   hand: svg(<path d="M8 12V5.5a1.5 1.5 0 0 1 3 0V11m0-1V4.5a1.5 1.5 0 0 1 3 0V11m0-3.5a1.5 1.5 0 0 1 3 0V14c0 4-3 7-7 7-3 0-4.500-1.500-6-4l-2-3.500c-1-1.700 1.500-3 2.700-1.300L8 14" />),
   orbit: svg(<><circle cx="12" cy="12" r="2.500" /><path d="M20 8c-1.500-3-4.500-5-8-5a9 9 0 1 0 9 9" /><path d="M20 3v5h-5" /></>),
-  frame: svg(<><path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4" /><circle cx="12" cy="12" r="3" /></>),
-  section: svg(<><path d="M4 18V6l8 3v12zM12 9l8-3v12l-8 3" /><path d="M3 12h18" strokeDasharray="2 3" /></>),
-  top: svg(<><rect x="4" y="4" width="16" height="16" rx="2" /><path d="M12 8v8M8 12h8" /></>),
-  flip: svg(<><path d="M4 7h13l-3-3M20 17H7l3 3" /></>),
+  iso: viewCube(null),
+  isoOther: svg(<g transform="translate(24 0) scale(-1 1)">{CUBE}<path d="M12 12 4 7.5v9l8 4.5z" fill="currentColor" stroke="none" opacity="0.28" /></g>, 18),
+  front: viewCube("M4 7.5 12 12v9l-8-4.5z"),
+  side: viewCube("M12 12l8-4.5v9L12 21z"),
+  top: viewCube("M12 3l8 4.5L12 12 4 7.5z"),
+  perspective: svg(<><path d="M4 5.5 15 8.500v7L4 18.500z" /><path d="M15 8.500 20 10v4l-5 1.500" /><path d="M4 12h16" strokeDasharray="1.500 2.500" /></>, 18),
   undo: svg(<><path d="M8 5 3 10l5 5" /><path d="M3 10h11a6 6 0 0 1 0 12h-3" /></>),
   download: svg(<><path d="M12 4v11M7 11l5 5 5-5" /><path d="M5 20h14" /></>),
   panel: svg(<><rect x="3" y="4" width="18" height="16" rx="2.500" /><path d="M15 4v16" /></>),
@@ -34,6 +38,10 @@ const ICONS = {
   play: svg(<path d="M7 5v14l11-7z" />, 14),
   stop: svg(<rect x="6" y="6" width="12" height="12" rx="2" />, 14),
 };
+
+const VIEWS: [View, keyof typeof ICONS, string][] = [
+  ["iso", "iso", "Isometric"], ["other", "isoOther", "Isometric, other side"], ["front", "front", "Front: the drawing's view"], ["side", "side", "Side"], ["top", "top", "Top"], ["perspective", "perspective", "Perspective"],
+];
 
 const pretty = (word: string) => word.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 const mm = (value: number) => (Math.abs(value) >= 100 ? value.toFixed(0) : value.toFixed(1));
@@ -175,6 +183,7 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
   const [playing, setPlaying] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [shot, setShot] = useState(0);
+  const [current, setCurrent] = useState<View>("iso");
   const feedEnd = useRef<HTMLDivElement>(null);
 
   const refreshList = useCallback(async () => {
@@ -232,7 +241,7 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
   };
   const chooseTool = (next: Tool) => { setTool(next); view.current?.setTool(next); };
   const chooseLook = () => { const next = look === "clay" ? "material" : "clay"; setLook(next); view.current?.setLook(next); };
-  const pick = (name: View) => view.current?.setView(name);
+  const pick = (name: View) => { setCurrent(name); view.current?.setView(name); };
   const play = () => {
     if (playing !== null) { view.current?.stopPlay(); setPlaying(null); return; }
     setPlaying(0);
@@ -295,16 +304,15 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
           {ready && (
             <>
               <div className="rail" role="toolbar" aria-label="View tools">
-                <button className={`icon${tool === "select" ? " on" : ""}`} aria-label="Select parts" title="Select" onClick={() => chooseTool("select")}>{ICONS.pointer}</button>
-                <button className={`icon${tool === "pan" ? " on" : ""}`} aria-label="Pan" title="Pan" onClick={() => chooseTool("pan")}>{ICONS.hand}</button>
+                <button className={`icon${tool === "select" ? " on" : ""}`} aria-label="Select parts" data-tip="Select parts" onClick={() => chooseTool("select")}>{ICONS.pointer}</button>
+                <button className={`icon${tool === "pan" ? " on" : ""}`} aria-label="Pan" data-tip="Pan" onClick={() => chooseTool("pan")}>{ICONS.hand}</button>
                 <hr />
-                <button className="icon" aria-label="Three-quarter view" title="3D view" onClick={() => pick("iso")}>{ICONS.frame}</button>
-                <button className="icon" aria-label="Other side" title="Other side" onClick={() => pick("other")}>{ICONS.flip}</button>
-                <button className="icon" aria-label="Section view" title="Compare with the drawing" onClick={() => pick("section")}>{ICONS.section}</button>
-                <button className="icon" aria-label="Top view" title="Top" onClick={() => pick("top")}>{ICONS.top}</button>
+                {VIEWS.map(([name, icon, label]) => (
+                  <button key={name} className={`icon${current === name ? " on" : ""}`} aria-label={label} aria-pressed={current === name} data-tip={label} onClick={() => pick(name)}>{ICONS[icon]}</button>
+                ))}
                 <hr />
-                <button className={`icon${look === "clay" ? " on" : ""}`} aria-label="Clay view" aria-pressed={look === "clay"} title="Clay view" onClick={chooseLook}>{ICONS.clay}</button>
-                <button className="icon" aria-label="Undo the last step" title="Undo the last step" disabled={busy || !scene?.step_count} onClick={() => void undo()}>{ICONS.undo}</button>
+                <button className={`icon${look === "clay" ? " on" : ""}`} aria-label="Clay view" aria-pressed={look === "clay"} data-tip="Clay view" onClick={chooseLook}>{ICONS.clay}</button>
+                <button className="icon" aria-label="Undo the last step" data-tip="Undo the last step" disabled={busy || !scene?.step_count} onClick={() => void undo()}>{ICONS.undo}</button>
               </div>
               <div className="sliders">
                 <label>Pull apart<input type="range" aria-label="Pull apart" min={0} max={100} value={spread} onChange={(e) => { const v = Number(e.target.value); setSpread(v); view.current?.setSpread(v / 100); }} /></label>

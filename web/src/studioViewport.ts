@@ -6,7 +6,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
 export type Look = "material" | "clay";
-export type View = "iso" | "other" | "section" | "top";
+export type View = "iso" | "other" | "perspective" | "front" | "side" | "top";
 export type Tool = "select" | "pan" | "orbit";
 
 const CLAY = new THREE.MeshStandardMaterial({ color: 0xb9b6ae, roughness: 0.92, metalness: 0 });
@@ -14,7 +14,7 @@ const HOVER = 0x3b82f6;
 const CHOSEN = 0xf59e0b;
 const STEP_MS = 650;
 const FOV = 32;
-const FLAT_FOV = 5;
+const MARGIN = 1.22;  /* room left around a fitted view */
 const THIN = 0.02;  /* metres */
 const TALL = 0.6;  /* of the model's height */
 
@@ -23,7 +23,11 @@ type Part = { mesh: THREE.Mesh; own: THREE.Material | THREE.Material[]; edges: T
 export class StudioViewport {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
-  private camera = new THREE.PerspectiveCamera(FOV, 1, 0.01, 200);
+  private persp = new THREE.PerspectiveCamera(FOV, 1, 0.01, 200);
+  private ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 200);
+  private camera: THREE.PerspectiveCamera | THREE.OrthographicCamera = this.ortho;
+  private flatHeight = 1;
+  private sun = new THREE.DirectionalLight(0xffffff, 0.95);
   private controls: OrbitControls;
   private root = new THREE.Group();
   private ground: THREE.Mesh;
@@ -61,7 +65,7 @@ export class StudioViewport {
     host.append(this.renderer.domElement);
     const environment = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = environment.fromScene(new RoomEnvironment(), 0.04).texture;
-    const sun = new THREE.DirectionalLight(0xffffff, 0.95);
+    const sun = this.sun;
     sun.position.set(-4, 6, 3);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
@@ -71,6 +75,7 @@ export class StudioViewport {
     this.ground.rotation.x = -Math.PI / 2;
     this.ground.receiveShadow = true;
     this.scene.add(this.root, this.ground);
+    this.ortho.up.set(0, 1, 0);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.09;
@@ -98,8 +103,9 @@ export class StudioViewport {
     const { clientWidth: w, clientHeight: h } = this.host;
     if (!w || !h) return;
     this.renderer.setSize(w, h);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
+    this.persp.aspect = w / h;
+    this.persp.updateProjectionMatrix();
+    this.fitOrtho();
   }
 
   async load(url: string): Promise<void> {
@@ -228,29 +234,58 @@ export class StudioViewport {
     if (name) this.tint(name);
   }
 
-  setView(view: View, fit = 1.5): void {
-    const shown = view === "section" ? this.box : this.focus;
+  /* Isometric and the flat views have no perspective, so they read like drawings from different sides. */
+  setView(view: View): void {
+    const flat = view === "front" || view === "side" || view === "top";
+    const shown = flat ? this.box : this.focus;
     const middle = shown.getCenter(new THREE.Vector3());
     const reach = shown.getSize(new THREE.Vector3()).length() / 2;
     const away = {
-      iso: new THREE.Vector3(-1.0, 0.62, 0.72),
-      other: new THREE.Vector3(-1.0, 0.62, -0.72),
-      section: new THREE.Vector3(-1, 0, 0),
-      top: new THREE.Vector3(0, 1, 0.001),
+      iso: new THREE.Vector3(-1, 1, 1),
+      other: new THREE.Vector3(-1, 1, -1),
+      perspective: new THREE.Vector3(-1.0, 0.62, 0.72),
+      front: new THREE.Vector3(-1, 0, 0),
+      side: new THREE.Vector3(0, 0, 1),
+      top: new THREE.Vector3(0, 1, 0.0001),
     }[view].normalize();
-    this.camera.fov = view === "section" ? FLAT_FOV : FOV;  /* a narrow lens looks flat on, so the section lines up with the drawing */
-    const distance = (fit * reach) / Math.sin(THREE.MathUtils.degToRad(this.camera.fov / 2)) * (view === "section" ? 0.62 : 0.72);
+    this.ground.visible = !flat;
+    this.sun.castShadow = !flat;  /* a flat view is a drawing, and shadows only mark it */
+    this.camera = view === "perspective" ? this.persp : this.ortho;
+    this.controls.object = this.camera;
     this.controls.target.copy(middle);
-    this.camera.position.copy(middle).addScaledVector(away, distance);
-    this.camera.near = distance / 100;
-    this.camera.far = distance * 12;
-    this.camera.updateProjectionMatrix();
+    if (view === "perspective") {
+      const distance = (1.5 * reach) / Math.sin(THREE.MathUtils.degToRad(FOV / 2)) * 0.72;
+      this.camera.position.copy(middle).addScaledVector(away, distance);
+      this.persp.near = distance / 100;
+      this.persp.far = distance * 12;
+      this.persp.updateProjectionMatrix();
+    } else {
+      this.camera.position.copy(middle).addScaledVector(away, reach * 6);
+      this.camera.lookAt(middle);
+      this.camera.updateMatrixWorld();
+      const seen = new THREE.Box3();
+      for (const x of [shown.min.x, shown.max.x]) for (const y of [shown.min.y, shown.max.y]) for (const z of [shown.min.z, shown.max.z]) {
+        seen.expandByPoint(new THREE.Vector3(x, y, z).applyMatrix4(this.camera.matrixWorldInverse));
+      }
+      const wide = seen.max.x - seen.min.x;
+      const high = seen.max.y - seen.min.y;
+      const aspect = this.host.clientWidth / Math.max(this.host.clientHeight, 1);
+      this.flatHeight = (Math.max(high, wide / aspect) / 2) * MARGIN;
+      this.ortho.zoom = 1;
+      this.ortho.near = reach / 100;
+      this.ortho.far = reach * 14;
+      this.fitOrtho();
+    }
     this.controls.update();
   }
 
-  zoom(by: number): void {
-    const toTarget = this.camera.position.clone().sub(this.controls.target).multiplyScalar(by);
-    this.camera.position.copy(this.controls.target).add(toTarget);
+  private fitOrtho(): void {
+    const aspect = this.host.clientWidth / Math.max(this.host.clientHeight, 1);
+    this.ortho.top = this.flatHeight;
+    this.ortho.bottom = -this.flatHeight;
+    this.ortho.left = -this.flatHeight * aspect;
+    this.ortho.right = this.flatHeight * aspect;
+    this.ortho.updateProjectionMatrix();
   }
 
   /* Plays the build, step by step. Resolves when it finishes or is stopped. */
