@@ -212,3 +212,20 @@ def test_an_unanswered_item_is_not_passed_as_seen():
     assert done["passed"] and done["right"] == 0 and done["rows"][0]["state"] == "cant_tell"
     done = blender_check.verdict(features, {"ticks": [{"id": 1, "state": "wrong", "note": "x"}], "not_in_source": []})
     assert not done["passed"]
+
+
+def test_running_out_of_turns_still_ends_with_a_check(sandbox, monkeypatch):
+    monkeypatch.setattr(blender_live, "TURNS", 2)
+    keep_going = ("run_python", {"intent": "more", "code": "M = 1"})
+
+    class Busy(Muse):
+        def __call__(self, payload):
+            if not payload.get("text"):
+                self.turns.append([keep_going])
+            return super().__call__(payload)
+    muse = Busy(items=["a wall"], ticks=["missing"] * 3)
+    made = studio.start("d.png", png())
+    work(muse)
+    held = studio.get(made["id"])
+    assert held["title"] == "a slab" and len(held["checks"]["rounds"]) == 1
+    assert any("ran out of turns" in u for u in held["unsure"]) and any("a wall" in u for u in held["unsure"])

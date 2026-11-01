@@ -224,6 +224,9 @@ class Live:
                 (self.folder / "steps.json").write_text(json.dumps({"steps": self.steps, "intents": self.intents, "tokens": self.spent, "result": self.result}, indent=1))
             if self.result:
                 break
+        if self.ask and self.steps and self.result is None:  # out of turns: the person still gets a checked scene, and what's left
+            self.refused = REFUSALS
+            self.finish({"what": self.features["detail"], "unsure": ["Muse ran out of turns before it finished"]})
         return self
 
 
