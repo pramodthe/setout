@@ -12,12 +12,12 @@ import numpy as np
 import sqlalchemy as sa
 
 from . import database as d
-from .repository import uid
+from .repository import sha, uid
 from .runtime import ensure_worker, repository
 from .store import figure_path
 
 STATES = ("planning", "awaiting_confirmation", "building", "done", "failed")
-LIKE = 0.8  # how alike two drawings must look, to CLIP, before the earlier one is offered as an example
+LIKE = 0.85  # how alike two plans must read before the earlier one is offered as an example. Measured: two cavity walls 0.88, different details 0.82 or less
 EXAMPLES, LESSONS = 3, 12
 LESSON_SCOPE = "assembly"
 VIEWER_WORD = {"block": "concrete_block", "stone": "stone", "board": "fibre_cement", "wall tie": "steel_tie", "fixing": "steel_fixing", "reinforcement": "steel_rebar", "steel section": "steel_section",
@@ -146,31 +146,29 @@ def judge(ident, reviewer, verdict, note) -> dict:
 
 
 def examples(repo, vector, own) -> list:
-    """Details a person called good whose drawings look like this one."""
+    """Details a person called good that mean much the same as this one."""
     out = []
     for row in repo.list(d.assemblies, d.assemblies.c.verdict == "good", d.assemblies.c.id != own):
-        if row["embedding"] and vector is not None:
+        if row["embedding"]:
             alike = float(np.dot(row["embedding"], vector))
             if alike >= LIKE:
                 out.append((alike, row))
     return [row for _, row in sorted(out, key=lambda item: -item[0])[:EXAMPLES]]
 
 
-def guidance(repo, row, found) -> tuple[str, str]:
-    """(for reading, for choosing). What earlier work has to say to this one, plainly marked as earlier work and not as this drawing."""
+def guidance(repo, row) -> str:
+    """What people have said, for the reading. It is marked as being about other drawings, except a correction of this one."""
     lessons = [m["text"] for m in repo.list(d.memories, d.memories.c.scope == LESSON_SCOPE, order=d.memories.c.created_at.desc())][:LESSONS]
-    reading, choosing = "", ""
+    reading = ""
     if lessons:
-        reading += "Lessons from people correcting earlier readings. They are about other drawings: use them only where they apply.\n" + "\n".join(f"- {t}" for t in lessons) + "\n\n"
-    if found:
-        shown = [{"assembly": r["plan"]["assembly"], "parts": [{k: p[k] for k in ("name", "category", "form", "seen")} for p in r["plan"]["parts"] if p["form"] != "none"],
-                  "relations": [{k: v[k] for k in ("subject", "relation", "target")} for v in r["plan"]["relations"]]} for r in found]
-        reading += "Plans a person confirmed as right for drawings that look like this one. They show how such a drawing is read, but this drawing may differ: go by what it shows.\n" + json.dumps(shown) + "\n\n"
-        picked = [{"assembly": r["plan"]["assembly"], "choices": list((r["choices"] or {}).values())} for r in found]
-        choosing = "Choices a person confirmed on similar details, as a guide only:\n" + json.dumps(picked) + "\n\n"
+        reading += "Lessons from people correcting earlier readings. They are about other drawings: use them only where this drawing shows the same thing.\n" + "\n".join(f"- {t}" for t in lessons) + "\n\n"
     if row["guidance"]:
         reading += f"A person looked at this drawing and corrected an earlier reading of it. Believe them: {row['guidance']}\n\n"
-    return reading, choosing
+    return reading
+
+
+def shown(found) -> list:
+    return [{"assembly": r["plan"]["assembly"], "parts": [{k: p[k] for k in ("name", "category", "form", "reason")} for p in r["plan"]["parts"] if p["form"] != "none"]} for r in found]
 
 
 def _model(repo, gateway):
@@ -181,7 +179,7 @@ def _model(repo, gateway):
             for reference in references:
                 repo.artifact(con, reference)
         spent = repo.run(gateway.fence.job_id)["consumed"].get("tokens", 0)
-        answer = gateway.json(prompt, [r["id"] for r in references], schema, name, name)
+        answer = gateway.json(prompt, [r["id"] for r in references], schema, name, f"{name}:{sha(prompt)[:16]}")  # a job can make the same kind of call twice
         return answer, repo.run(gateway.fence.job_id)["consumed"].get("tokens", 0) - spent
     return call
 
@@ -191,21 +189,18 @@ def plan_job(repo, job, gateway):
     ident = job["payload"]["assembly_id"]
     row = repo.get(d.assemblies, ident)
     picture, model = _picture(row), _model(repo, gateway)
-    _set(repo, ident, step="looking for similar details")
-    vector = row["embedding"]
-    if vector is None:
-        vector = part_search.embed(images=[picture])["images"][0].round(5).tolist()
-        _set(repo, ident, embedding=vector)
-    reading, choosing = guidance(repo, row, examples(repo, vector, ident))
     _set(repo, ident, step="reading the drawing")
-    plan, regions, size = planner.read(model, picture, reading)
-    _set(repo, ident, step="searching the catalogue")
-    scene_ = engine.Scene(picture, plan, regions, size)
-    shortlists = scene_.shortlists()
-    _set(repo, ident, step="choosing parts")
-    choices, tokens = choose.choose(model, plan, shortlists, choosing)
+    plan, regions, size = planner.read(model, picture, guidance(repo, row))
+    _set(repo, ident, step="comparing with confirmed details")
+    vector = part_search.embed(texts=[planner.summary(plan)])["texts"][0].round(5).tolist()
+    found = examples(repo, vector, ident)
+    learned, tokens = planner.learn(model, picture, regions, plan, shown(found)) if found else ([], 0)
+    choosing = ("Choices a person confirmed on similar details, as a guide only:\n" + json.dumps([{"assembly": r["plan"]["assembly"], "choices": list((r["choices"] or {}).values())} for r in found]) + "\n\n") if found else ""
+    _set(repo, ident, step="choosing parts", embedding=vector)
+    choices, shortlists, more = choose.in_order(model, plan, lambda held: engine.Scene(picture, plan, regions, size, held), choosing)
     faults = planner.faults(plan, regions)
-    _set(repo, ident, state="awaiting_confirmation", step="waiting for a person", plan={**plan, "faults": faults}, shortlists=shortlists, choices=choices, tokens=(row["tokens"] or 0) + plan["tokens"] + tokens)
+    _set(repo, ident, state="awaiting_confirmation", step="waiting for a person", plan={**plan, "faults": faults, "learned": learned, "compared_with": [r["id"] for r in found]},
+         shortlists=shortlists, choices=choices, tokens=(row["tokens"] or 0) + plan["tokens"] + tokens + more)
 
 
 def rows_of(scene_) -> list:

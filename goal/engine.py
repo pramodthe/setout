@@ -190,18 +190,19 @@ class Scene:
             self.notes.append(f"{part['name']}: {choice['component']} wasn't on its shortlist, so the best fit was used")
         return hit
 
-    def shortlists(self, keep=6) -> list:
-        """For each catalogue part, the candidates Muse chooses between, with the size the drawing wants."""
+    def shortlists(self, forms=("units", "spaced"), keep=6) -> list:
+        """For each catalogue part, the candidates Muse chooses between, with what the drawing wants. A unit is given by shape alone, because the unit chosen is what sets the
+        scale: anything in millimetres before that would only repeat a guess. Choose units first, then spaced parts on a scene that holds those choices."""
         out = []
         for part in self.parts.values():
             hits = self.hits.get(part["id"])
-            if not hits:
+            if not hits or part["form"] not in forms:
                 continue
             if part["form"] == "units":
                 boxes = merged_boxes([self.masks[r] for r in part["regions"] if r in self.masks])
                 wide, high = np.median([b[2] - b[0] for b in boxes]), np.median([b[3] - b[1] for b in boxes])
-                order = sorted(self.stretchers(part), key=lambda h: stretch(h, wide, high) + abs(np.log(h["size"][1] / (wide * self.scale))))
-                wanted = f"section {wide * self.scale * 1000:.0f} x {high * self.scale * 1000:.0f} mm"
+                order = sorted(self.stretchers(part), key=lambda h: stretch(h, wide, high))
+                wanted = f"drawn {wide / high:.2f} times as wide as high"
             else:
                 rough = self.anchors(part)
                 if not rough:
@@ -210,7 +211,8 @@ class Scene:
                 top = max(h["score"] for h in hits)
                 order = sorted(hits, key=lambda h: abs(np.log(h["size"][0] / max(length, 0.01))) + 3 * (top - h["score"]))
                 wanted = f"{length * 1000:.0f} mm long"
-            out.append({"part": part["id"], "name": part["name"], "form": part["form"], "wanted": wanted, "candidates": order[:keep]})
+            same = [h for h in order if h["category"] == part["category"]]  # a plug isn't a tie, however near its length
+            out.append({"part": part["id"], "name": part["name"], "form": part["form"], "wanted": wanted, "candidates": (same or order)[:keep]})
         return out
 
     def stretchers(self, part) -> list:

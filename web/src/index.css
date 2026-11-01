@@ -264,19 +264,22 @@
 .draftnote{padding:8px 16px;font-size:13px;margin:0}
 
 /* Planned assembly */
-.asmgrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 14px; margin: 12px 0; }
-.asmcard { background: var(--surface, #fff); border: 1px solid var(--line, #dedbd3); border-radius: 8px; padding: 12px; min-width: 0; }
-.asmcard h2 { font-size: 14px; margin: 0 0 8px; }
-.asmdrawing { width: 100%; max-height: 70vh; object-fit: contain; display: block; background: #fff; }
-.asmfield { display: block; margin: 10px 0; font-size: 13px; }
-.asmfield textarea, .asmfield input { display: block; width: 100%; margin-top: 4px; font: inherit; padding: 6px; }
+.assembly { height: 100%; overflow: auto; }
+.asmgrid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 14px; margin: 12px 16px; }
+.asmcard { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 12px; min-width: 0; }
+.asmcard h2 { margin: 0 0 8px; }
+.asmdrawing { width: 100%; max-height: 70vh; object-fit: contain; display: block; background: #fff; border-radius: 4px; }
+.asmfield { display: block; margin: 10px 0; font-size: 13px; color: var(--muted); }
+.asmfield textarea, .asmfield input { display: block; width: 100%; margin-top: 4px; font: inherit; padding: 6px; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; }
 .asmunsure { font-size: 13px; margin: 8px 0; }
 .asmunsure ul { margin: 4px 0 0; padding-left: 18px; }
 .asmtable { width: 100%; border-collapse: collapse; font-size: 13px; }
-.asmtable th, .asmtable td { text-align: left; vertical-align: top; padding: 6px 8px 6px 0; border-bottom: 1px solid var(--line, #dedbd3); }
-.asmtable small, .asmhit small { display: block; opacity: 0.7; }
-.asmtable select { max-width: 130px; font: inherit; }
+.asmtable th, .asmtable td { text-align: left; vertical-align: top; padding: 6px 8px 6px 0; border-bottom: 1px solid var(--line); }
+.asmtable th { color: var(--muted); font-weight: 500; }
+.asmtable small, .asmhit small { display: block; color: var(--muted); }
+.asmtable select { max-width: 130px; font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px; }
 .asmhit img { display: block; width: 72px; height: 72px; object-fit: contain; background: #fff; }
-.asmimplied { color: #a8431f; font-weight: 600; }
+.asmimplied { color: var(--amber); font-weight: 600; }
 .asmbuttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.asmunsure { color: var(--amber); }
 @media (max-width: 800px) { .asmgrid { grid-template-columns: minmax(0, 1fr); } }

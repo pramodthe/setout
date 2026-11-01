@@ -27,8 +27,8 @@ def sized(picture):
 
 class Muse:
     """Answers each kind of call, and remembers the prompts it was given."""
-    def __init__(self):
-        self.prompts = []
+    def __init__(self, check_fails=False):
+        self.prompts, self.check_fails = [], check_fails
 
     def __call__(self, payload):
         name = payload["text"]["format"]["name"]
@@ -39,7 +39,11 @@ class Muse:
             answer["parts"][0]["regions"] = [found[0].id]
             answer["parts"][1]["regions"] = [r.id for r in found[1:]]
         elif name == "assembly_check":
+            if self.check_fails:
+                return {"status": "incomplete", "output": [], "usage": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150}}
             answer = {"parts": [], "relations": []}
+        elif name == "assembly_learn":
+            answer = {"changes": [{"id": "unit", "category": "block", "why": "same hatching"}, {"id": "ghost", "category": "tile", "why": "not a part"}]}
         else:
             answer = {"choices": [{"part": "unit", "component": 7, "bond": "stack", "spacing_mm": 0, "every": 1, "why": "the right size"}]}
         return {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps(answer)}]}], "usage": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150}}
@@ -61,7 +65,7 @@ def drawn(tmp_path, monkeypatch):
     np.save(parts / "7.npy", mesh)
     monkeypatch.setattr(engine, "STORE", tmp_path)
     monkeypatch.setattr(engine, "search", lambda queries, keep=8: [[dict(HIT)] for _ in queries])
-    monkeypatch.setattr(part_search, "embed", lambda **_: {"images": np.array([[1.0, 0.0]])})
+    monkeypatch.setattr(part_search, "embed", lambda **_: {"texts": np.array([[1.0, 0.0]])})
     monkeypatch.setattr(assemblies, "figure_path", lambda *_: path)
     monkeypatch.setattr("goal.choose.sheet", lambda _: b"\x89PNG")
     monkeypatch.setattr(assemblies, "ensure_worker", lambda: None)
@@ -131,22 +135,33 @@ def test_changing_a_part_chooses_it_again(drawn):
     assert sum("a brick wall on a slab" in m["text"] for m in lessons) == 2
 
 
-def test_only_a_good_detail_guides_a_look_alike_drawing(drawn):
+def test_only_a_good_detail_is_compared_and_it_can_only_change_a_part(drawn):
     muse = Muse()
     first = assemblies.start("doc", "crop")
     work(muse, drawn)
     assemblies.confirm(first["id"], "A reviewer", None, [])
     work(muse, drawn)
-    second = assemblies.start("doc", "two")
+    assemblies.start("doc", "two")
     work(muse, drawn)
-    assert "a person confirmed" not in [p for p in muse.prompts if "Plan how it is built" in p][-1]
+    assert not any("details a person confirmed" in p for p in muse.prompts)
     assemblies.judge(first["id"], "A reviewer", "good", "")
     third = assemblies.start("doc", "three")
     work(muse, drawn)
-    last = [p for p in muse.prompts if "Plan how it is built" in p][-1]
-    assert "Plans a person confirmed" in last and "two blocks on a slab" in last
+    held = assemblies.get(third["id"])
+    plans = [p for p in muse.prompts if "Plan how it is built" in p]
+    assert "a person confirmed" not in plans[-1]  # the reading stays Muse's own
+    assert any("details a person confirmed" in p for p in muse.prompts)
+    assert next(p for p in held["plan"]["parts"] if p["id"] == "unit")["category"] == "block"
+    assert first["id"] in held["plan"]["compared_with"] and len(held["plan"]["learned"]) == 1
     assert "Choices a person confirmed" in [p for p in muse.prompts if "Choose one candidate" in p][-1]
-    assert second and third
+
+
+def test_a_plan_survives_its_check_failing(drawn):
+    muse = Muse(check_fails=True)
+    made = assemblies.start("doc", "crop")
+    work(muse, drawn)
+    held = assemblies.get(made["id"])
+    assert held["state"] == "awaiting_confirmation" and any("did not finish" in u for u in held["plan"]["unsure"])
 
 
 def test_a_lesson_stays_out_of_the_verified_agent(drawn):

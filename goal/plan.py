@@ -68,6 +68,14 @@ giving where it crosses the section as [x, y] points 0 to 1 of the image (its tw
 """
 
 
+CHANGES = {"type": "object", "additionalProperties": False, "required": ["changes"], "properties": {"changes": {"type": "array", "items": {
+    "type": "object", "additionalProperties": False, "required": ["id", "category", "why"], "properties": {"id": {"type": "string"}, "category": {"type": "string", "enum": [c for c in CATEGORIES if c not in ("fragment", "unknown")]}, "why": {"type": "string"}}}}}}
+LEARN = """The image is a section of a building detail, with your reading of it below. With it are details a person confirmed as right, for other drawings of the same kind. They are not this drawing.
+Compare the way marks are read. If a confirmed detail treats a mark, such as a hatching or a symbol, as one material, and this drawing has that same mark but your reading calls it something else, name the part
+to change and its category. Change nothing else, and nothing you can't point to in this drawing. An empty list is the usual answer. why: which mark, in one short line.
+"""
+
+
 def clean(regions, size) -> list:
     """Regions worth a number. Hatching leaves slivers between its lines, small and filling little of their box. A heavy line fills as little, but it is long."""
     return [r for r in regions if r.area / (r.width * r.height) >= SLIVER or r.area >= SLIVER_SHEET * size[0] * size[1]]
@@ -136,11 +144,33 @@ def regions_of(drawing) -> tuple[list, tuple]:
 def read(model, drawing, guidance="") -> tuple[dict, list, tuple]:
     regions, size = regions_of(drawing)
     plan, first = ask(model, drawing, regions, size, guidance)
-    added, second = complete(model, drawing, regions, plan)
+    try:
+        added, second = complete(model, drawing, regions, plan)
+    except ValueError as error:  # the plan stands without it, and a person is told
+        added, second = {"parts": [], "relations": []}, 0
+        plan["unsure"].append(f"The check for parts a builder would still need did not finish: {str(error)[:120]}")
     plan["parts"] += [{**part, "seen": "implied", "regions": []} for part in added["parts"]]
     plan["relations"] += added["relations"]
     plan["tokens"] = first + second
     return plan, regions, size
+
+
+def summary(plan) -> str:
+    """What a plan says, for comparing details by meaning. Drawings themselves can't be compared this way: to an image model all line drawings look alike."""
+    return plan["assembly"] + ". " + ", ".join(sorted({p["name"] for p in plan["parts"] if p["form"] != "none"}))
+
+
+def learn(model, drawing, regions, plan, examples) -> tuple[list, int]:
+    """Compare a finished reading with details a person confirmed. Muse reads first and alone, so an example can't replace the reading: all it can do is name a change to a
+    part that already exists, and the person sees each one. Returns what changed and the tokens."""
+    answer, tokens = model(LEARN + json.dumps({"this_drawing": {k: plan[k] for k in ("assembly", "parts")}, "confirmed": examples}), [labels.overlay(drawing, regions)], CHANGES, "assembly_learn", "medium")
+    parts, made = {p["id"]: p for p in plan["parts"]}, []
+    for change in answer["changes"]:
+        part = parts.get(change["id"])
+        if part and part["form"] != "none" and change["category"] != part["category"]:
+            made.append(f"{part['name']}: {part['category']} changed to {change['category']}. {change['why']}")
+            part["category"] = change["category"]
+    return made, tokens
 
 
 def make(drawing) -> tuple[dict, list, tuple]:

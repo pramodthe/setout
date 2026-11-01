@@ -17,7 +17,7 @@ type Relation = { subject: string; relation: string; target: string; second_targ
 type Result = { contract: Relation[]; clashes: [string, string, number][]; notes: string[]; misfits: string[]; broken_before: number; broken_after: number; binding: number };
 type Assembly = {
   id: string; state: string; step?: string; error?: string; doc_id: string; crop_id: string; tokens?: number; verdict?: string | null;
-  plan?: { assembly: string; parts: Part[]; unsure: string[]; faults?: string[] } | null;
+  plan?: { assembly: string; parts: Part[]; unsure: string[]; faults?: string[]; learned?: string[] } | null;
   shortlists?: { part: string; wanted: string; candidates: Hit[] }[] | null;
   choices?: Record<string, Choice> | null; result?: Result | null;
 };
@@ -138,6 +138,7 @@ export default function AssemblyView({ assemblyId }: { assemblyId: string | null
             <h2>Is this right? Nothing is built until you say so</h2>
             <label className="asmfield">Muse reads this as
               <textarea id="assemblyReading" rows={2} value={reading} onChange={(e) => setReading(e.target.value)} /></label>
+            {plan.learned && plan.learned.length > 0 && <div className="asmunsure"><strong>Changed after comparing with a detail you confirmed</strong><ul>{plan.learned.map((u) => <li key={u}>{u}</li>)}</ul></div>}
             {plan.unsure.length > 0 && <div className="asmunsure"><strong>Muse is unsure about</strong><ul>{plan.unsure.map((u) => <li key={u}>{u}</li>)}</ul></div>}
             {plan.faults && plan.faults.length > 0 && <div className="asmunsure"><strong>Problems with this plan</strong><ul>{plan.faults.map((u) => <li key={u}>{u}</li>)}</ul></div>}
             <table className="asmtable">
@@ -175,6 +176,8 @@ export default function AssemblyView({ assemblyId }: { assemblyId: string | null
           <p className="draftnote">
             Outlines come from your drawing, parts from the catalogue, and sizes are assumed. Ghosted parts aren't in the drawing: Muse says they are needed.{" "}
             <label>explode <input id="assemblyExplode" type="range" min={0} max={300} value={explode} onChange={(e) => move(Number(e.target.value))} /></label>
+            {" "}<button className="btn" onClick={() => viewport.current?.setView("iso")}>One side</button>
+            {" "}<button id="assemblyOtherSide" className="btn" onClick={() => viewport.current?.setView("otherSide")}>Other side</button>
           </p>
           <div className="asmgrid">
             <section className="asmcard"><h2>Your drawing</h2>{drawing && <img src={drawing} alt="Uploaded section drawing" className="asmdrawing" />}</section>

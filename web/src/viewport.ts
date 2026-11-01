@@ -46,10 +46,11 @@ export function labelText(id: string, sourceLabel: string | null): string {
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
-export type ViewPreset = "iso" | "front" | "top" | "side";
+export type ViewPreset = "iso" | "otherSide" | "front" | "top" | "side";
 
 const VIEW_DIRS: Record<ViewPreset, THREE.Vector3> = {
   iso: new THREE.Vector3(Math.cos(0.32) * Math.sin(-0.7), Math.sin(0.32), Math.cos(0.32) * Math.cos(-0.7)),
+  otherSide: new THREE.Vector3(Math.cos(0.32) * Math.sin(0.7), Math.sin(0.32), Math.cos(0.32) * Math.cos(0.7)),
   front: new THREE.Vector3(0, 0.12, 1).normalize(), // looking at the section face
   top: new THREE.Vector3(0, 1, 0.03).normalize(),
   side: new THREE.Vector3(1, 0.15, 0.25).normalize(),
