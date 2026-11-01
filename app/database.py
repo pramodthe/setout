@@ -108,7 +108,7 @@ assemblies = table("assemblies", C("doc_id", sa.Text), C("crop_id", sa.Text), C(
                    C("created_at", sa.Float), C("updated_at", sa.Float))
 studio_scenes = table("studio_scenes", C("title", sa.Text), C("state", sa.String(32), index=True), C("step", sa.Text), ref("job_id", "jobs.id", True),
                       ref("drawing_artifact_id", "artifacts.id", True), ref("model_artifact_id", "artifacts.id", True), ref("preview_artifact_id", "artifacts.id", True),
-                      C("steps", sa.JSON), C("intents", sa.JSON), C("feed", sa.JSON), C("parts", sa.JSON), C("unsure", sa.JSON), C("tokens", sa.Integer), C("error", sa.Text),
+                      C("steps", sa.JSON), C("intents", sa.JSON), C("feed", sa.JSON), C("parts", sa.JSON), C("unsure", sa.JSON), C("tokens", sa.Integer), C("error", sa.Text), C("checks", sa.JSON),
                       C("created_at", sa.Float), C("updated_at", sa.Float))
 resource_limits = table("resource_limits", C("capacity", sa.Integer, nullable=False))
 resource_leases = table("resource_leases", ref("resource", "resource_limits.id"), ref("job_id", "jobs.id"),

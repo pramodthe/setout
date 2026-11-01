@@ -11,7 +11,7 @@ import json
 from PIL import Image
 
 from . import database as d, meta_client
-from .repository import BudgetExceeded, uid
+from .repository import BudgetExceeded, sha, uid
 from .runtime import ensure_worker, repository
 from .store import figure_path, store_pdf
 
@@ -159,7 +159,9 @@ def build(repo, job, gateway):
 
     def say(text):
         kind = "muse"
-        if "] run_python " in text:
+        if "] check " in text:
+            text, kind = text.split("] check ", 1)[1], "check"
+        elif "] run_python " in text:
             text, kind = text.split("] run_python ", 1)[1].split(" -> ")[0], "step"
         elif "] look" in text or "] undo" in text or "] finish" in text:
             kind, text = "tool", ("Checking other views" if "] look" in text else "Undoing a step" if "] undo" in text else "Finishing")
@@ -175,7 +177,17 @@ def build(repo, job, gateway):
         _set(repo, ident, **values)
 
     brief = REVISE.format(text=job["payload"]["feedback"]) if job["payload"].get("feedback") else None
-    live = blender_live.Live(repo.artifacts.read(row["drawing_artifact_id"]), respond, steps=row["steps"], intents=row["intents"], say=say, show=_shown(repo), on_step=on_step)
+    def ask(prompt, images, schema, name):
+        references = [repo.artifacts.put(data, "image/jpeg" if data[:2] == b"\xff\xd8" else "image/png") for data in images]
+        with d.transaction(repo.engine) as con:
+            for reference in references:
+                repo.artifact(con, reference)
+        spent = repo.run(gateway.fence.job_id)["consumed"].get("tokens", 0)
+        answer = gateway.json(prompt, [r["id"] for r in references], schema, name, f"{name}:{sha(prompt + ''.join(r['id'] for r in references))[:16]}")
+        return answer, repo.run(gateway.fence.job_id)["consumed"].get("tokens", 0) - spent
+
+    held = row["checks"] or {}
+    live = blender_live.Live(repo.artifacts.read(row["drawing_artifact_id"]), respond, steps=row["steps"], intents=row["intents"], say=say, show=_shown(repo), on_step=on_step, ask=ask, features=held.get("features"))
     try:
         live.run(brief)
     except BudgetExceeded:  # what it built so far still stands
@@ -186,8 +198,9 @@ def build(repo, job, gateway):
     _set(repo, ident, step="Preparing the model")
     values = _publish(repo, ident, live.steps)
     feed.append({"kind": "muse", "text": finished.get("what") or "Stopped before finishing: the budget ran out."})
+    checks = {"features": live.features, "rounds": [{k: c[k] for k in ("right", "total", "passed")} for c in live.checks], "last": live.checks[-1] if live.checks else held.get("last")}
     _set(repo, ident, state="ready", step=None, title=(finished.get("what") or row["title"])[:90], unsure=finished.get("unsure") or row["unsure"] or [], feed=feed[-FEED:],
-         tokens=(row["tokens"] or 0) + live.spent, **values)
+         tokens=(row["tokens"] or 0) + live.spent, checks=checks, **values)
 
 
 def run_job(repo, fence, job, gateway):

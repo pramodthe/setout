@@ -8,7 +8,9 @@ import "./studio.css";
 
 type Row = { name: string; part: string; group: string; material: string | null; from: number[]; to: number[]; triangles: number; step: number };
 type Feed = { kind: string; text: string };
-type Scene = { id: string; title: string; state: string; step: string | null; error: string | null; parts: Row[]; feed: Feed[]; unsure: string[]; tokens: number; step_count: number; intents: string[]; model_artifact_id: string | null; preview_artifact_id: string | null; updated_at: number };
+type Tick = { id: number; what: string; importance: string; state: string; note: string };
+type Checks = { rounds: { right: number; total: number; passed: boolean }[]; last: { rows: Tick[]; right: number; total: number; passed: boolean; not_in_source: string[] } | null };
+type Scene = { id: string; checks: Checks | null; title: string; state: string; step: string | null; error: string | null; parts: Row[]; feed: Feed[]; unsure: string[]; tokens: number; step_count: number; intents: string[]; model_artifact_id: string | null; preview_artifact_id: string | null; updated_at: number };
 type Card = { id: string; title: string; state: string; parts: number; has_preview: boolean };
 
 const svg = (path: ReactNode, size = 16) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{path}</svg>;
@@ -161,6 +163,28 @@ function Props({ row, intent }: { row: Row; intent?: string }): JSX.Element {
       {row.material && <div className="field"><label>Material</label>{pretty(row.material)}</div>}
       {intent && <div className="field"><label>Built in the step</label>{intent}</div>}
       <p className="note">Size chosen by Muse. The drawing isn't to scale, and nothing here is verified.</p>
+    </section>
+  );
+}
+
+const MARK: Record<string, string> = { right: "✓", wrong: "!", missing: "✕", cant_tell: "?" };
+const WORD: Record<string, string> = { right: "right", wrong: "wrong", missing: "missing", cant_tell: "couldn't tell" };
+
+function Checker({ checks }: { checks: Checks }): JSX.Element {
+  const last = checks.last!;
+  const rows = [...last.rows].sort((a, b) => Number(a.state === "right") - Number(b.state === "right"));
+  return (
+    <section className="props checker" aria-label="Checker">
+      <h3>Checker: {last.right} of {last.total} right</h3>
+      <p className="note">An independent Muse call compared the model with your drawing from five sides{checks.rounds.length > 1 ? `, over ${checks.rounds.length} rounds: ${checks.rounds.map((r) => `${r.right}/${r.total}`).join(" → ")}` : ""}. It can be wrong too.</p>
+      <ul>
+        {rows.map((tick) => (
+          <li key={tick.id} className={tick.state} title={WORD[tick.state]}>
+            <b aria-label={WORD[tick.state]}>{MARK[tick.state]}</b><span>{tick.what}{tick.note && <small>{tick.note}</small>}</span>
+          </li>
+        ))}
+      </ul>
+      {last.not_in_source.length > 0 && <p className="note warm">Not in your drawing: {last.not_in_source.join("; ")}</p>}
     </section>
   );
 }
@@ -331,7 +355,7 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
             {ready ? (
               <>
                 <div className="tree"><h2>Scene tree</h2>{scene && <Tree rows={scene.parts} selected={selected} hidden={hidden} onSelect={select} onHide={hide} />}</div>
-                {row ? <Props row={row} intent={scene?.intents[row.step - 1]} /> : scene && scene.unsure.length > 0 ? (
+                {row ? <Props row={row} intent={scene?.intents[row.step - 1]} /> : scene?.checks?.last ? <Checker checks={scene.checks} /> : scene && scene.unsure.length > 0 ? (
                   <section className="props"><h3>Muse wasn't sure about</h3><ul style={{ margin: 0, paddingLeft: 18, color: "#6e6d68" }}>{scene.unsure.map((u) => <li key={u}>{u}</li>)}</ul></section>
                 ) : null}
               </>

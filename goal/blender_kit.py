@@ -185,6 +185,9 @@ def materials() -> None:
     })
 
 
+TALL = 0.6  # of the scene's height: a part this tall is left out of framing an angled view
+
+
 def material(name, base, roughness=0.6, metallic=0.0, transmission=0.0) -> str:
     """A new material by colour, each channel 0 to 1, for anything the named ones don't suit. Returns its name."""
     MATERIALS[name] = _material(name, base, roughness, metallic=metallic, transmission=transmission)
@@ -192,22 +195,29 @@ def material(name, base, roughness=0.6, metallic=0.0, transmission=0.0) -> str:
 
 
 def fit_view(view, section_at=0, size=(1000, 750), samples=14) -> None:
-    """One standard view of the whole scene, framed from what was built, so a model never places a camera."""
+    """One standard view of the whole scene, framed from what was built, so a model never places a camera. Angled views frame the detail, so a full-height door can't shrink a sill to nothing."""
     meshes = [o for o in bpy.context.scene.objects if o.type == "MESH"]
     if not meshes:
         return
-    points = [o.matrix_world @ Vector(c) for o in meshes for c in o.bound_box]
-    low = Vector((min(p[k] for p in points) / MM for k in range(3)))
-    high = Vector((max(p[k] for p in points) / MM for k in range(3)))
-    middle, span = (low + high) / 2, max(high - low)
+
+    def extent(held):
+        points = [o.matrix_world @ Vector(c) for o in held for c in o.bound_box]
+        return Vector((min(p[k] for p in points) / MM for k in range(3))), Vector((max(p[k] for p in points) / MM for k in range(3)))
+    low, high = extent(meshes)
+    middle = (low + high) / 2
     if view == "section":
         shot("section.jpg", (low.x - 4000, middle.y, middle.z), (low.x, middle.y, middle.z), size=size, samples=samples, ortho=1.12 * max(high.y - low.y, 1.33 * (high.z - low.z)))
+    elif view == "side":
+        shot("side.jpg", (middle.x, low.y - 4000, middle.z), tuple(middle), size=size, samples=samples, ortho=1.12 * max(high.x - low.x, 1.33 * (high.z - low.z)))
     elif view == "top":
         shot("top.jpg", (middle.x, middle.y, high.z + 4000), tuple(middle), size=size, samples=samples, ortho=1.12 * max(high.y - low.y, 1.33 * (high.x - low.x)))
-    elif view == "other_side":
-        shot("other_side.jpg", (low.x - 1.25 * span, high.y + 1.0 * span, middle.z + 0.55 * span), tuple(middle), lens=42, size=size, samples=samples)
     else:
-        shot("three_quarter.jpg", (low.x - 1.25 * span, low.y - 1.0 * span, middle.z + 0.55 * span), tuple(middle), lens=42, size=size, samples=samples)
+        tall = TALL * (high.z - low.z) / 1000
+        short = [o for o in meshes if o.dimensions.z < tall] or meshes
+        low, high = extent(short)
+        middle, span = (low + high) / 2, max(high - low)
+        side = high.y + 1.0 * span if view == "other_side" else low.y - 1.0 * span
+        shot(f"{view}.jpg", (low.x - 1.25 * span, side, middle.z + 0.55 * span), tuple(middle), lens=42, size=size, samples=samples)
 
 
 def inventory() -> list:

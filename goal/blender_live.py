@@ -16,14 +16,17 @@ from pathlib import Path
 
 from PIL import Image
 
+from . import blender_check
 from .blender_agent import BANNED
 from .reference import DATA
 
 HERE = Path(__file__).resolve().parent
 OUT = DATA / "goal" / "live"
 ALLOWED = {"blender_kit", "math", "bpy", "bmesh", "mathutils", "random"}
-TURNS, TOKENS, WRAP_UP = 22, 300_000, 0.8  # tokens are billed ones, as the app counts them, and past WRAP_UP of them Muse is told to finish
-VIEWS = ("three_quarter", "section", "other_side", "top")
+TURNS, TOKENS, WRAP_UP, CHECK_ROOM = 26, 300_000, 0.8, 0.92  # tokens are billed ones, as the app counts them. Past WRAP_UP of them Muse is told to finish, and past CHECK_ROOM the checker is skipped
+VIEWS = ("three_quarter", "section", "other_side", "top", "side")
+CHECKED = {"isometric": "three_quarter", "isometric other side": "other_side", "front": "section", "side": "side", "top": "top"}
+REFUSALS = 3  # finish is sent back this many times at most, then what's left goes to the person
 TOOLS = [
     {"type": "function", "name": "run_python", "description": "Run a step of Python against the live scene. Whatever earlier steps built is still there, and constants and functions you defined stay defined. Returns any error, what the scene now holds, and two renders.",
      "parameters": {"type": "object", "additionalProperties": False, "required": ["intent", "code"], "properties": {"intent": {"type": "string", "description": "What this step adds, in a few words a person can read"}, "code": {"type": "string"}}}},
@@ -32,7 +35,7 @@ TOOLS = [
     {"type": "function", "name": "list_parts", "description": "Read what is in the scene: every object with its group, material and extent in mm. Use this to measure. Never run code only to read the scene.",
      "parameters": {"type": "object", "additionalProperties": False, "required": [], "properties": {}}},
     {"type": "function", "name": "undo", "description": "Remove your last step from the scene.", "parameters": {"type": "object", "additionalProperties": False, "required": [], "properties": {}}},
-    {"type": "function", "name": "finish", "description": "End the work, only when the section view reads like the drawing and the whole assembly is there.",
+    {"type": "function", "name": "finish", "description": "Ask to end the work, only when the source and your model match and the whole assembly is there. An independent checker then compares your model with the source from every side, and sends it back with what to fix if parts are missing or wrong.",
      "parameters": {"type": "object", "additionalProperties": False, "required": ["what", "unsure"], "properties": {"what": {"type": "string", "description": "What this detail is"}, "unsure": {"type": "array", "items": {"type": "string"}}}}},
 ]
 SYSTEM = """You build one construction detail as a real local 3D assembly in a live Blender scene, the way a good detailer would show it to a builder. A person looks at it and must see at once
@@ -110,8 +113,9 @@ def summary(scene) -> str:
 
 class Live:
     """One model working on one scene. `steps` is the scene, so a revision starts from an earlier one's steps."""
-    def __init__(self, drawing: bytes, respond, steps=None, intents=None, say=print, folder=None, show=picture, on_step=None):
+    def __init__(self, drawing: bytes, respond, steps=None, intents=None, say=print, folder=None, show=picture, on_step=None, ask=None, features=None):
         self.drawing, self.respond, self.say, self.folder, self.show, self.on_step = drawing, respond, say, folder, show, on_step
+        self.ask, self.features, self.checks, self.refused = ask, features, [], 0
         self.steps, self.intents = list(steps or []), list(intents or [])
         if folder:
             folder.mkdir(parents=True, exist_ok=True)
@@ -149,8 +153,21 @@ class Live:
         return {"ok": True, "steps_left": len(self.steps)}, []
 
     def finish(self, args):
-        self.result = args
-        return {"ok": True}, []
+        if not self.ask or not self.steps or self.spent > TOKENS * CHECK_ROOM:
+            self.result = args
+            return {"ok": True}, []
+        self.say("[0] check Comparing the model with your drawing from every side")
+        names = list(CHECKED)
+        found = sandbox(self.steps, list(CHECKED.values()))
+        result, tokens = blender_check.check(self.ask, self.drawing, self.features, {n: found[f"{CHECKED[n]}.jpg"] for n in names if f"{CHECKED[n]}.jpg" in found})
+        self.spent += tokens
+        self.checks.append(result)
+        self.say(f"[0] check {result['right']} of {result['total']} right" + (f". To fix: {'; '.join(r['what'] for r in result['blocking'][:4])}" if result["blocking"] else ""))
+        if result["passed"] or self.refused >= REFUSALS:
+            self.result = {**args, "unsure": [*args.get("unsure", []), *[f"{r['what']}: {r['note'] or r['state']}" for r in result["blocking"]]]}
+            return {"ok": True}, []
+        self.refused += 1
+        return {"refused": True, "checker_says": blender_check.fix_list(result), "note": "An independent checker compared your model with the source. Fix these, look again, then call finish."}, self.images(found, ("three_quarter", "other_side"))
 
     def images(self, found, views) -> list:
         out = []
@@ -163,6 +180,10 @@ class Live:
         return out
 
     def run(self, brief=None):
+        if self.ask and not self.features:
+            self.features, tokens = blender_check.read_source(self.ask, self.drawing)
+            self.spent += tokens
+            self.say(f"[0] check Noted {len(self.features['items'])} things the model must show")
         text = brief or "Here is the detail. Say what it is, then build it."
         content = [{"type": "input_text", "text": text}, self.show(self.drawing, 1400)]
         if self.steps:  # a revision: it sees the scene as it stands
@@ -206,13 +227,18 @@ class Live:
         return self
 
 
+def ask_direct(prompt, images, schema, name) -> tuple[dict, int]:
+    from . import plan
+    return plan.direct(prompt, images, schema, name)
+
+
 def respond_direct(payload) -> dict:
     from app import meta_client
     return meta_client.respond_tools({"model": meta_client.default_model(), **payload}, timeout=280)
 
 
 if __name__ == "__main__":
-    live = Live(Path(sys.argv[1]).read_bytes(), respond_direct, folder=OUT / sys.argv[2]).run()
+    live = Live(Path(sys.argv[1]).read_bytes(), respond_direct, folder=OUT / sys.argv[2], ask=ask_direct).run()
     print("steps", len(live.steps), "tokens", live.spent, "finished", bool(live.result))
     found = sandbox(live.steps, VIEWS, export=True)
     for name, data in found.items():

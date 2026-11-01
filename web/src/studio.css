@@ -44,7 +44,7 @@
 .studio .twist { width: 18px; height: 22px; display: grid; place-items: center; color: var(--faint); transition: transform 0.12s; }
 .studio .twist.open { transform: rotate(90deg); }
 .studio .child { padding-left: 16px; }
-.studio .props { flex: none; max-height: 46%; overflow: auto; border-top: 1px solid var(--line); padding: 12px 16px 16px; }
+.studio .props { flex: 0 1 auto; max-height: 52%; overflow: auto; border-top: 1px solid var(--line); padding: 12px 16px 16px; }
 .studio .props h3 { font-weight: 600; margin-bottom: 8px; overflow-wrap: anywhere; }
 .studio .field { margin-top: 10px; }
 .studio .field label { display: block; color: var(--soft); font-size: 12px; margin-bottom: 4px; }
@@ -54,6 +54,14 @@
 .studio .swatch { display: inline-block; width: 11px; height: 11px; border-radius: 3px; vertical-align: -1px; margin-right: 6px; background: #bbb; }
 .studio .note { color: var(--soft); font-size: 12px; margin-top: 12px; }
 .studio .warm { color: var(--warm); }
+.studio .checker ul { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.studio .checker li { display: flex; gap: 8px; font-size: 12.5px; }
+.studio .checker li b { flex: none; width: 17px; height: 17px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 700; background: #e6f4ec; color: #1f7a4d; }
+.studio .checker li.wrong b { background: #fdf0dd; color: #a35a0c; }
+.studio .checker li.missing b { background: #fbe6e4; color: #b3261e; }
+.studio .checker li.cant_tell b { background: var(--paper); color: var(--soft); }
+.studio .checker small { display: block; color: var(--soft); }
+.studio .say.check { color: #1f5fbf; font-weight: 550; }
 .studio .rail { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 2px; padding: 5px; background: rgba(255, 255, 255, 0.96); border-radius: 13px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3); }
 .studio .rail hr { border: 0; border-top: 1px solid var(--line); margin: 3px 4px; }
 .studio .rail .icon { position: relative; width: 36px; height: 34px; }

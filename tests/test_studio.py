@@ -13,18 +13,27 @@ from app.worker import Worker
 from goal import blender_live
 
 
-def png():
+def png(shade=255):
     out = io.BytesIO()
-    Image.new("RGB", (40, 30), "white").save(out, "PNG")
+    Image.new("RGB", (40, 30), (shade, shade, shade)).save(out, "PNG")
     return out.getvalue()
 
 
 class Muse:
     """Plays a script of tool calls, one list a turn."""
-    def __init__(self, *turns):
-        self.turns, self.payloads = list(turns), []
+    def __init__(self, *turns, items=(), ticks=()):
+        self.turns, self.payloads, self.items, self.ticks, self.checked = list(turns), [], list(items), list(ticks), []
 
     def __call__(self, payload):
+        form = payload.get("text", {}).get("format", {}).get("name")
+        if form:
+            self.checked.append(payload)
+            if form == "studio_features":
+                answer = {"detail": "a slab", "items": [{"id": k, "what": what, "importance": "must"} for k, what in enumerate(self.items)]}
+            else:
+                state = self.ticks.pop(0) if self.ticks else "right"
+                answer = {"ticks": [{"id": k, "state": state, "note": "" if state == "right" else "add it"} for k in range(len(self.items))], "not_in_source": []}
+            return {"status": "completed", "output": [{"type": "message", "content": [{"type": "output_text", "text": json.dumps(answer)}]}], "usage": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150}}
         self.payloads.append(payload)
         calls = self.turns.pop(0) if self.turns else [("finish", {"what": "done", "unsure": []})]
         output = [{"type": "function_call", "call_id": f"c{len(self.payloads)}-{k}", "name": name, "arguments": json.dumps(args)} for k, (name, args) in enumerate(calls)]
@@ -40,7 +49,7 @@ def sandbox(monkeypatch):
         runs.append(list(steps))
         error = next((f"failed: {s}" for s in steps if "boom" in s), None)
         parts = [{"name": f"part {k}", "part": f"part {k}", "group": "g", "material": "concrete", "from": [0, 0, 0], "to": [1, 1, 1], "triangles": 12, "step": k + 1} for k in range(len(steps))]
-        found = {"scene.json": json.dumps({"error": error, "seconds": 0.1, "parts": parts}).encode(), **{f"{v}.jpg": png() for v in views}}
+        found = {"scene.json": json.dumps({"error": error, "seconds": 0.1, "parts": parts}).encode(), **{f"{v}.jpg": png(200 - len(steps)) for v in views}}
         if export:
             found["model.glb"] = b"glb"
         return found
@@ -161,3 +170,45 @@ def test_muse_can_measure_without_adding_a_step(sandbox):
     assert studio.get(made["id"])["step_count"] == 1
     told = [i for i in muse.payloads[2]["input"] if i.get("type") == "function_call_output"][-1]
     assert "part 0" in told["output"]
+
+
+def test_finish_is_refused_until_the_checker_is_satisfied(sandbox):
+    finish = ("finish", {"what": "a slab", "unsure": []})
+    fix = ("run_python", {"intent": "the wall", "code": "W = 100"})
+    muse = Muse([STEP], [finish], [fix], [finish], items=["a wall on the left"], ticks=["missing", "right"])
+    made = studio.start("d.png", png())
+    work(muse)
+    held = studio.get(made["id"])
+    assert held["state"] == "ready" and held["intents"] == ["the slab", "the wall"]
+    assert [r["right"] for r in held["checks"]["rounds"]] == [0, 1] and held["checks"]["last"]["passed"]
+    told = [i for p in muse.payloads for i in p["input"] if i.get("type") == "function_call_output" and "checker_says" in i["output"]]
+    assert told and "a wall on the left" in told[0]["output"]
+
+
+def test_refusals_stop_and_what_is_left_goes_to_the_person(sandbox):
+    finish = ("finish", {"what": "a slab", "unsure": []})
+    muse = Muse([STEP], [finish], [finish], [finish], [finish], [finish], items=["a wall"], ticks=["missing"] * 9)
+    made = studio.start("d.png", png())
+    work(muse)
+    held = studio.get(made["id"])
+    assert held["state"] == "ready" and len(held["checks"]["rounds"]) == blender_live.REFUSALS + 1
+    assert any("a wall" in u for u in held["unsure"])
+
+
+def test_the_checker_sees_every_side_and_none_of_the_builders_words(sandbox):
+    finish = ("finish", {"what": "SECRET", "unsure": []})
+    muse = Muse([("run_python", {"intent": "SECRET", "code": "HIDDEN = 1"})], [finish], items=["a wall"])
+    studio.start("d.png", png())
+    work(muse)
+    seen = muse.checked[-1]["input"][0]["content"]
+    assert sum(part["type"] == "input_image" for part in seen) == 6
+    assert "SECRET" not in json.dumps(muse.checked) and "HIDDEN" not in json.dumps(muse.checked)
+
+
+def test_an_unanswered_item_is_not_passed_as_seen():
+    from goal import blender_check
+    features = {"items": [{"id": 1, "what": "a wall", "importance": "must"}, {"id": 2, "what": "a nail", "importance": "should"}]}
+    done = blender_check.verdict(features, {"ticks": [{"id": 2, "state": "missing", "note": "x"}], "not_in_source": []})
+    assert done["passed"] and done["right"] == 0 and done["rows"][0]["state"] == "cant_tell"
+    done = blender_check.verdict(features, {"ticks": [{"id": 1, "state": "wrong", "note": "x"}], "not_in_source": []})
+    assert not done["passed"]
