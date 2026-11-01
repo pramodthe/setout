@@ -84,10 +84,6 @@ class Worker:
                 from .model_gateway import ModelGateway
                 from .studio import run_job
                 run_job(self.repo, fence, job, ModelGateway(self.repo, fence, self.responder))
-            elif job["kind"] in ("plan_assembly", "build_assembly"):
-                from .assemblies import run_job
-                from .model_gateway import ModelGateway
-                run_job(self.repo, fence, job, ModelGateway(self.repo, fence, self.responder))
             elif job["kind"] in ("generate_detail", "revise_detail"):
                 Agent(self.repo, fence, self.responder, self.renderer, self.cad_builder).run()
                 continue_if_cut_short(self.repo, fence.job_id)

@@ -5,9 +5,7 @@ import "./index.css";
 import App from "./App.tsx";
 import DetailView from "./DetailView.tsx";
 import Library from "./Library.tsx";
-import AssemblyView from "./AssemblyView.tsx";
 import Studio from "./Studio.tsx";
-import DraftView from "./DraftView.tsx";
 import RenderView from "./RenderView.tsx";
 import JobPanel from "./JobPanel.tsx";
 
@@ -26,10 +24,6 @@ function Root(): JSX.Element {
   if (hash.startsWith("#/workbench")) return <App />;
   const studio = hash.match(/^#\/studio(?:\/([^?]+))?/);
   if (studio) return <Studio key={studio[1] || "new"} sceneId={studio[1] ? decodeURIComponent(studio[1]) : null} />;
-  const assembly = hash.match(/^#\/assembly(?:\/([^?]+))?/);
-  if (assembly) return <AssemblyView key={assembly[1] || "new"} assemblyId={assembly[1] ? decodeURIComponent(assembly[1]) : null} />;
-  const draft = hash.match(/^#\/draft(?:\/([^?]+))?/);
-  if (draft) return <DraftView key={draft[1] || "new"} draftId={draft[1] ? decodeURIComponent(draft[1]) : null} />;
   const m = hash.match(/^#\/d\/([^?]+)(?:\?part=(.+))?/);
   if (m) {
     const id = decodeURIComponent(m[1]);

@@ -100,9 +100,6 @@ export default function Library(): JSX.Element {
             <a className="btn primary" href="#/studio">
               3D Studio
             </a>
-            <a className="btn" href="#/assembly">
-              3D from a section
-            </a>
             <a className="btn primary" href="#/workbench">
               + Add from PDF
             </a>

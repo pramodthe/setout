@@ -414,12 +414,6 @@ async def get_library() -> dict:
 @app.get("/api/specs/{detail_id}/scene")
 async def get_scene(detail_id: str) -> dict:
     """Build + verify on demand (fast: pure-Python meshes) for the viewer page."""
-    from . import blender_details
-    if blender_details.is_one(detail_id):
-        found = blender_details.scene(detail_id)
-        if found is None:
-            raise HTTPException(404, "unknown detail")
-        return found
     native = _database_version(detail_id)
     if native:
         from .v3_api import scene
@@ -437,12 +431,6 @@ async def get_scene(detail_id: str) -> dict:
 @app.get("/api/specs/{detail_id}/drawing")
 async def get_drawing(detail_id: str):
     """The source drawing, upright (as SAM saw it; regions are relative to it)."""
-    from . import blender_details
-    if blender_details.is_one(detail_id):
-        png = blender_details.drawing(detail_id)
-        if png is None:
-            raise HTTPException(404, "no drawing for this detail")
-        return Response(png, media_type="image/png")
     native = _database_version(detail_id)
     if native and native["figure_id"]:
         from . import database as tables, sam
@@ -614,26 +602,6 @@ class GenerateRequest(BaseModel):
     crop_id: str
 
 
-@app.post("/api/section-drafts")
-async def start_section_draft(req: GenerateRequest) -> dict:
-    """A section to a local 3D assembly: shapes from the drawing, kinds from one model call."""
-    from . import section_draft
-    if not meta_client.configured():
-        raise HTTPException(503, "AI not configured")
-    if figure_path(req.doc_id, req.crop_id) is None:
-        raise HTTPException(404, "unknown figure")
-    return section_draft.start(req.doc_id, req.crop_id)
-
-
-@app.get("/api/section-drafts/{ident}")
-async def get_section_draft(ident: str) -> dict:
-    from . import section_draft
-    found = section_draft.get(ident)
-    if found is None:
-        raise HTTPException(404, "unknown draft")
-    return found
-
-
 class StudioFeedback(BaseModel):
     text: str
 
@@ -689,91 +657,6 @@ async def studio_feedback(ident: str, req: StudioFeedback) -> dict:
 async def studio_undo(ident: str) -> dict:
     from . import studio
     return await run_in_threadpool(_studio_call, studio.undo, ident)
-
-
-class AssemblyEdits(BaseModel):
-    reviewer: str
-    assembly: str | None = None
-    parts: list[dict] = []
-
-
-class AssemblyCorrection(BaseModel):
-    reviewer: str
-    text: str
-
-
-class AssemblyVerdict(BaseModel):
-    reviewer: str
-    verdict: str
-    note: str = ""
-
-
-def _assembly_call(call, *args):
-    from . import assemblies
-    try:
-        return call(*args)
-    except KeyError:
-        raise HTTPException(404, "unknown assembly")
-    except assemblies.WrongState as error:
-        raise HTTPException(409, str(error))
-    except ValueError as error:
-        raise HTTPException(422, str(error)[:300])
-
-
-@app.get("/api/assemblies")
-async def list_assemblies() -> dict:
-    from . import assemblies
-    return {"assemblies": await run_in_threadpool(assemblies.listing)}
-
-
-@app.post("/api/assemblies", status_code=202)
-async def start_assembly(req: GenerateRequest) -> dict:
-    """A section to a planned 3D assembly: Muse reads it, a person confirms, the engine builds."""
-    from . import assemblies
-    if not meta_client.configured():
-        raise HTTPException(503, "AI not configured")
-    if figure_path(req.doc_id, req.crop_id) is None:
-        raise HTTPException(404, "unknown figure")
-    return await run_in_threadpool(assemblies.start, req.doc_id, req.crop_id)
-
-
-@app.get("/api/assemblies/{ident}")
-async def get_assembly(ident: str) -> dict:
-    from . import assemblies
-    return await run_in_threadpool(_assembly_call, assemblies.get, ident)
-
-
-@app.get("/api/assemblies/{ident}/scene")
-async def get_assembly_scene(ident: str) -> Response:
-    from . import assemblies
-    return Response(await run_in_threadpool(_assembly_call, assemblies.scene, ident), media_type="application/json")
-
-
-@app.post("/api/assemblies/{ident}/confirm", status_code=202)
-async def confirm_assembly(ident: str, req: AssemblyEdits) -> dict:
-    from . import assemblies
-    return await run_in_threadpool(_assembly_call, assemblies.confirm, ident, req.reviewer, req.assembly, req.parts)
-
-
-@app.post("/api/assemblies/{ident}/correct", status_code=202)
-async def correct_assembly(ident: str, req: AssemblyCorrection) -> dict:
-    from . import assemblies
-    return await run_in_threadpool(_assembly_call, assemblies.correct, ident, req.reviewer, req.text)
-
-
-@app.post("/api/assemblies/{ident}/verdict")
-async def judge_assembly(ident: str, req: AssemblyVerdict) -> dict:
-    from . import assemblies
-    return await run_in_threadpool(_assembly_call, assemblies.judge, ident, req.reviewer, req.verdict, req.note)
-
-
-@app.get("/api/catalogue/{ident}/thumb")
-async def catalogue_thumb(ident: int) -> FileResponse:
-    from . import assemblies
-    path = assemblies.thumb(ident)
-    if path is None:
-        raise HTTPException(404, "no picture of that component")
-    return FileResponse(path, media_type="image/jpeg")
 
 
 @app.get("/api/ai/status")

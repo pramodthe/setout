@@ -100,12 +100,6 @@ component_reviews = table("component_reviews", ref("component_id", "components.i
                           C("reviewer", sa.Text), C("action", sa.Text), C("data", sa.JSON), C("at", sa.Float))
 sam_regions = table("sam_regions", ref("version_id", "detail_versions.id"),
                     C("part_key", sa.Text), C("data", sa.JSON))
-assemblies = table("assemblies", C("doc_id", sa.Text), C("crop_id", sa.Text), C("state", sa.String(32), index=True),
-                   C("step", sa.Text), ref("job_id", "jobs.id", True), C("guidance", sa.Text), C("embedding", sa.JSON),
-                   C("plan", sa.JSON), C("shortlists", sa.JSON), C("choices", sa.JSON), C("result", sa.JSON),
-                   ref("scene_artifact_id", "artifacts.id", True), C("tokens", sa.Integer), C("confirmed_by", sa.Text),
-                   C("verdict", sa.String(16)), C("verdict_note", sa.Text), C("error", sa.Text),
-                   C("created_at", sa.Float), C("updated_at", sa.Float))
 studio_scenes = table("studio_scenes", C("title", sa.Text), C("state", sa.String(32), index=True), C("step", sa.Text), ref("job_id", "jobs.id", True),
                       ref("drawing_artifact_id", "artifacts.id", True), ref("model_artifact_id", "artifacts.id", True), ref("preview_artifact_id", "artifacts.id", True),
                       C("steps", sa.JSON), C("intents", sa.JSON), C("feed", sa.JSON), C("parts", sa.JSON), C("unsure", sa.JSON), C("tokens", sa.Integer), C("error", sa.Text), C("checks", sa.JSON),

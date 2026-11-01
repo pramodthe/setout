@@ -17,11 +17,9 @@ from pathlib import Path
 from PIL import Image
 
 from . import blender_check
-from .blender_agent import BANNED
-from .reference import DATA
-
 HERE = Path(__file__).resolve().parent
-OUT = DATA / "goal" / "live"
+OUT = next((p / "data" for p in (HERE, *HERE.parents) if (p / "data" / "goal").is_dir()), HERE.parent / "data") / "goal" / "live"
+BANNED = {"exec", "eval", "compile", "open", "__import__", "globals", "locals", "vars", "getattr", "setattr", "delattr", "input", "breakpoint"}
 ALLOWED = {"blender_kit", "math", "bpy", "bmesh", "mathutils", "random"}
 TURNS, TOKENS, WRAP_UP, CHECK_ROOM = 26, 300_000, 0.8, 0.92  # tokens are billed ones, as the app counts them. Past WRAP_UP of them Muse is told to finish, and past CHECK_ROOM the checker is skipped
 VIEWS = ("three_quarter", "section", "other_side", "top", "side")
@@ -231,8 +229,12 @@ class Live:
 
 
 def ask_direct(prompt, images, schema, name) -> tuple[dict, int]:
-    from . import plan
-    return plan.direct(prompt, images, schema, name)
+    from app import meta_client
+    content = [{"type": "input_text", "text": prompt}] + [{"type": "input_image", "image_url": "data:image/png;base64," + base64.b64encode(i).decode()} for i in images]
+    result = meta_client.respond_tools({"model": meta_client.default_model(), "reasoning": {"effort": "medium"}, "input": [{"type": "message", "role": "user", "content": content}],
+                                        "text": {"format": {"type": "json_schema", "name": name, "schema": schema, "strict": True}}}, timeout=280)
+    reply = "".join(p.get("text", "") for item in result["output"] if item.get("type") == "message" for p in item.get("content", []))
+    return json.loads(reply), (result.get("usage") or {}).get("total_tokens", 0)
 
 
 def respond_direct(payload) -> dict:

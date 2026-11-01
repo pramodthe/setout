@@ -8,23 +8,19 @@ from __future__ import annotations
 
 import math
 import os
-import random
 from pathlib import Path
 
 import bpy
 from mathutils import Vector
 
-__all__ = ["start", "materials", "material", "prism", "box", "sheet", "lathe", "rod", "PARTS", "tally", "finish", "export_parts"]
+__all__ = ["start", "materials", "material", "prism", "box", "sheet", "lathe", "rod"]
 
 MM = 0.001
 OUT = Path(os.environ.get("SETOUT_OUT", "."))
-PARTS: list = []
 
 
 def start() -> None:
     bpy.ops.wm.read_factory_settings(use_empty=True)
-    PARTS.clear()
-    random.seed(7)
 
 
 def _add(name, verts, faces, material, group):
@@ -35,7 +31,6 @@ def _add(name, verts, faces, material, group):
     bpy.context.scene.collection.objects.link(obj)
     obj.data.materials.append(MATERIALS[material])
     obj["group"], obj["part"] = group, name.split(".")[0]
-    PARTS.append((obj, group, name.split(".")[0]))
     return obj
 
 
@@ -234,16 +229,6 @@ def inventory() -> list:
     return rows
 
 
-def explode(offsets) -> None:
-    for obj, group, _ in PARTS:
-        obj.location = tuple(c * MM for c in offsets.get(group, (0, 0, 0)))
-
-
-def settle() -> None:
-    for obj, _, _ in PARTS:
-        obj.location = (0, 0, 0)
-
-
 def stage(sky=(0.92, 0.93, 0.95)) -> None:
     scene = bpy.context.scene
     scene.render.engine = "CYCLES"
@@ -286,13 +271,6 @@ def shot(file, eye, target, lens=45, size=(1500, 1050), samples=48, ortho=None) 
     bpy.data.objects.remove(camera)
 
 
-def tally() -> dict:
-    counts: dict = {}
-    for _, _, name in PARTS:
-        counts[name] = counts.get(name, 0) + 1
-    return counts
-
-
 def flatten_materials() -> None:
     """A model file can't carry procedural surfaces, and would show them white: each goes to its plain colour."""
     for item in bpy.data.materials:
@@ -313,43 +291,3 @@ def export_glb(file) -> None:
         bpy.ops.export_scene.gltf(filepath=str(OUT / file), export_format="GLB", export_apply=True, export_extras=True)
     except Exception as error:
         print("glb export failed:", str(error)[:300])
-
-
-def export_parts(file="parts.json.gz") -> None:
-    """Every part's triangles in mm, in the order they were built, for the app's viewer. Pieces of one
-    kind stay together as one row, the way a parts list reads, and remember how many they are."""
-    import gzip
-    import json
-    import re
-    rows: dict = {}
-    for obj, group, name in PARTS:
-        material = obj.data.materials[0].name
-        base = re.sub(r"(_\d+)+$", "", name)
-        row = rows.setdefault((base, material), {"name": base, "material": material, "group": group, "pieces": 0, "tris": []})
-        row["pieces"] += 1
-        mesh = obj.data
-        mesh.calc_loop_triangles()
-        matrix = obj.matrix_world
-        for triangle in mesh.loop_triangles:
-            for index in triangle.vertices:
-                row["tris"].extend(round(c / MM, 2) for c in matrix @ mesh.vertices[index].co)
-    (OUT / file).write_bytes(gzip.compress(json.dumps(list(rows.values())).encode(), 9))
-
-
-def finish(section_at=0) -> None:
-    """The standard pictures, framed from what was built: the cut face straight on, and a three-quarter
-    view. A scene calls this last, so a scene never has to place a camera."""
-    if os.environ.get("SETOUT_EXPORT"):
-        export_parts()
-        return
-    points = [obj.matrix_world @ Vector(corner) for obj, _, _ in PARTS for corner in obj.bound_box]
-    low = Vector((min(p[k] for p in points) / MM for k in range(3)))
-    high = Vector((max(p[k] for p in points) / MM for k in range(3)))
-    middle = (low + high) / 2
-    span = max(high - low)
-    print("parts", len(PARTS), tally())
-    stage()
-    near = Vector((section_at, middle.y, min(middle.z, low.z + 500)))
-    shot("section.jpg", (section_at - 4000, near.y, near.z), (section_at, near.y, near.z), size=(1200, 900), samples=24,
-         ortho=min(1.15 * (high.y - low.y), 1600))
-    shot("cut.jpg", (low.x - 1.25 * span, low.y - 1.0 * span, middle.z + 0.55 * span), tuple(middle), lens=42, size=(1200, 900), samples=24)
