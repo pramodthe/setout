@@ -113,24 +113,12 @@
   .genlog div:last-child{color:var(--accent)}
   .ai-note{border-left:2px solid var(--amber);padding-left:8px;margin-bottom:8px}
 
-  /* ---------- library + detail pages ---------- */
+  /* ---------- detail pages ---------- */
   a.back{color:var(--muted);text-decoration:none;font-size:13px;margin-right:6px}
   a.back:hover{color:var(--ink)}
-    border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:14px}
-  a.btn{display:inline-block;padding:8px 14px;border-radius:8px;border:1px solid var(--line);
-    color:var(--ink);text-decoration:none;font-size:13px}
-  a.btn.primary{background:var(--ink);border-color:var(--ink);color:#fff}
-  .tabs{display:flex;gap:6px;align-items:center;border-bottom:1px solid var(--line);margin-bottom:14px}
-  .tabs button{border:none;border-bottom:2px solid transparent;border-radius:0;background:none;
-    padding:9px 12px;color:var(--muted);font-size:14px}
-  .tabs button.on{color:var(--ink);border-bottom-color:var(--accent)}
-  .tabs .count{margin-left:auto;color:var(--muted);font-size:12px}
-  .chips{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 16px}
   .chip{border-radius:999px;padding:5px 12px;font-size:12.5px;background:var(--panel)}
   .chip.on{border-color:var(--accent);background:var(--chosen)}
   .chip .n{color:var(--muted);margin-left:4px}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}
-    border-radius:12px;overflow:hidden;color:var(--ink);text-decoration:none;transition:border-color .15s}
   .hint,.empty{color:var(--muted);font-size:13px}
   .liberr{background:#fbe6e4;border:1px solid var(--bad);color:#a4271c;padding:8px 12px;border-radius:8px;margin:10px 0}
   .dv{height:100%;display:flex;flex-direction:column}
