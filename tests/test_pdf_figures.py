@@ -11,7 +11,7 @@ import pytest
 from PIL import Image
 from pypdf import apply_configuration
 
-from app import store
+from app import store, studio
 
 MM = 72 / 25.4
 A4 = (595, 842)
@@ -385,3 +385,25 @@ def test_uploads_may_overlap():
     with ThreadPoolExecutor(4) as pool:
         docs = list(pool.map(lambda _: store.store_pdf("own.pdf", data), range(8)))
     assert len({store.figure_path(doc["id"], "p0_rendered").read_bytes() for doc in docs}) == 1
+
+
+def stored_documents():
+    con = store.db()
+    rows = con.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+    con.close()
+    return rows, sorted(p.name for p in (store.var_root() / "docs").glob("*"))
+
+
+def test_only_the_drawing_is_kept_from_a_pdf():
+    before = stored_documents()
+    pdf = Pdf()
+    pdf.page(place("Im0", 40, 40, 300, 225), xobjects={"Im0": pdf.image((800, 600))[0]})
+    assert Image.open(io.BytesIO(studio._drawing("own.pdf", pdf.bytes()))).size == (800, 600)
+    assert stored_documents() == before
+
+
+def test_a_pdf_with_no_drawing_leaves_nothing_behind():
+    before = stored_documents()
+    with pytest.raises(ValueError, match="no drawing"):
+        studio._drawing("own.pdf", Pdf().page(b"").bytes())
+    assert stored_documents() == before

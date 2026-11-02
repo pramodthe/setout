@@ -88,6 +88,7 @@ How it fits together, and what isn't obvious from any one file:
   Pictures are artifacts, so a checkpoint never holds an image. Tokens count what is paid: uncached input
   plus output (`repository.billed_tokens`).
 - **Files are stored once, by content,** so two scenes can share one. `studio.delete` keeps any file another scene uses.
+- **A PDF is only read once:** `studio._drawing` keeps its first figure as a PNG artifact and removes the stored PDF.
 - **Long CPU work on the server starves the job heartbeat,** and a job loses its lease. Keep it out of the worker.
 - **Muse reads alone.** Examples in its prompt make it copy them onto a different drawing.
 - **Image embeddings can't compare line drawings.** To an image model they all look alike.
