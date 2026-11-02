@@ -16,7 +16,7 @@ Meta Global AI Developer Hackathon 2026 · Indie Developer Track · Build for Yo
 - **Build from a drawing.** Drop in a PDF, PNG or JPG. Muse works out what the detail is, including the parts
   a section can't show, and builds the local assembly.
 - **Explore it.** Isometric, front, side and top views, a scene tree of named parts with their sizes,
-  pull apart, cut along the run, and a step-by-step playback of the build.
+  pull apart, and a step-by-step playback of the build.
 - **Change it.** Tell Muse what's wrong, and it edits the scene it already has. Undo steps, rename a scene, or delete it.
 - **See what was checked.** A separate check compares the model with your drawing from five sides, and shows
   you what it found.

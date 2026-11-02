@@ -1,4 +1,4 @@
-/* The studio's 3D view: a Blender model in the browser, with its parts by name. It selects, hides, pulls apart, slices and plays back the build, and never changes the model. */
+/* The studio's 3D view: a Blender model in the browser, with its parts by name. It selects, hides, pulls apart and plays back the build, and never changes the model. */
 
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
@@ -36,7 +36,6 @@ export class StudioViewport {
   private hidden = new Set<string>();
   private box = new THREE.Box3();
   private focus = new THREE.Box3();
-  private slice = new THREE.Plane(new THREE.Vector3(1, 0, 0), 1000);
   private raycaster = new THREE.Raycaster();
   private pointer = new THREE.Vector2();
   private selected: string | null = null;
@@ -62,7 +61,6 @@ export class StudioViewport {
     this.renderer.toneMappingExposure = 0.72;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.renderer.localClippingEnabled = true;
     host.append(this.renderer.domElement);
     const environment = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = environment.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -120,7 +118,7 @@ export class StudioViewport {
     this.focus = this.detailBox(gltf.scene);
     const centre = this.focus.getCenter(new THREE.Vector3());
     const reach = this.focus.getSize(new THREE.Vector3()).length();
-    const edge = new THREE.LineBasicMaterial({ color: 0x17181a, transparent: true, opacity: 0.32, clippingPlanes: [this.slice] });
+    const edge = new THREE.LineBasicMaterial({ color: 0x17181a, transparent: true, opacity: 0.32 });
     gltf.scene.traverse((node) => {
       const mesh = node as THREE.Mesh;
       if (!mesh.isMesh) return;
@@ -130,7 +128,6 @@ export class StudioViewport {
       const thin = new THREE.Box3().setFromObject(mesh).getSize(new THREE.Vector3()).toArray().sort((a, b) => a - b)[0] < THIN;
       const own = (m: THREE.Material) => {
         const held = m.clone() as THREE.MeshStandardMaterial;
-        held.clippingPlanes = [this.slice];
         held.side = THREE.DoubleSide;
         held.envMapIntensity = 0.55;
         held.polygonOffset = thin;
@@ -150,7 +147,6 @@ export class StudioViewport {
     this.ground.position.y = this.box.min.y - 0.002;
     this.setLook(this.look);
     this.apply();
-    this.setSlice(1);
     this.setView("iso");
   }
 
@@ -199,7 +195,6 @@ export class StudioViewport {
     for (const part of this.parts.values()) {
       if (look === "clay") {
         const clay = CLAY.clone();
-        clay.clippingPlanes = [this.slice];
         clay.side = THREE.DoubleSide;
         clay.polygonOffset = (Array.isArray(part.own) ? part.own[0] : part.own).polygonOffset;
         clay.polygonOffsetFactor = clay.polygonOffsetUnits = -2;
@@ -217,12 +212,6 @@ export class StudioViewport {
   }
 
   setSpread(share: number): void { this.spread = share; this.apply(); }
-
-  /* share 1 shows it all; lower cuts away the run, from the far end back to the section. */
-  setSlice(share: number): void {
-    const length = this.box.max.x - this.box.min.x;
-    this.slice.constant = this.box.min.x + length * share + 1e-4;
-  }
 
   setHidden(names: string[], hide: boolean): void {
     names.forEach((n) => (hide ? this.hidden.add(n) : this.hidden.delete(n)));
@@ -312,7 +301,7 @@ export class StudioViewport {
     this.pointer.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const meshes = [...this.parts.values()].map((p) => p.mesh).filter((m) => m.visible);
-    const hit = this.raycaster.intersectObjects(meshes, false).find((h) => h.point.x <= this.slice.constant);
+    const hit = this.raycaster.intersectObjects(meshes, false)[0];
     if (!hit) return null;
     return [...this.parts.entries()].find(([, p]) => p.mesh === hit.object)?.[0] ?? null;
   }

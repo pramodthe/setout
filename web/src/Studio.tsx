@@ -33,7 +33,6 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
   const [big, setBig] = useState(false);
   const [text, setText] = useState("");
   const [spread, setSpread] = useState(0);
-  const [slice, setSlice] = useState(100);
   const [playing, setPlaying] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [shot, setShot] = useState(0);
@@ -193,7 +192,6 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
               </div>
               <div className="sliders">
                 <label>Pull apart<input type="range" aria-label="Pull apart" min={0} max={100} value={spread} onChange={(e) => { const v = Number(e.target.value); setSpread(v); view.current?.setSpread(v / 100); }} /></label>
-                <label>Cut along<input type="range" aria-label="Cut along the run" min={1} max={100} value={slice} onChange={(e) => { const v = Number(e.target.value); setSlice(v); view.current?.setSlice(v / 100); }} /></label>
               </div>
             </>
           )}
