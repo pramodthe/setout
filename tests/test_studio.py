@@ -330,3 +330,100 @@ def test_a_scene_through_the_routes(sandbox):
     assert client.get(f"/api/studio/{ident}").status_code == 404
     assert client.delete(f"/api/studio/{ident}").status_code == 404
     assert client.patch("/api/studio/none", json={"title": "x"}).status_code == 404
+
+
+class Dropped(Muse):
+    """The connection drops once, on the turn it's told to."""
+    def __init__(self, *turns, drop_on=None, **kw):
+        super().__init__(*turns, **kw)
+        self.drop_on = drop_on
+
+    def __call__(self, payload):
+        if not payload.get("text") and len(self.payloads) + 1 == self.drop_on:
+            self.drop_on = None
+            raise ConnectionError("dropped")
+        return super().__call__(payload)
+
+
+def step(n):
+    return ("run_python", {"intent": f"part {n}", "code": f"PART_{n} = {n}"})
+
+
+def retry_now(ident):
+    repo = repository()
+    job = repo.get(d.studio_scenes, ident)["job_id"]
+    with d.transaction(repo.engine) as con:
+        con.execute(d.jobs.update().where(d.jobs.c.id == job).values(available_at=0))
+    return repo.get(d.jobs, job)
+
+
+def test_a_retry_rebuilds_the_scene_instead_of_adding_to_it(sandbox):
+    scene = studio.start("d.png", png())
+    muse = Dropped([step(1)], [step(2)], [step(3)], items=["a slab"], drop_on=3)
+    work(muse)
+    assert retry_now(scene["id"])["state"] == "queued"
+    work(muse)
+    repo = repository()
+    row = repo.get(d.studio_scenes, scene["id"])
+    job = repo.get(d.jobs, row["job_id"])
+    assert (job["state"], job["attempts"], row["state"]) == ("succeeded", 2, "ready")
+    assert row["steps"] == ["PART_1 = 1", "PART_2 = 2", "PART_3 = 3"]
+    assert row["intents"] == ["part 1", "part 2", "part 3"]
+    assert len(row["parts"]) == 3
+
+
+def test_a_retry_does_not_pay_twice_or_repeat_the_feed(sandbox):
+    scene = studio.start("d.png", png())
+    muse = Dropped([step(1)], [step(2)], [step(3)], items=["a slab"], drop_on=3)
+    work(muse)
+    retry_now(scene["id"])
+    work(muse)
+    repo = repository()
+    row = repo.get(d.studio_scenes, scene["id"])
+    assert len(muse.payloads) == 4  # three steps and finish: the two turns before the drop came from checkpoints
+    assert row["tokens"] == repo.run(row["job_id"])["consumed"]["tokens"]
+    said = [f["text"] for f in row["feed"] if f["kind"] == "step"]
+    assert said == ["part 1", "part 2", "part 3"]
+
+
+def test_a_retried_revision_keeps_the_scene_it_started_from(sandbox):
+    scene = studio.start("d.png", png())
+    work(Muse([step(1)], [step(2)]))
+    studio.feedback(scene["id"], "add more")
+    muse = Dropped([step(3)], [step(4)], drop_on=2)
+    work(muse)
+    retry_now(scene["id"])
+    work(muse)
+    row = repository().get(d.studio_scenes, scene["id"])
+    assert row["steps"] == ["PART_1 = 1", "PART_2 = 2", "PART_3 = 3", "PART_4 = 4"]
+
+
+def test_a_busy_provider_leaves_the_scene_working_until_the_retry(sandbox):
+    import urllib.error
+
+    class Busy(Muse):
+        busy = True
+
+        def __call__(self, payload):
+            if self.busy and not payload.get("text") and len(self.payloads) == 1:
+                self.busy = False
+                raise urllib.error.HTTPError("https://model", 503, "busy", {}, None)
+            return super().__call__(payload)
+    scene = studio.start("d.png", png())
+    muse = Busy([step(1)], [step(2)])
+    work(muse)
+    assert studio.get(scene["id"])["state"] == "working"
+    with pytest.raises(studio.Busy):
+        studio.delete(scene["id"])
+    retry_now(scene["id"])
+    work(muse)
+    held = studio.get(scene["id"])
+    assert held["state"] == "ready" and held["step_count"] == 2
+
+
+def test_the_feed_never_shows_a_tools_raw_output(sandbox):
+    scene = studio.start("d.png", png())
+    work(Muse([step(1)], [("list_parts", {})]))
+    row = repository().get(d.studio_scenes, scene["id"])
+    assert not [f for f in row["feed"] if "->" in f["text"] or "list_parts" in f["text"]]
+    assert {"kind": "tool", "text": "Measuring the parts"} in row["feed"]

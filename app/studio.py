@@ -8,12 +8,13 @@ from __future__ import annotations
 import io
 import json
 import re
+import urllib.error
 
 import sqlalchemy as sa
 from PIL import Image
 
 from . import database as d, meta_client
-from .repository import BudgetExceeded, sha, uid
+from .repository import BudgetExceeded, billed_tokens, sha, uid
 from .runtime import ensure_worker, repository
 from .store import figure_path, remove_document, store_pdf
 
@@ -28,6 +29,14 @@ REVISE = ("A person looked at your model and says: {text}\nThe scene is as you l
 
 class Busy(RuntimeError):
     """The scene is being worked on."""
+
+
+def _clip(text, limit=400):
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0].rstrip(".,;:") or text[:limit]
+    return cut + "…"
 
 
 def _set(repo, ident, **values):
@@ -62,7 +71,7 @@ def _drawing(filename, data) -> bytes:
 
 
 def _queue(repo, ident, feedback=None):
-    job = repo.enqueue("studio_build", {"scene_id": ident, "feedback": feedback})
+    job = repo.enqueue("studio_build", {"scene_id": ident, "feedback": feedback, "from_step": len(repo.get(d.studio_scenes, ident)["steps"] or [])})
     _set(repo, ident, state="working", step="Reading the drawing", job_id=job["id"], error=None)
     ensure_worker()
 
@@ -197,23 +206,28 @@ def build(repo, job, gateway):
     row = repo.get(d.studio_scenes, ident)
     feed = list(row["feed"] or [])
     turns = {"n": 0}
+    if job["attempts"] > 1:
+        _set(repo, ident, step="Picking up where it stopped")
 
     def respond(payload):
         turns["n"] += 1
         return gateway.call({"model": meta_client.default_model(), **payload}, "studio", f"turn-{turns['n']}")
 
     def say(text):
+        if gateway.replayed:  # the feed already has this: a retry goes back over the earlier attempt's turns
+            return
         kind = "muse"
         if "] check " in text:
             text, kind = text.split("] check ", 1)[1], "check"
         elif "] run_python " in text:
             text, kind = text.split("] run_python ", 1)[1].split(" -> ")[0], "step"
-        elif "] look" in text or "] undo" in text or "] finish" in text:
-            kind, text = "tool", ("Checking other views" if "] look" in text else "Undoing a step" if "] undo" in text else "Finishing")
+        elif "] look" in text or "] undo" in text or "] finish" in text or "] list_parts" in text:
+            kind, text = "tool", ("Checking other views" if "] look" in text else "Undoing a step" if "] undo" in text else "Measuring the parts" if "] list_parts" in text else "Finishing")
         else:
             text = text.split("] ", 1)[-1]
-        feed.append({"kind": kind, "text": text[:400]})
-        _set(repo, ident, feed=feed[-FEED:], step=text[:120])
+        text = _clip(text)
+        feed.append({"kind": kind, "text": text})
+        _set(repo, ident, feed=feed[-FEED:], step=text)
 
     def on_step(live, scene, found):
         values = {"steps": live.steps, "intents": live.intents, "parts": scene["parts"]}
@@ -227,12 +241,12 @@ def build(repo, job, gateway):
         with d.transaction(repo.engine) as con:
             for reference in references:
                 repo.artifact(con, reference)
-        spent = repo.run(gateway.fence.job_id)["consumed"].get("tokens", 0)
         answer = gateway.json(prompt, [r["id"] for r in references], schema, name, f"{name}:{sha(prompt + ''.join(r['id'] for r in references))[:16]}")
-        return answer, repo.run(gateway.fence.job_id)["consumed"].get("tokens", 0) - spent
+        return answer, billed_tokens(gateway.usage)
 
     held = row["checks"] or {}
-    live = loop.Live(repo.artifacts.read(row["drawing_artifact_id"]), respond, steps=row["steps"], intents=row["intents"], say=say, show=_shown(repo), on_step=on_step, ask=ask, features=held.get("features"))
+    begun = job["payload"].get("from_step", len(row["steps"] or []))  # a retry replays from here: checkpoints answer for the model, and the tools run again
+    live = loop.Live(repo.artifacts.read(row["drawing_artifact_id"]), respond, steps=(row["steps"] or [])[:begun], intents=(row["intents"] or [])[:begun], say=say, show=_shown(repo), on_step=on_step, ask=ask, features=held.get("features"))
     try:
         live.run(brief)
     except BudgetExceeded:  # what it built so far still stands
@@ -255,7 +269,7 @@ def run_job(repo, fence, job, gateway):
     try:
         build(repo, job, gateway)
     except (ValueError, KeyError, OSError) as error:
-        if not isinstance(error, (ConnectionError, TimeoutError)):
+        if not isinstance(error, (urllib.error.URLError, ConnectionError, TimeoutError)):  # those are retried
             _set(repo, ident, state="failed", error=str(error)[:300])
         raise
     repo.end(fence, "succeeded", {"scene_id": ident})

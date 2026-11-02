@@ -8,6 +8,7 @@ import Home from "./Home";
 import { ICONS } from "./icons";
 import { Checker, Props } from "./Inspector";
 import SceneTree from "./SceneTree";
+import { wholeSteps } from "./scene";
 import type { Card, Scene } from "./scene";
 import { StudioViewport } from "./viewport";
 import type { Look, Tool, View } from "./viewport";
@@ -212,7 +213,10 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
               </>
             ) : (
               <div className="feed" aria-live="polite">
-                {scene?.feed.map((item, k) => <p key={k} className={`say ${item.kind}`}>{item.text}</p>)}
+                <h2>Build</h2>
+                <ul>
+                  {(scene ? wholeSteps(scene.feed, scene.intents) : []).map((item, k) => <li key={k} className={`say ${item.kind}`}>{item.text}</li>)}
+                </ul>
                 <div ref={feedEnd} />
               </div>
             )}

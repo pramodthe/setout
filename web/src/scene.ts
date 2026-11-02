@@ -9,3 +9,15 @@ export type Card = { id: string; title: string; state: string; parts: number; ha
 
 export const pretty = (word: string) => word.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 export const mm = (value: number) => (Math.abs(value) >= 100 ? value.toFixed(0) : value.toFixed(1));
+
+/* A step line used to be stored cut off. Intents are the whole lines, in the same order as the step lines. */
+export function wholeSteps(feed: Feed[], intents: string[]): Feed[] {
+  let n = 0;
+  return feed.map((item) => {
+    if (item.kind !== "step") return item;
+    const intent = intents[n++] ?? "";
+    const shown = item.text.endsWith("…") ? item.text.slice(0, -1).trimEnd() : item.text;
+    if (intent.length <= shown.length || !intent.startsWith(shown)) return item;
+    return { ...item, text: intent };
+  });
+}

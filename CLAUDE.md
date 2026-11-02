@@ -43,11 +43,10 @@ Run from the repo root, with `.venv` activated.
 
 ```sh
 python -m pytest tests/ -q                                  # no network: model and sandbox are stubbed
-python -m pytest tests/test_studio.py -q                    # one file
+python -m pytest tests/test_studio.py -q -k undo            # one file, or the tests matching a name
 SETOUT_VAR=var python -m uvicorn app.main:app --port 8000   # API and web/dist, with an embedded worker
-SETOUT_WORKER=external python -m app.worker                 # or run the worker separately
 modal deploy builder/sandbox.py                             # after changing the sandbox
-python -m builder.loop <drawing> <name>                     # one build from the command line
+python -m builder.loop <drawing> <name>                     # one build from the command line, saved in var/live/<name>
 
 cd web
 npm run build     # tsc -b && vite build -> web/dist, which the server serves
@@ -55,6 +54,14 @@ npm run dev       # Vite dev server, /api proxied to :8000
 npx tsc -b        # type-check
 npm run lint      # oxlint
 ```
+
+To run the worker apart, start the server with `SETOUT_WORKER=external` and run `python -m app.worker` beside it
+(`--once` takes one job). The variable only stops the server starting its own worker, so it does nothing on the
+worker's command.
+
+CI (`.github/workflows/checks.yml`) runs pytest, `tsc -b`, lint and the build, on Python 3.13 and Node 24. The web
+app has no tests, and Python has no linter. `tests/conftest.py` points the store at a temp folder, so tests never
+touch `var/`.
 
 The owner's scenes are in `var/`. Old drawings and backups are in `~/Desktop/setout-archive`, outside the repo.
 
@@ -68,7 +75,7 @@ app/worker.py       leases the job (60 s, heartbeat 15 s, fencing, retry with ba
       run_python, look, list_parts, undo, finish
       builder/sandbox.py  live_step on Modal: replays the steps in Blender, no network
       builder/kit.py      shapes, renders and export, sent to the sandbox on every call
-    builder/checker.py  reads the source once, ticks it at finish, code decides
+    builder/checker.py  reads the source once (feedback reuses that list), ticks it at finish, code decides
 web/src/Studio.tsx  polls the scene, then shows model.glb in three.js (viewport.ts)
 ```
 
@@ -80,22 +87,32 @@ How it fits together, and what isn't obvious from any one file:
 - **A scene is its list of code steps** (`studio_scenes.steps`), replayed from a clean start on every call. There
   is no saved Blender file. A step that fails isn't kept, and the error goes back to Muse. Undo drops a step.
 - **The kit travels with each call,** so changing `builder/kit.py` needs no deploy. Changing
-  `builder/sandbox.py` does.
+  `builder/sandbox.py` does. Muse's notes on the kit are generated from it (`loop.api()`), so a docstring there is
+  prompt text, and a new shape has to go in `__all__` and in the list in `api()`.
+- **Build playback:** `live_step` tags each object with the step that made it, the GLB carries that as extras, and
+  `viewport.ts` plays the steps back from it.
 - **Frame:** the section lies at x = 0 and the assembly runs along +x. z is up, in mm. Looking at the cut
   face, **+y is on the viewer's left**, so a drawing's left edge is the largest y. Stating this wrongly once
   made Muse mirror finished scenes.
 - **Model calls go through `app/model_gateway.py`:** budgeted, checkpointed in `agent_steps`, replayed on retry.
-  Pictures are artifacts, so a checkpoint never holds an image. Tokens count what is paid: uncached input
-  plus output (`repository.billed_tokens`).
+  A retry goes back to the job's `from_step`, so the model's answers come from checkpoints and the tools run again,
+  which rebuilds the scene rather than adding to it. Pictures are artifacts, so a checkpoint never holds an image. Tokens count what is paid: uncached input
+  plus output (`repository.billed_tokens`). `python -m builder.loop` skips the gateway: it calls the provider
+  directly, keeps only the loop's own limits, and leaves no scene in the app.
+- **Two limits stop a build:** `TURNS` and `TOKENS` in `builder/loop.py`, and the job's `DEFAULT_BUDGET` in
+  `app/repository.py`. Past `WRAP_UP` Muse is told to finish, and past `CHECK_ROOM` `finish` skips the checker, so a
+  scene can end unchecked. When the budget runs out, what was built still stands.
 - **Files are stored once, by content,** so two scenes can share one. `studio.delete` keeps any file another scene uses.
-- **A PDF is only read once:** `studio._drawing` keeps its first figure as a PNG artifact and removes the stored PDF.
+- **A PDF is only read once:** `studio._drawing` keeps its first figure (found by `app/store.py`) as a PNG artifact
+  and removes the stored PDF.
 - **Long CPU work on the server starves the job heartbeat,** and a job loses its lease. Keep it out of the worker.
 - **Muse reads alone.** Examples in its prompt make it copy them onto a different drawing.
 - **Image embeddings can't compare line drawings.** To an image model they all look alike.
 - **Colours:** Blender's renders have procedural surfaces, and the GLB carries plain colours
   (`flatten_materials`). The shapes are the same.
 - **Schema changes need a migration.** `tests/test_migrations.py` fails when `app/database.py` and
-  `migrations/` differ.
+  `migrations/` differ. Migrations run when `Repository` opens the store, and a store whose revision is no longer in
+  `migrations/` is refused, not upgraded.
 - **`web/src/styles.css` holds all the styling,** scoped under `.studio` and `.appbar`.
 
 ## Conventions

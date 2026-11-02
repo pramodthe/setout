@@ -210,7 +210,7 @@ class Live:
                 args = json.loads(call["arguments"] or "{}")
                 started = time.time()
                 result, images = getattr(self, call["name"])(args)
-                self.say(f"[{turn}] {call['name']} {args.get('intent', '')[:70]} -> {str(result)[:170]} ({time.time() - started:.0f}s, {self.spent} tokens)")
+                self.say(f"[{turn}] {call['name']} {args.get('intent', '')} -> {str(result)[:170]} ({time.time() - started:.0f}s, {self.spent} tokens)")
                 conversation.append({"type": "function_call_output", "call_id": call["call_id"], "output": json.dumps(result)})
                 pictures += images
             if pictures:

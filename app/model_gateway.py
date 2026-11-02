@@ -48,13 +48,16 @@ class ModelGateway:
     def __init__(self, repo, fence, responder=None):
         self.repo, self.fence = repo, fence
         self.responder = responder or meta_client.respond_tools
+        self.replayed, self.usage = False, {}  # about the last call: was it a checkpoint, and what did it cost
 
     def call(self, payload, purpose, operation_key, responder=None):
         run = self.repo.run(self.fence.job_id)
         steps = [s for s in self.repo.list(d.steps, d.steps.c.run_id == run["id"], order=d.steps.c.n)
                  if s["kind"] == "model" and s["request"].get("purpose") == purpose]
         matching = [s for s in steps if s["request"].get("operation_key") == operation_key]
-        if matching and matching[-1]["state"] == "completed":
+        self.replayed = bool(matching) and matching[-1]["state"] == "completed"
+        if self.replayed:
+            self.usage = matching[-1]["response"].get("usage") or {}
             return matching[-1]["response"]
         if matching:
             payload = matching[-1]["request"]["payload"]
@@ -103,6 +106,7 @@ class ModelGateway:
                 detail = ""
             raise ProviderRejected(f"provider rejected the {purpose} request ({error.code}): {detail}") from error
         self.repo.model_response(self.fence, step_id, response, reservation)
+        self.usage = response.get("usage") or {}
         return response
 
     def json(self, text, images, schema, purpose, operation_key, model=None):
