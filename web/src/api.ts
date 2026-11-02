@@ -2,11 +2,9 @@
 
 import type {
   Build,
-  ComponentGroup,
   DetailSpec,
   Doc,
   GenJob,
-  LibraryEntry,
   ReviewData,
   Scene,
   SpecSummary,
@@ -79,7 +77,6 @@ export const api = {
       detail's current version, or the server answers 409. */
   confirmInferred: (versionId: string, reviewer: string, partIds: string[]): Promise<{ review_id: string; version_id: string }> =>
     reviewVersion(versionId, { reviewer, action: "correct", data: { confirm_inferred: partIds } }),
-  library: (): Promise<{ details: LibraryEntry[]; components: ComponentGroup[] }> => req("/api/library"),
   scene: (detailId: string): Promise<Scene> => req(`/api/specs/${encodeURIComponent(detailId)}/scene`),
   thumbUrl: (detailId: string): string => `/api/specs/${encodeURIComponent(detailId)}/thumb`,
   /** Library card image: a render of the 3D, never the source drawing. */

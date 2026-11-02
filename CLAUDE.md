@@ -157,8 +157,15 @@ path is hard-coded) and the reference PDF at `/tmp/conpro_sills.pdf`, which is n
 committed. It drives the upload screen at `#/workbench`. Screenshots go to
 `/tmp/setout-drive/`.
 
-Web routes: `#/` library · `#/d/<detail_id>[?part=<id>]` detail page + AI guide ·
-`#/workbench` add a detail from a PDF.
+Web routes: `#/` studio home · `#/studio/<id>` a scene · `#/d/<detail_id>[?part=<id>]` verified detail + AI guide ·
+`#/workbench` add a verified detail from a PDF. Those last two have no link from the studio.
+
+**The studio** (`app/studio.py`, `goal/`, `web/src/Studio.tsx`) is apart from verified versions: it never
+writes a version, never reaches the verifier and can't be published. Muse writes Blender Python against a live
+scene in the no-network Modal sandbox (`goal/blender_modal.py`, deploy it with `modal deploy`), looks at
+renders and fixes its work. The scene is its list of code steps, replayed each time. `goal/blender_check.py`
+reads the source, ticks it from five renders and refuses finish while essentials are missing. Viewing is
+three.js on a GLB export. `goal/blender_kit.py` holds shapes only, never components.
 
 AI features need `META_API_KEY` in `.env`. CAD objects also need a Modal login
 (`.venv/bin/modal token new`); without it they stay labelled placeholders that

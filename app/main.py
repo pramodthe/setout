@@ -61,7 +61,7 @@ async def public_mode(request: Request, call_next):
     if PUBLIC:
         path, method = request.url.path, request.method
         if path.startswith(("/api/jobs", "/api/runs", "/api/artifacts", "/api/versions", "/api/details",
-                            "/api/components", "/api/memories", "/api/eval/datasets")):
+                            "/api/components", "/api/memories", "/api/eval/datasets", "/api/studio")):
             return JSONResponse({"detail": "private generation and source evidence"}, status_code=403)
         drawing = path.startswith("/api/documents") or path.endswith(("/thumb", "/drawing"))
         if drawing or (method in ("POST", "PATCH") and path != "/api/guide"):
@@ -600,6 +600,63 @@ GEN_JOBS: dict[str, dict] = {}
 class GenerateRequest(BaseModel):
     doc_id: str
     crop_id: str
+
+
+class StudioFeedback(BaseModel):
+    text: str
+
+
+def _studio_call(call, *args):
+    from . import studio
+    try:
+        return call(*args)
+    except KeyError:
+        raise HTTPException(404, "unknown scene")
+    except studio.Busy as error:
+        raise HTTPException(409, str(error))
+    except ValueError as error:
+        raise HTTPException(422, str(error)[:300])
+
+
+@app.get("/api/studio")
+async def studio_scenes() -> dict:
+    from . import studio
+    return {"scenes": await run_in_threadpool(studio.listing)}
+
+
+@app.post("/api/studio", status_code=202)
+async def studio_start(file: UploadFile = File(...)) -> dict:
+    """A drawing to a 3D scene: Muse builds it in a live Blender sandbox."""
+    from . import studio
+    if not meta_client.configured():
+        raise HTTPException(503, "AI not configured")
+    data = await file.read()
+    return await run_in_threadpool(_studio_call, studio.start, file.filename or "drawing", data)
+
+
+@app.get("/api/studio/{ident}")
+async def studio_scene(ident: str) -> dict:
+    from . import studio
+    return await run_in_threadpool(_studio_call, studio.get, ident)
+
+
+@app.get("/api/studio/{ident}/{which}")
+async def studio_file(ident: str, which: str) -> Response:
+    from . import studio
+    data, media = await run_in_threadpool(_studio_call, studio.file_of, ident, which)
+    return Response(data, media_type=media, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/studio/{ident}/feedback", status_code=202)
+async def studio_feedback(ident: str, req: StudioFeedback) -> dict:
+    from . import studio
+    return await run_in_threadpool(_studio_call, studio.feedback, ident, req.text)
+
+
+@app.post("/api/studio/{ident}/undo")
+async def studio_undo(ident: str) -> dict:
+    from . import studio
+    return await run_in_threadpool(_studio_call, studio.undo, ident)
 
 
 @app.get("/api/ai/status")

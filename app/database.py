@@ -100,6 +100,10 @@ component_reviews = table("component_reviews", ref("component_id", "components.i
                           C("reviewer", sa.Text), C("action", sa.Text), C("data", sa.JSON), C("at", sa.Float))
 sam_regions = table("sam_regions", ref("version_id", "detail_versions.id"),
                     C("part_key", sa.Text), C("data", sa.JSON))
+studio_scenes = table("studio_scenes", C("title", sa.Text), C("state", sa.String(32), index=True), C("step", sa.Text), ref("job_id", "jobs.id", True),
+                      ref("drawing_artifact_id", "artifacts.id", True), ref("model_artifact_id", "artifacts.id", True), ref("preview_artifact_id", "artifacts.id", True),
+                      C("steps", sa.JSON), C("intents", sa.JSON), C("feed", sa.JSON), C("parts", sa.JSON), C("unsure", sa.JSON), C("tokens", sa.Integer), C("error", sa.Text), C("checks", sa.JSON),
+                      C("created_at", sa.Float), C("updated_at", sa.Float))
 resource_limits = table("resource_limits", C("capacity", sa.Integer, nullable=False))
 resource_leases = table("resource_leases", ref("resource", "resource_limits.id"), ref("job_id", "jobs.id"),
                         C("owner", sa.String(64)), C("epoch", sa.Integer), C("expires_at", sa.Float))

@@ -99,7 +99,7 @@ def test_migrations_create_exactly_the_declared_schema(empty_engine):
     d.migrate(empty_engine)
     assert drift(empty_engine, d.metadata) == [], "app/database.py changed without a migration"
     with empty_engine.connect() as con:
-        assert con.scalar(sa.text("SELECT version_num FROM alembic_version")) == "0002_resources"
+        assert con.scalar(sa.text("SELECT version_num FROM alembic_version")) == "0006_drop_assemblies"
         assert dict(con.execute(sa.select(d.resource_limits.c.id, d.resource_limits.c.capacity)).all()) == {
             "meta": 4, "cad": 2, "renderer": 2}
 
@@ -157,7 +157,7 @@ def test_upgrade_over_a_create_all_era_database(empty_engine):
     d.migrate(empty_engine)
     assert drift(empty_engine, d.metadata) == []
     with empty_engine.connect() as con:
-        assert con.scalar(sa.text("SELECT version_num FROM alembic_version")) == "0002_resources"
+        assert con.scalar(sa.text("SELECT version_num FROM alembic_version")) == "0006_drop_assemblies"
         assert con.scalar(sa.select(sa.func.count()).select_from(d.resource_limits)) == 3
         assert con.scalar(sa.select(d.reviews.c.seq).where(d.reviews.c.id == "review")) == 0
 
