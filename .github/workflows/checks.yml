@@ -1,0 +1,23 @@
+name: Checks
+on: [push, pull_request]
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -r requirements.txt
+      - run: .venv/bin/python -m pytest tests/ -q
+      - working-directory: web
+        run: npm ci
+      - working-directory: web
+        run: npx tsc -b && npm run lint && npm run build

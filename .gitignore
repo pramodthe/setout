@@ -1,36 +1,24 @@
+# Secrets
 .env
+
+# Python
+.venv/
 __pycache__/
 *.pyc
-node_modules/
-data/videos/*
-data/frames/*
-data/manuals/*
-data/demo/
-!data/**/.gitkeep
-killcheck_results.json
+.pytest_cache/
+
+# Web
+web/node_modules/
+web/dist/
+*.tsbuildinfo
+
+# Runtime state
+var/
+
+# Drawings, datasets and models are never committed
+data/
+*.pdf
+
+# Operating system
 .DS_Store
 Thumbs.db
-
-# Source documents are never committed - see .claude/rules/source-documents.md
-# Everything under data/ (drawings, DWG/DXF, scans, datasets) stays local;
-# only the .gitkeep placeholders are tracked.
-data/**
-!data/**/
-!data/**/.gitkeep
-*.pdf
-data/**/*.txt
-data/**/*.json
-**/ocr_output/
-**/*_extracted.*
-
-# Vertical-slice runtime (gitignored)
-var/
-.venv/
-
-# Web build output and deps
-web/dist/
-web/node_modules/
-
-# Private plans and research stay on the owner's machine
-docs/
-research_notes/

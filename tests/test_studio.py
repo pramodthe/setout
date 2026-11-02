@@ -10,7 +10,7 @@ from app import database as d, studio
 from app.main import app
 from app.runtime import repository
 from app.worker import Worker
-from goal import blender_live
+from builder import loop
 
 
 def png(shade=255):
@@ -53,7 +53,7 @@ def sandbox(monkeypatch):
         if export:
             found["model.glb"] = b"glb"
         return found
-    monkeypatch.setattr(blender_live, "sandbox", run)
+    monkeypatch.setattr(loop, "sandbox", run)
     monkeypatch.setattr(studio, "ensure_worker", lambda: None)
     monkeypatch.setattr(studio.meta_client, "configured", lambda: True)
     return runs
@@ -154,7 +154,7 @@ def test_a_budget_stop_keeps_what_was_built(sandbox, monkeypatch):
     assert held["state"] == "ready" and held["step_count"] == 1
 
 
-def test_the_routes(sandbox):
+def test_unknown_scenes(sandbox):
     client = TestClient(app)
     assert client.get("/api/studio/none").status_code == 404
     assert client.post("/api/studio/none/undo").status_code == 404
@@ -191,7 +191,7 @@ def test_refusals_stop_and_what_is_left_goes_to_the_person(sandbox):
     made = studio.start("d.png", png())
     work(muse)
     held = studio.get(made["id"])
-    assert held["state"] == "ready" and len(held["checks"]["rounds"]) == blender_live.REFUSALS + 1
+    assert held["state"] == "ready" and len(held["checks"]["rounds"]) == loop.REFUSALS + 1
     assert any("a wall" in u for u in held["unsure"])
 
 
@@ -206,16 +206,16 @@ def test_the_checker_sees_every_side_and_none_of_the_builders_words(sandbox):
 
 
 def test_an_unanswered_item_is_not_passed_as_seen():
-    from goal import blender_check
+    from builder import checker
     features = {"items": [{"id": 1, "what": "a wall", "importance": "must"}, {"id": 2, "what": "a nail", "importance": "should"}]}
-    done = blender_check.verdict(features, {"ticks": [{"id": 2, "state": "missing", "note": "x"}], "not_in_source": []})
+    done = checker.verdict(features, {"ticks": [{"id": 2, "state": "missing", "note": "x"}], "not_in_source": []})
     assert done["passed"] and done["right"] == 0 and done["rows"][0]["state"] == "cant_tell"
-    done = blender_check.verdict(features, {"ticks": [{"id": 1, "state": "wrong", "note": "x"}], "not_in_source": []})
+    done = checker.verdict(features, {"ticks": [{"id": 1, "state": "wrong", "note": "x"}], "not_in_source": []})
     assert not done["passed"]
 
 
 def test_running_out_of_turns_still_ends_with_a_check(sandbox, monkeypatch):
-    monkeypatch.setattr(blender_live, "TURNS", 2)
+    monkeypatch.setattr(loop, "TURNS", 2)
     keep_going = ("run_python", {"intent": "more", "code": "M = 1"})
 
     class Busy(Muse):
@@ -229,3 +229,72 @@ def test_running_out_of_turns_still_ends_with_a_check(sandbox, monkeypatch):
     held = studio.get(made["id"])
     assert held["title"] == "a slab" and len(held["checks"]["rounds"]) == 1
     assert any("ran out of turns" in u for u in held["unsure"]) and any("a wall" in u for u in held["unsure"])
+
+
+def built(sandbox_runs=None, picture=None):
+    made = studio.start("d.png", picture or png())
+    work(Muse([STEP], items=["a slab"]))
+    return made["id"]
+
+
+def test_a_new_name_stays_through_a_revision(sandbox):
+    ident = built()
+    assert studio.rename(ident, "  My detail  ")["title"] == "My detail"
+    studio.feedback(ident, "add a wall")
+    work(Muse([("run_python", {"intent": "the wall", "code": "W = 100"})], items=["a slab"]))
+    assert studio.get(ident)["title"] == "My detail"
+
+
+def test_a_first_build_still_names_itself(sandbox):
+    assert studio.get(built())["title"] != studio.NEW_TITLE
+
+
+def test_a_scene_needs_a_name(sandbox):
+    with pytest.raises(ValueError):
+        studio.rename(built(), "   ")
+
+
+def test_a_deleted_scene_leaves_nothing_behind(sandbox):
+    repo = repository()
+    ident = built(picture=png(11))
+    row = repo.get(d.studio_scenes, ident)
+    jobs = [j["id"] for j in repo.list(d.jobs) if j["payload"].get("scene_id") == ident]
+    run = repo.run(jobs[0])["id"]
+    assert repo.list(d.steps, d.steps.c.run_id == run)
+    studio.delete(ident)
+    with pytest.raises(KeyError):
+        studio.get(ident)
+    assert not repo.list(d.jobs, d.jobs.c.id.in_(jobs)) and not repo.list(d.events, d.events.c.job_id.in_(jobs))
+    assert not repo.list(d.steps, d.steps.c.run_id == run) and not repo.list(d.runs, d.runs.c.id == run)
+    assert not repo.list(d.artifacts, d.artifacts.c.id == row["drawing_artifact_id"])
+    assert not (repo.artifacts.root / row["drawing_artifact_id"]).exists()
+
+
+def test_deleting_a_scene_keeps_the_files_another_scene_uses(sandbox):
+    repo = repository()
+    first, second = built(picture=png(22)), built(picture=png(22))
+    shared = repo.get(d.studio_scenes, first)["drawing_artifact_id"]
+    assert repo.get(d.studio_scenes, second)["drawing_artifact_id"] == shared
+    studio.delete(first)
+    assert studio.file_of(second, "drawing")[0] == png(22) and studio.file_of(second, "model.glb")[0] == b"glb"
+    studio.delete(second)
+    assert not (repo.artifacts.root / shared).exists()
+
+
+def test_a_scene_being_built_cannot_be_deleted(sandbox):
+    made = studio.start("d.png", png(33))
+    with pytest.raises(studio.Busy):
+        studio.delete(made["id"])
+    assert studio.get(made["id"])["state"] == "working"
+    work(Muse([STEP]))
+
+
+def test_a_scene_through_the_routes(sandbox):
+    client = TestClient(app)
+    ident = built(picture=png(44))
+    assert client.patch(f"/api/studio/{ident}", json={"title": "Renamed"}).json()["title"] == "Renamed"
+    assert client.patch(f"/api/studio/{ident}", json={"title": " "}).status_code == 422
+    assert client.delete(f"/api/studio/{ident}").status_code == 204
+    assert client.get(f"/api/studio/{ident}").status_code == 404
+    assert client.delete(f"/api/studio/{ident}").status_code == 404
+    assert client.patch("/api/studio/none", json={"title": "x"}).status_code == 404
