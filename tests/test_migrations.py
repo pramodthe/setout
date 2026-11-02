@@ -98,3 +98,18 @@ def test_schema_drift_check_is_not_vacuous(empty_engine, change):
     edited = copy_metadata()
     change(edited)
     assert drift(empty_engine, edited)
+
+
+def test_a_database_from_a_removed_migration_says_what_to_do(empty_engine):
+    d.migrate(empty_engine)
+    with d.transaction(empty_engine) as connection:
+        connection.execute(sa.text("UPDATE alembic_version SET version_num = '0007_studio_only'"))
+    with pytest.raises(RuntimeError, match="0007_studio_only.*Move its folder away"):
+        d.migrate(empty_engine)
+
+
+def test_migrating_a_current_database_changes_nothing(empty_engine):
+    d.migrate(empty_engine)
+    d.migrate(empty_engine)
+    with empty_engine.connect() as connection:
+        assert connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar() == "0001_initial"

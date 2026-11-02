@@ -126,6 +126,38 @@ def test_undo_drops_the_last_step(sandbox):
     assert held["intents"] == ["the slab"] and len(sandbox[-1]) == 1
 
 
+def no_export(monkeypatch):
+    real = loop.sandbox
+    monkeypatch.setattr(loop, "sandbox", lambda steps, views, export=False: {k: v for k, v in real(steps, views, export).items() if k != "model.glb"})
+    return real
+
+
+def test_undo_with_no_export_clears_the_old_model_and_says_so(sandbox, monkeypatch):
+    made = studio.start("d.png", png())
+    work(Muse([STEP], [("run_python", {"intent": "the wall", "code": "W = 100"})], [("run_python", {"intent": "the roof", "code": "R = 1"})]))
+    real = no_export(monkeypatch)
+    held = studio.undo(made["id"])
+    assert held["model_artifact_id"] is None and held["state"] == "failed" and held["error"] == studio.NO_MODEL
+    assert held["intents"] == ["the slab", "the wall"]
+    monkeypatch.setattr(loop, "sandbox", real)
+    held = studio.undo(made["id"])
+    assert held["model_artifact_id"] and held["state"] == "ready" and held["error"] is None
+
+
+def test_a_build_with_no_export_keeps_its_work_and_can_be_retried(sandbox, monkeypatch):
+    real = no_export(monkeypatch)
+    made = studio.start("d.png", png())
+    work(Muse([STEP]))
+    held = studio.get(made["id"])
+    assert held["model_artifact_id"] is None and held["state"] == "failed" and held["error"] == studio.NO_MODEL
+    assert held["intents"] == ["the slab"] and held["tokens"] > 0
+    monkeypatch.setattr(loop, "sandbox", real)
+    studio.feedback(made["id"], "try again")
+    work(Muse([("run_python", {"intent": "the wall", "code": "W = 100"})]))
+    held = studio.get(made["id"])
+    assert held["model_artifact_id"] and held["state"] == "ready" and held["error"] is None
+
+
 def test_a_scene_being_built_refuses_changes(sandbox):
     made = studio.start("d.png", png())
     with pytest.raises(studio.Busy):

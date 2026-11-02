@@ -21,6 +21,7 @@ import io
 import json
 import os
 import re
+import shutil
 import sqlite3
 import threading
 import uuid
@@ -281,6 +282,14 @@ def store_pdf(filename: str, data: bytes) -> dict:
     con.close()
     return {"id": doc_id, "filename": filename, "sha256": sha,
             "pages": len(reader.pages), "figures": figures, "warnings": warnings}
+
+
+def remove_document(doc_id: str) -> None:
+    shutil.rmtree(var_root() / "docs" / doc_id, ignore_errors=True)
+    con = db()
+    con.execute("DELETE FROM documents WHERE id=?", (doc_id,))
+    con.commit()
+    con.close()
 
 
 def figure_path(doc_id: str, crop_id: str) -> Path | None:

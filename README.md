@@ -71,6 +71,9 @@ python -m uvicorn app.main:app --port 8000
 
 Open http://127.0.0.1:8000 and drop in a drawing. A build takes about 5 to 15 minutes.
 
+A `var/` folder from before the Studio-only release can't be upgraded. The app says so when it starts: move
+that folder away and it starts with an empty one.
+
 ## Layout
 
 ```

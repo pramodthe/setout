@@ -15,9 +15,10 @@ from PIL import Image
 from . import database as d, meta_client
 from .repository import BudgetExceeded, sha, uid
 from .runtime import ensure_worker, repository
-from .store import figure_path, store_pdf
+from .store import figure_path, remove_document, store_pdf
 
 FEED = 200
+NO_MODEL = "Blender couldn't export this model. Tell Muse what to change to try again."
 NEW_TITLE = "New detail"
 LONGEST_TITLE = 60
 PICTURE = re.compile(r"artifact:([0-9a-f]{64})")
@@ -42,12 +43,15 @@ def _keep(repo, data, media):
 
 
 def _drawing(filename, data) -> bytes:
-    """The drawing as a PNG, from a PDF's first figure or from a picture."""
+    """The drawing as a PNG, from a PDF's first figure or from a picture. Only the PNG is kept, so deleting a scene deletes its drawing."""
     if data[:4] == b"%PDF":
         document = store_pdf(filename, data)
-        if not document["figures"]:
-            raise ValueError("no drawing found in this PDF")
-        data = figure_path(document["id"], document["figures"][0]["crop_id"]).read_bytes()
+        try:
+            if not document["figures"]:
+                raise ValueError("no drawing found in this PDF")
+            data = figure_path(document["id"], document["figures"][0]["crop_id"]).read_bytes()
+        finally:
+            remove_document(document["id"])
     try:
         image = Image.open(io.BytesIO(data)).convert("RGB")
     except OSError:
@@ -153,9 +157,11 @@ def _publish(repo, ident, steps):
     scene = json.loads(found["scene.json"])
     if scene["error"]:
         raise ValueError(scene["error"])
-    values = {"parts": scene["parts"]}
+    values = {"parts": scene["parts"], "state": "ready", "error": None}
     if found.get("model.glb"):
         values["model_artifact_id"] = _keep(repo, found["model.glb"], "model/gltf-binary")
+    else:  # the last model no longer matches these parts
+        values |= {"model_artifact_id": None, "state": "failed", "error": NO_MODEL}
     if found.get("three_quarter.jpg"):
         values["preview_artifact_id"] = _keep(repo, found["three_quarter.jpg"], "image/jpeg")
     return values
@@ -169,7 +175,7 @@ def undo(ident) -> dict:
     if not row["steps"]:
         raise ValueError("nothing to undo")
     steps, intents = row["steps"][:-1], (row["intents"] or [])[:-1]
-    values = _publish(repo, ident, steps) if steps else {"parts": [], "model_artifact_id": None, "preview_artifact_id": None}
+    values = _publish(repo, ident, steps) if steps else {"parts": [], "model_artifact_id": None, "preview_artifact_id": None, "state": "ready", "error": None}
     _set(repo, ident, steps=steps, intents=intents, feed=[*(row["feed"] or []), {"kind": "system", "text": "Undid the last step"}][-FEED:], **values)
     return get(ident)
 
@@ -240,7 +246,7 @@ def build(repo, job, gateway):
     checks = {"features": live.features, "rounds": [{k: c[k] for k in ("right", "total", "passed")} for c in live.checks], "last": live.checks[-1] if live.checks else held.get("last")}
     named = repo.get(d.studio_scenes, ident)["title"]  # read now: a person may have renamed it while Muse worked
     title = named if named != NEW_TITLE else (finished.get("title") or (live.features or {}).get("title") or finished.get("what") or named)[:LONGEST_TITLE]
-    _set(repo, ident, state="ready", step=None, title=title, unsure=finished.get("unsure") or row["unsure"] or [], feed=feed[-FEED:],
+    _set(repo, ident, step=None, title=title, unsure=finished.get("unsure") or row["unsure"] or [], feed=feed[-FEED:],
          tokens=(row["tokens"] or 0) + live.spent, checks=checks, **values)
 
 

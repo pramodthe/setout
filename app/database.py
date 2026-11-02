@@ -66,10 +66,15 @@ def engine_for(url):
 def migrate(engine):
     from alembic import command
     from alembic.config import Config
+    from alembic.migration import MigrationContext
+    from alembic.script import ScriptDirectory
     config = Config(str(Path(__file__).resolve().parent.parent / "alembic.ini"))
     config.set_main_option("script_location", str(Path(__file__).resolve().parent.parent / "migrations"))
     with transaction(engine) as connection:
         config.attributes["connection"] = connection
+        current = MigrationContext.configure(connection).get_current_revision()
+        if current and current not in {script.revision for script in ScriptDirectory.from_config(config).walk_revisions()}:
+            raise RuntimeError(f"{engine.url.database} is from an older Setout (revision {current}) and can't be upgraded. Move its folder away to start with an empty one.")
         command.upgrade(config, "head")
 
 
