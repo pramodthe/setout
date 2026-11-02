@@ -7,7 +7,7 @@ import json
 import urllib.error
 
 from . import database as d, meta_client
-from .repository import BudgetExceeded, canonical, review_tail, tokens_left
+from .repository import BudgetExceeded, canonical, tokens_left
 
 IMAGE_TOKENS = 2048  # seen live: about 1.3k for a page-sized figure or a render
 TURN_MIN_OUTPUT = 8192  # below this a turn cannot think and still call a tool
@@ -64,13 +64,12 @@ class ModelGateway:
         # conversation repeats the last turn's, which the provider serves from
         # its cache and the budget does not bill.
         input_estimate = len(canonical(payload)) // 3 + IMAGE_TOKENS * canonical(payload).count('"input_image"')
-        if purpose == "agent" and steps and steps[-1]["state"] == "completed":
+        if purpose == "studio" and steps and steps[-1]["state"] == "completed":
             input_estimate -= (steps[-1]["tokens"] or {}).get("input_tokens", 0)
         input_estimate = max(4096, input_estimate)
         wanted = payload.get("max_output_tokens", 4096)
-        tail = review_tail(run) if purpose == "agent" else 0
-        output_cap = min(wanted, tokens_left(run) - input_estimate - tail)
-        if output_cap < (min(TURN_MIN_OUTPUT, wanted) if purpose == "agent" else 1024):
+        output_cap = min(wanted, tokens_left(run) - input_estimate)
+        if output_cap < (min(TURN_MIN_OUTPUT, wanted) if purpose == "studio" else 1024):
             raise BudgetExceeded("tokens budget exhausted")
         payload = {**payload, "max_output_tokens": output_cap}
         reservation = {"model_calls": 1, "tokens": input_estimate + output_cap}
@@ -111,14 +110,13 @@ class ModelGateway:
         content += [{"type": "input_image", "image_url": "artifact:" + ident} for ident in images]
         # Reasoning counts as output: seen live, a critic spent all of 8192 thinking,
         # and a program 30.9k of 32768, one step from coming back empty.
-        limit = {"program": 49152, "cad": 32768, "read": 16384, "critic": 16384, "shape": 16384, "studio_features": 16384, "studio_check": 24576}.get(purpose, 8192)
+        limit = {"studio_features": 16384, "studio_check": 24576}.get(purpose, 8192)
         payload = {"model": model or meta_client.default_model(), "max_output_tokens": limit,
-                   "reasoning":{"effort":"low" if purpose in ("read","locate","zoom","proof","shape") else "medium"},
+                   "reasoning": {"effort": "medium"},
                    "input": [{"role": "user", "content": content}],
                    "text": {"format": {"type": "json_schema", "name": purpose,
                                         "schema": schema, "strict": True}}}
         response = self.call(payload, purpose, operation_key)
         if response.get("status") == "incomplete":
-            # Not "finish": seen live, that advice ended a run with budget left and no review.
             raise ValueError(f"{purpose} reached the provider output limit, so nothing came back; call the tool again")
         return structured(response)

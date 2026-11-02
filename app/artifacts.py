@@ -1,4 +1,4 @@
-"""Immutable, content-addressed bytes shared by API and workers."""
+"""Content-addressed bytes shared by API and workers: stored once, never changed, deleted only with what uses them."""
 from __future__ import annotations
 
 import hashlib
@@ -23,10 +23,6 @@ def serialized(method):
 class ArtifactStore:
     def __init__(self, root=None):
         self._lock = threading.RLock()
-        self._volume = None
-        if os.environ.get("SETOUT_ARTIFACT_VOLUME"):
-            import modal
-            self._volume = modal.Volume.from_name(os.environ["SETOUT_ARTIFACT_VOLUME"])
         self.root = Path(root or os.environ.get("SETOUT_ARTIFACT_ROOT") or
                          store.var_root() / "artifacts").resolve()
         self.root.mkdir(parents=True, exist_ok=True)
@@ -52,21 +48,23 @@ class ArtifactStore:
                 self.read(digest)
         finally:
             temporary.unlink(missing_ok=True)
-        if self._volume:
-            self._volume.commit()
         return {"id": digest, "sha256": digest, "storage_key": digest,
                 "media_type": media_type, "size_bytes": len(data)}
 
     @serialized
     def resolve(self, artifact_id):
-        if self._volume:
-            self._volume.reload()
         if not re.fullmatch(r"[0-9a-f]{64}", artifact_id):
             raise ValueError("invalid artifact ID")
         path = self.root / artifact_id
         if path.is_symlink() or not path.is_file():
             raise FileNotFoundError("artifact missing")
         return path
+
+    @serialized
+    def delete(self, artifact_id):
+        if not re.fullmatch(r"[0-9a-f]{64}", artifact_id):
+            raise ValueError("invalid artifact ID")
+        (self.root / artifact_id).unlink(missing_ok=True)
 
     @serialized
     def read(self, artifact_id):

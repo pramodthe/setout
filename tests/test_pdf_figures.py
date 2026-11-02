@@ -2,7 +2,6 @@
 
 Every PDF here is written by hand, in memory. Never commit a PDF or a drawing.
 """
-import base64
 import io
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -12,11 +11,7 @@ import pytest
 from PIL import Image
 from pypdf import apply_configuration
 
-from app import database as d, store
-from app.versioning import register_figure
-from app.worker import Worker
-from test_agent_v3 import FakeRenderer, ScriptedModel, source_repo  # noqa: F401
-from test_api_v3 import client  # noqa: F401
+from app import store
 
 MM = 72 / 25.4
 A4 = (595, 842)
@@ -371,7 +366,6 @@ def test_a_render_failure_is_reported_and_keeps_the_embedded_figures(monkeypatch
     doc = store.store_pdf("own.pdf", pdf.bytes())
     assert kinds(doc) == [("p0_Im0", "embedded_image")]
     assert doc["warnings"] == ["page 1 could not be rendered: no"]
-    assert store.get_document(doc["id"])["warnings"] == doc["warnings"]
 
 
 def test_a_file_pdfium_cannot_open_keeps_its_embedded_figures(monkeypatch):
@@ -391,69 +385,3 @@ def test_uploads_may_overlap():
     with ThreadPoolExecutor(4) as pool:
         docs = list(pool.map(lambda _: store.store_pdf("own.pdf", data), range(8)))
     assert len({store.figure_path(doc["id"], "p0_rendered").read_bytes() for doc in docs}) == 1
-
-
-def test_an_upload_from_before_this_change_reads_as_extracted():
-    con = store.db()
-    con.execute("INSERT INTO documents(id, filename, sha256, pages, meta) VALUES(?,?,?,?,?)",
-                ("0123456789ab", "old.pdf", "x" * 64, 1,
-                 json.dumps({"figures": [{"crop_id": "p0_Im0", "page": 0, "width": 800, "height": 600}]})))
-    con.commit()
-    con.close()
-    old = store.get_document("0123456789ab")
-    assert old["figures"][0]["kind"] == "embedded_image" and old["figures"][0]["dpi"] is None
-    assert old["warnings"] == []
-
-
-# ------------------------------------------------------------ downstream
-
-def test_a_rendered_figure_takes_the_same_path_as_an_extracted_one(client, source_repo):
-    """Upload route, figure route, generate, the real worker and gateway, the detail page."""
-    uploaded = client.post("/api/documents", files={"file": ("own.pdf", Pdf().page(SECTION).bytes(), "application/pdf")})
-    assert uploaded.status_code == 200, uploaded.text
-    doc = uploaded.json()
-    figure = doc["figures"][0]
-    assert figure["kind"] == "rendered_page" and figure["dpi"] == 300 and figure["detail_id"].endswith("-p0_rendered")
-    assert client.get(f"/api/documents/{doc['id']}").json()["figures"] == [figure]
-
-    image = client.get(f"/api/documents/{doc['id']}/figures/p0_rendered")
-    assert image.status_code == 200 and image.headers["content-type"] == "image/png"
-
-    job = client.post("/api/generate", json={"doc_id": doc["id"], "crop_id": "p0_rendered"}).json()
-    payload = source_repo.get(d.jobs, job["id"])["payload"]
-    assert payload["detail_id"] == figure["detail_id"]
-    stored = source_repo.get(d.figures, payload["figure_id"])
-    assert (stored["crop_key"], stored["page"], stored["width"], stored["height"]) == ("p0_rendered", 0, 2480, 3509)
-    assert source_repo.artifacts.read(stored["artifact_id"]) == image.content
-    assert source_repo.get(d.artifacts, stored["artifact_id"])["media_type"] == "image/png"
-
-    sent = []
-    scripted = ScriptedModel()
-
-    def model(wire):
-        sent.extend(part["image_url"] for message in wire["input"] if message.get("role") == "user"
-                    for part in message["content"] if part.get("type") == "input_image")
-        return scripted(wire)
-    Worker(source_repo, responder=model, renderer=FakeRenderer(source_repo)).run_once(only_ids=[job["id"]])
-    finished = source_repo.get(d.jobs, job["id"])
-    assert finished["state"] == "succeeded", finished
-
-    # What reaches the model is the stored figure, byte for byte, on every call.
-    assert sent and sent[0] == "data:image/png;base64," + base64.b64encode(image.content).decode()
-    assert sent.count(sent[0]) >= 3
-
-    version = source_repo.get(d.versions, source_repo.run(job["id"])["working_version_id"])
-    assert version["figure_id"] == payload["figure_id"] and version["detail_id"] == figure["detail_id"]
-    source = version["spec"]["source"]
-    assert (source["crop_id"], source["page_index"], source["page_width_pt"]) == ("p0_rendered", 0, 595)
-    assert any(c["id"] == "source-artifacts" and c["status"] == "PASS"
-               for c in source_repo.list(d.verifications, d.verifications.c.version_id == version["id"])[-1]["checks"])
-    drawing = client.get(f"/api/specs/{version['detail_id']}/drawing")
-    assert drawing.status_code == 200 and Image.open(io.BytesIO(drawing.content)).size == (2480, 3509)
-
-
-def test_a_rendered_figure_registers_once_per_upload(source_repo):
-    doc = store_one(SECTION)
-    first = register_figure(source_repo, doc["id"], "p0_rendered")
-    assert register_figure(source_repo, doc["id"], "p0_rendered") == first
-    assert source_repo.get(d.figures, first)["crop_key"] == "p0_rendered"

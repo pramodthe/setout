@@ -1,13 +1,15 @@
 """A drawing to a 3D scene, built by Muse in a live Blender sandbox.
 
-Apart from the verified versions: it never writes a version, never reaches the verifier and can't be published. Muse's code runs only in the no-network sandbox. The scene is the list of
+Nothing here is verified, and the app says so. Muse's code runs only in the no-network sandbox. The scene is the list of
 code steps it ran, so a revision carries on from them and an undo drops one. Sizes are the model's assumptions, because the drawing isn't to scale.
 """
 from __future__ import annotations
 
 import io
 import json
+import re
 
+import sqlalchemy as sa
 from PIL import Image
 
 from . import database as d, meta_client
@@ -16,6 +18,9 @@ from .runtime import ensure_worker, repository
 from .store import figure_path, store_pdf
 
 FEED = 200
+NEW_TITLE = "New detail"
+LONGEST_TITLE = 60
+PICTURE = re.compile(r"artifact:([0-9a-f]{64})")
 REVISE = ("A person looked at your model and says: {text}\nThe scene is as you left it, shown here with the drawing. Change what they ask for and anything it affects, keep everything that is right, "
           "and call finish when it's done.")
 
@@ -64,7 +69,7 @@ def start(filename, data) -> dict:
     ident = uid()
     with d.transaction(repo.engine) as con:
         at = d.now(con)
-        con.execute(d.studio_scenes.insert().values(id=ident, title="New detail", state="working", step="Starting", drawing_artifact_id=drawing, steps=[], intents=[], feed=[], parts=[], unsure=[],
+        con.execute(d.studio_scenes.insert().values(id=ident, title=NEW_TITLE, state="working", step="Starting", drawing_artifact_id=drawing, steps=[], intents=[], feed=[], parts=[], unsure=[],
                                                     tokens=0, created_at=at, updated_at=at))
     _queue(repo, ident)
     return get(ident)
@@ -75,7 +80,7 @@ def get(ident) -> dict:
     row = repo.get(d.studio_scenes, ident)
     if row["state"] == "working" and row["job_id"]:
         job = repo.get(d.jobs, row["job_id"])
-        if job["state"] in ("failed", "cancelled", "needs_review"):
+        if job["state"] in ("failed", "needs_review"):
             row = {**row, "state": "failed", "error": (job["error"] or {}).get("message") or "the job stopped"}
     return {k: v for k, v in row.items() if k != "steps"} | {"step_count": len(row["steps"] or [])}
 
@@ -108,9 +113,43 @@ def feedback(ident, text) -> dict:
     return get(ident)
 
 
+def rename(ident, title) -> dict:
+    repo = repository()
+    repo.get(d.studio_scenes, ident)
+    if not title.strip():
+        raise ValueError("a scene needs a name")
+    _set(repo, ident, title=title.strip()[:LONGEST_TITLE])
+    return get(ident)
+
+
+def delete(ident) -> None:
+    """A scene goes with its jobs, its model calls and its files. A file another scene also uses stays: files are stored once, by content."""
+    repo = repository()
+    row = repo.get(d.studio_scenes, ident)
+    if get(ident)["state"] == "working":
+        raise Busy("Muse is working on this scene")
+    jobs = [j["id"] for j in repo.list(d.jobs) if (j["payload"] or {}).get("scene_id") == ident]
+    runs = [r["id"] for r in repo.list(d.runs, d.runs.c.job_id.in_(jobs))]
+    mine = {row[k] for k in ("drawing_artifact_id", "model_artifact_id", "preview_artifact_id") if row[k]}
+    mine |= {a for step in repo.list(d.steps, d.steps.c.run_id.in_(runs)) for a in PICTURE.findall(json.dumps(step["request"]))}
+    with d.transaction(repo.engine) as con:
+        con.execute(d.studio_scenes.delete().where(d.studio_scenes.c.id == ident))
+        con.execute(d.steps.delete().where(d.steps.c.run_id.in_(runs)))
+        con.execute(d.runs.delete().where(d.runs.c.id.in_(runs)))
+        con.execute(d.events.delete().where(d.events.c.job_id.in_(jobs)))
+        con.execute(d.resource_leases.delete().where(d.resource_leases.c.job_id.in_(jobs)))
+        con.execute(d.jobs.delete().where(d.jobs.c.id.in_(jobs)))
+        kept = {r[k] for r in con.execute(sa.select(d.studio_scenes)).mappings() for k in ("drawing_artifact_id", "model_artifact_id", "preview_artifact_id") if r[k]}
+        kept |= {a for r in con.execute(sa.select(d.steps.c.request)) for a in PICTURE.findall(json.dumps(r[0]))}
+        unused = mine - kept
+        con.execute(d.artifacts.delete().where(d.artifacts.c.id.in_(unused)))
+    for artifact in unused:
+        repo.artifacts.delete(artifact)
+
+
 def _publish(repo, ident, steps):
-    from goal import blender_live
-    found = blender_live.sandbox(steps, ("three_quarter",), export=True)
+    from builder import loop
+    found = loop.sandbox(steps, ("three_quarter",), export=True)
     scene = json.loads(found["scene.json"])
     if scene["error"]:
         raise ValueError(scene["error"])
@@ -147,7 +186,7 @@ def _shown(repo):
 
 
 def build(repo, job, gateway):
-    from goal import blender_live
+    from builder import loop
     ident = job["payload"]["scene_id"]
     row = repo.get(d.studio_scenes, ident)
     feed = list(row["feed"] or [])
@@ -187,7 +226,7 @@ def build(repo, job, gateway):
         return answer, repo.run(gateway.fence.job_id)["consumed"].get("tokens", 0) - spent
 
     held = row["checks"] or {}
-    live = blender_live.Live(repo.artifacts.read(row["drawing_artifact_id"]), respond, steps=row["steps"], intents=row["intents"], say=say, show=_shown(repo), on_step=on_step, ask=ask, features=held.get("features"))
+    live = loop.Live(repo.artifacts.read(row["drawing_artifact_id"]), respond, steps=row["steps"], intents=row["intents"], say=say, show=_shown(repo), on_step=on_step, ask=ask, features=held.get("features"))
     try:
         live.run(brief)
     except BudgetExceeded:  # what it built so far still stands
@@ -199,7 +238,9 @@ def build(repo, job, gateway):
     values = _publish(repo, ident, live.steps)
     feed.append({"kind": "muse", "text": finished.get("what") or "Stopped before finishing: the budget ran out."})
     checks = {"features": live.features, "rounds": [{k: c[k] for k in ("right", "total", "passed")} for c in live.checks], "last": live.checks[-1] if live.checks else held.get("last")}
-    _set(repo, ident, state="ready", step=None, title=(finished.get("title") or (live.features or {}).get("title") or finished.get("what") or row["title"])[:60], unsure=finished.get("unsure") or row["unsure"] or [], feed=feed[-FEED:],
+    named = repo.get(d.studio_scenes, ident)["title"]  # read now: a person may have renamed it while Muse worked
+    title = named if named != NEW_TITLE else (finished.get("title") or (live.features or {}).get("title") or finished.get("what") or named)[:LONGEST_TITLE]
+    _set(repo, ident, state="ready", step=None, title=title, unsure=finished.get("unsure") or row["unsure"] or [], feed=feed[-FEED:],
          tokens=(row["tokens"] or 0) + live.spent, checks=checks, **values)
 
 

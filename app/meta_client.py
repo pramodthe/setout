@@ -1,4 +1,4 @@
-"""Meta Model API client (Responses endpoint, streamed), stdlib only.
+"""Meta Model API client (Responses endpoint), stdlib only.
 
 One tested path for every model call. Shapes verified against
 https://dev.meta.ai/docs/ (structured output, image understanding) 29 Oct 2026.
@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -37,7 +36,7 @@ def configured() -> bool:
 
 def default_model() -> str:
     e = _env()
-    return e.get("MODEL_API_MODEL") or e.get("META_MODEL") or "muse-spark-1.3"
+    return e.get("MODEL_API_MODEL") or "muse-spark-1.3-contributor"
 
 
 def respond_tools(payload: dict, timeout: int = 300) -> dict:
@@ -59,66 +58,3 @@ def respond_tools(payload: dict, timeout: int = 300) -> dict:
     if not isinstance(result.get("output"), list):
         raise RuntimeError("provider response has no output array")
     return result
-
-
-def respond_json(content: list[dict], schema: dict, name: str,
-                 model: str | None = None, timeout: int = 300,
-                 instructions: str | None = None) -> tuple[dict, dict | None]:
-    """One structured (json_schema, strict) streamed request -> (object, usage)."""
-    e = _env()
-    key = e.get("META_API_KEY") or e.get("MODEL_API_KEY")
-    if not key:
-        raise RuntimeError("META_API_KEY is not set (.env)")
-    base = (e.get("META_API_BASE") or "https://api.meta.ai/v1").rstrip("/")
-    payload: dict = {
-        "model": model or default_model(),
-        "input": [{"type": "message", "role": "user", "content": content}],
-        "text": {"format": {"type": "json_schema", "name": name,
-                            "schema": schema, "strict": True}},
-        "stream": True,
-    }
-    if instructions:
-        payload["instructions"] = instructions
-    last: Exception | None = None
-    for attempt in range(2):
-        try:
-            return _stream(base, key, payload, timeout)
-        except (urllib.error.URLError, TimeoutError, ConnectionError) as err:
-            last = err
-            if isinstance(err, urllib.error.HTTPError) and err.code < 500:
-                body = err.read().decode("utf-8", "replace")[:300]
-                raise RuntimeError(f"Meta API {err.code}: {body}") from err
-            time.sleep(2 * (attempt + 1))
-    raise RuntimeError(f"Meta API unreachable: {last}")
-
-
-def _stream(base: str, key: str, payload: dict, timeout: int
-            ) -> tuple[dict, dict | None]:
-    req = urllib.request.Request(
-        f"{base}/responses", data=json.dumps(payload).encode(), method="POST",
-        headers={"Authorization": f"Bearer {key}",
-                 "Content-Type": "application/json",
-                 "Accept": "text/event-stream"})
-    text: list[str] = []
-    usage, done = None, False
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        for raw in r:
-            line = raw.decode("utf-8", errors="replace").strip()
-            if not line.startswith("data:"):
-                continue
-            data = line[5:].strip()
-            if data == "[DONE]":
-                done = True
-                break
-            ev = json.loads(data)
-            kind = ev.get("type")
-            if kind == "response.output_text.delta":
-                text.append(ev.get("delta") or "")
-            elif kind == "response.completed":
-                done = True
-                usage = (ev.get("response") or {}).get("usage")
-            elif kind in ("error", "response.failed"):
-                raise RuntimeError(json.dumps(ev)[:300])
-    if not done:
-        raise RuntimeError("stream ended before response.completed")
-    return json.loads("".join(text)), usage

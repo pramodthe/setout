@@ -65,21 +65,11 @@ def db() -> sqlite3.Connection:
     con.execute("""CREATE TABLE IF NOT EXISTS documents(
         id TEXT PRIMARY KEY, filename TEXT, sha256 TEXT, pages INTEGER,
         meta TEXT, created DATETIME DEFAULT CURRENT_TIMESTAMP)""")
-    con.execute("""CREATE TABLE IF NOT EXISTS builds(
-        id TEXT PRIMARY KEY, detail_id TEXT, doc_id TEXT, state TEXT,
-        progress TEXT, spec TEXT, report TEXT,
-        created DATETIME DEFAULT CURRENT_TIMESTAMP)""")
     return con
 
 
 def doc_dir(doc_id: str) -> Path:
     d = var_root() / "docs" / doc_id
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
-
-def build_dir(job_id: str) -> Path:
-    d = var_root() / "builds" / job_id
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -247,27 +237,6 @@ def _page_figures(i: int, page, pdf) -> tuple[list[tuple], dict, str | None]:
             handle.close()
 
 
-def page_text(data: bytes, page: int) -> str:
-    """A PDF page's text layer, or nothing: a scan or an embedded image has none."""
-    import pypdfium2
-
-    with _PDFIUM:
-        try:
-            pdf = pypdfium2.PdfDocument(data)
-        except pypdfium2.PdfiumError:
-            return ""
-        try:
-            handle = pdf.get_page(page)
-            layer = handle.get_textpage()
-            try:
-                return layer.get_text_range()
-            finally:
-                layer.close()
-                handle.close()
-        finally:
-            pdf.close()
-
-
 def store_pdf(filename: str, data: bytes) -> dict:
     from pypdf import PdfReader  # local import: clearer error without dep
     import pypdfium2
@@ -312,31 +281,6 @@ def store_pdf(filename: str, data: bytes) -> dict:
     con.close()
     return {"id": doc_id, "filename": filename, "sha256": sha,
             "pages": len(reader.pages), "figures": figures, "warnings": warnings}
-
-
-def find_document_by_sha(sha256: str) -> dict | None:
-    """Most recent upload of this exact PDF (crops are stored per upload)."""
-    con = db()
-    row = con.execute("SELECT id FROM documents WHERE sha256=? ORDER BY created DESC",
-                      (sha256,)).fetchone()
-    con.close()
-    return get_document(row[0]) if row else None
-
-
-def get_document(doc_id: str) -> dict | None:
-    con = db()
-    row = con.execute("SELECT id, filename, sha256, pages, meta FROM documents "
-                      "WHERE id=?", (doc_id,)).fetchone()
-    con.close()
-    if not row:
-        return None
-    meta = json.loads(row[4]) if row[4] else {}
-    out = {"id": row[0], "filename": row[1], "sha256": row[2],
-           "pages": row[3], "warnings": []}
-    out.update(meta)
-    # Uploads from before rendered pages hold only extracted images.
-    out["figures"] = [{"kind": "embedded_image", "dpi": None, **f} for f in out.get("figures", [])]
-    return out
 
 
 def figure_path(doc_id: str, crop_id: str) -> Path | None:
