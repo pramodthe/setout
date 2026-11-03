@@ -7,8 +7,9 @@ from __future__ import annotations
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -40,6 +41,10 @@ class Rename(BaseModel):
     title: str
 
 
+class Strike(BaseModel):
+    struck: bool
+
+
 def _call(call, *args):
     try:
         return call(*args)
@@ -62,13 +67,13 @@ async def scenes() -> dict:
 
 
 @app.post("/api/studio", status_code=202)
-async def start(file: UploadFile = File(...)) -> dict:
+async def start(file: UploadFile = File(...), method: Literal["serial", "hybrid"] = Form("serial")) -> dict:
     if not meta_client.configured():
         raise HTTPException(503, "AI not configured")
     data = await file.read()
     if len(data) > MAX_UPLOAD:
         raise HTTPException(413, "file larger than 50 MB")
-    return await run_in_threadpool(_call, studio.start, file.filename or "drawing", data)
+    return await run_in_threadpool(_call, studio.start, file.filename or "drawing", data, method)
 
 
 @app.get("/api/studio/{ident}")
@@ -95,6 +100,11 @@ async def scene_file(ident: str, which: str) -> Response:
 @app.post("/api/studio/{ident}/feedback", status_code=202)
 async def feedback(ident: str, req: Feedback) -> dict:
     return await run_in_threadpool(_call, studio.feedback, ident, req.text)
+
+
+@app.post("/api/studio/{ident}/relations/{index}")
+async def studio_strike(ident: str, index: int, req: Strike):
+    return await run_in_threadpool(_call, studio.strike, ident, index, req.struck)
 
 
 @app.post("/api/studio/{ident}/undo")

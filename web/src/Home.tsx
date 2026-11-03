@@ -5,15 +5,18 @@ import type { ChangeEvent, DragEvent, JSX } from "react";
 import { ICONS } from "./icons";
 import type { Card } from "./scene";
 
-export default function Home({ scenes, onFile, onDelete, error }: { scenes: Card[]; onFile: (file: File) => void; onDelete: (card: Card) => void; error: string | null }): JSX.Element {
+export default function Home({ scenes, onFile, onDelete, error }: { scenes: Card[]; onFile: (file: File, method: "serial" | "hybrid") => void; onDelete: (card: Card) => void; error: string | null }): JSX.Element {
   const [over, setOver] = useState(false);
-  const drop = (e: DragEvent) => { e.preventDefault(); setOver(false); const file = e.dataTransfer.files[0]; if (file) onFile(file); };
-  const pick = (e: ChangeEvent<HTMLInputElement>) => { const file = e.target.files?.[0]; if (file) onFile(file); };
+  const [parallel, setParallel] = useState(false);
+  const drop = (e: DragEvent) => { e.preventDefault(); setOver(false); const file = e.dataTransfer.files[0]; if (file) onFile(file, parallel ? "hybrid" : "serial"); };
+  const pick = (e: ChangeEvent<HTMLInputElement>) => { const file = e.target.files?.[0]; if (file) onFile(file, parallel ? "hybrid" : "serial"); };
   return (
     <main className="home">
       <div className="hero">
         <h1>Turn a section drawing into a 3D detail</h1>
         <p>Muse reads your drawing and builds every part in Blender, checking its own work as it goes.</p>
+        <label className="build-method"><input type="checkbox" checked={parallel} onChange={(e) => setParallel(e.target.checked)} /> Try parallel build (experimental)</label>
+        {parallel && <p>Builds component groups together and uses suitable parts from your library, then checks the assembly against the drawing.</p>}
         <label className={`drop${over ? " over" : ""}`} onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={drop}>
           <strong>Drop a section drawing here</strong>
           <span>or click to choose a PDF, PNG or JPG</span>

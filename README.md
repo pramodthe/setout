@@ -5,6 +5,12 @@
 Give Setout a drawing of how something is built, and it makes a 3D model you can turn, take apart and
 step through. Every part is named, and you can watch the detail go together.
 
+The landing page starts with a house cutaway: an ordinary room conceals layers of structure, services and
+connections. It follows one floor connection to show why granular construction details matter. The house
+is a visual story; the Studio builds one local detail at a time from an uploaded drawing.
+
+![Setout landing page](docs/landing.jpg)
+
 It works from one 2D section or a picture of a detail, for any trade. Waterproofing is what we test it
 on, because those details are among the hardest to read: thin layers, hidden laps, and parts a section
 can't show. A tool that can follow them should manage most others.
@@ -39,13 +45,27 @@ Drawing ──> Muse reads it ──> writes a step ──> Blender runs it in a
                         GLB export ──> three.js viewer in the browser
 ```
 
-- **The model writes the 3D.** `builder/kit.py` holds generic shapes only (box, prism, sheet, lathe, rod).
-  There are no ready-made components, so every real part is Muse's own code.
+- **The model writes the 3D.** `builder/kit.py` holds generic shapes only. Parallel builds can also
+  place suitable whole meshes from the owner's library, without stretching or scaling them.
+- **Parallel building is experimental.** Select **Try parallel build** before uploading. One shared
+  assembly plan defines interfaces; up to three component calls run concurrently. The assembled scene
+  becomes interactive while it is checked independently, and gets at most one visual repair pass. Unresolved findings
+  remain visible. Feedback uses the existing step-by-step builder.
+  Invalid programs or self-crossing sheets are rejected; bounded repairs can still dominate total time.
+  This path is not yet a demonstrated end-to-end speed or fidelity improvement.
 - **A scene is its list of code steps,** replayed in order. Undo is instant, feedback carries on from the
   same scene, and every size stays readable as a named value.
 - **The checker is independent.** It lists what the drawing shows before any 3D exists, then ticks each
-  item from renders. It never sees the builder's words, and code decides from the ticks. It stops after
-  three refusals, and whatever is left is shown to you.
+  item from renders. It never sees the builder's words, and code decides from the ticks. Missing, wrong,
+  or uncertain details and invented parts prevent a pass. A repair that scores worse restores the earlier
+  checked scene. The step-by-step builder allows three repair refusals; parallel builds allow one visual repair.
+- **Small details can be inspected.** Muse can crop the original drawing and frame close-ups of model parts.
+  The checker gets its own enlarged cut-face views, and lighting separates faces and joints more clearly.
+  Builds reserve tokens for a final check; an unchecked revision never inherits an earlier model's pass.
+- **Measuring stands beside it.** Before any 3D exists, Muse also reads how the drawing's parts relate. Code then
+  measures the model: what floats, what passes through what, and whether each relation holds. It tests touching,
+  order and overlap, never a size. It never changes the verdict and never reaches the builder: you see what it
+  found, strike out a misreading, or send a fault to Muse.
 - **Model code is sandboxed.** It passes a static check, then runs in Blender on Modal with no network.
 - **Viewing costs nothing.** Blender only runs during a build. The viewer is three.js on the exported
   GLB, in your browser.
@@ -64,12 +84,17 @@ cp .env.example .env            # add META_API_KEY
 modal token new                 # once
 modal deploy builder/sandbox.py
 
-(cd web && npm install && npm run build)
+(cd web && npm ci && npm run build)
 
 python -m uvicorn app.main:app --port 8000
 ```
 
-Open http://127.0.0.1:8000 and drop in a drawing. A build takes about 5 to 15 minutes.
+Open http://127.0.0.1:8000 for the house story, then choose **Open studio** to upload a drawing at
+`/#/app`. Existing detail scenes remain at `/#/studio/<id>`. A build takes about 5 to 15 minutes.
+
+The house film and model assets are generated locally under `web/public/assets/anatomy/` and ignored by Git.
+For a fresh checkout or deployment, generate or supply those assets before building the web app; see
+[the landing-page render instructions](web/ANATOMY.md). The Studio upload page remains available at `/#/app`.
 
 A `var/` folder from before the Studio-only release can't be upgraded. The app says so when it starts: move
 that folder away and it starts with an empty one.
@@ -86,15 +111,24 @@ app/                The server
   store.py          Finds the drawing in a PDF
 builder/            The 3D
   loop.py           Muse's tools, and what it's told
-  checker.py        The independent check
+  hybrid.py         Shared assembly plan and concurrent component generation
+  library.py        Imports the owner's standard parts from DAE/ZIP files
+  checker.py        The independent check, and the contract it reads
+  measure.py        How the parts meet, from the geometry alone
   kit.py            Generic shapes, materials and renders
   sandbox.py        Headless Blender on Modal, with no network
-web/src/            The app, in React, TypeScript and three.js
+web/src/            Landing story and Studio, in React, TypeScript and three.js
 migrations/         Database schema
 tests/              Python tests, with the model and sandbox stubbed
 ```
 
 ## Development
+
+To populate the optional hardware library, run `python -m builder.library /path/to/your/models`.
+Only use models you own. It writes under `var/library/`; set the process environment variable
+`SETOUT_LIBRARY` to use another folder. A saved parallel scene embeds the exact selected meshes in
+its steps, so replay and undo work even if the library later changes. No library means procedural
+geometry throughout. Neither method verifies dimensions or guarantees source fidelity.
 
 ```sh
 python -m pytest tests/ -q            # no network needed
@@ -105,27 +139,15 @@ npm run dev                           # dev server, /api proxied to :8000
 Scenes live in a SQLite database and files under `SETOUT_VAR` (default `var/`). Set `SETOUT_WORKER=external` and
 run `python -m app.worker` to keep the worker apart from the server.
 
-## Results so far
-
-Built on `muse-spark-1.3-contributor`. Tokens are billed tokens, so cached input isn't counted.
-
-| Detail | Parts | Tokens |
-|---|---|---|
-| Cavity wall base | 87 | 61,837 |
-| Waterstop with mesh at joint | 53 | 64,377 |
-| Roof parapet | 25 | 77,177 |
-| Waterstop strips at wall joint | 29 | 77,397 |
-| Roof kerb upstand | 16 | 95,104 |
-| Floor drain on screed, with the checker | 47 | 214,593 |
-
-On the floor drain, the checker raised the score from 6 to 12 of 14 items on the same list.
-
 ## Limits
 
 - **Nothing here is verified.** Sizes are assumptions chosen by the model, because detail drawings aren't to
   scale, and every scene says so. Don't build from it without checking the source.
 - **It can be wrong.** Muse can misread a drawing or add a part that isn't there, and the checker is a model too.
 - **Models are simpler than hand-made ones.** They show how a detail goes together, not every fixing.
+- **Complex geometry remains unreliable.** Recent parallel drain and sliding-door tests produced viewable
+  models but failed their source checks. Openings, mating profiles and library placement still need review;
+  extra polygons do not establish greater accuracy.
 - **One build at a time.** A second upload waits in the queue.
 - **It gives no compliance verdict.** It shows a detail, and doesn't grade real work.
 

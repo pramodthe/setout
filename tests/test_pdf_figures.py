@@ -3,7 +3,6 @@
 Every PDF here is written by hand, in memory. Never commit a PDF or a drawing.
 """
 import io
-import json
 from concurrent.futures import ThreadPoolExecutor
 
 import pypdfium2
@@ -89,8 +88,8 @@ def place(name, x, y, width, height):
     return f"q {width} 0 0 {height} {x} {y} cm /{name} Do Q\n".encode()
 
 
-def store_one(content=b"", **page):
-    return store.store_pdf("own.pdf", Pdf().page(content, **page).bytes())
+def read_one(content=b"", **page):
+    return store.read_pdf(Pdf().page(content, **page).bytes())
 
 
 def kinds(doc):
@@ -98,7 +97,7 @@ def kinds(doc):
 
 
 def png(doc, index=0):
-    return Image.open(store.figure_path(doc["id"], doc["figures"][index]["crop_id"]))
+    return Image.open(io.BytesIO(doc["images"][doc["figures"][index]["crop_id"]]))
 
 
 @pytest.fixture(autouse=True)
@@ -109,7 +108,7 @@ def isolated_store(tmp_path, monkeypatch):
 # ------------------------------------------------------------ vector pages
 
 def test_vector_page_gives_one_rendered_figure_with_real_ink():
-    doc = store_one(SECTION)
+    doc = read_one(SECTION)
     figure = doc["figures"][0]
     assert len(doc["figures"]) == 1 and doc["warnings"] == []
     assert figure == {"crop_id": "p0_rendered", "page": 0, "width": 2480, "height": 3509,
@@ -127,11 +126,11 @@ def test_line_work_inside_a_form_xobject_counts():
     """Exporters often wrap a whole page in one form."""
     pdf = Pdf()
     pdf.page(b"/Fm0 Do\n", xobjects={"Fm0": pdf.form(SECTION)})
-    assert kinds(store.store_pdf("own.pdf", pdf.bytes())) == [("p0_rendered", "rendered_page")]
+    assert kinds(store.read_pdf(pdf.bytes())) == [("p0_rendered", "rendered_page")]
 
 
 def test_rotated_page_renders_upright():
-    doc = store_one(b"4 w 20 0 m 20 200 l S\n", size=(400, 200), entries="/Rotate 90")
+    doc = read_one(b"4 w 20 0 m 20 200 l S\n", size=(400, 200), entries="/Rotate 90")
     image = png(doc).convert("L")
     assert (doc["figures"][0]["width"], doc["figures"][0]["height"]) == image.size == (834, 1667)
     assert image.getpixel((400, round(20 * 300 / 72))) < 64  # the page's left edge is now its top
@@ -143,7 +142,7 @@ def test_a_0p3_mm_gap_stays_open_at_300_dpi_wherever_it_lands():
         y = 400 + offset
         lines = (f"{0.13 * MM:.4f} w 100 {y:.3f} m 1000 {y:.3f} l S\n"
                  f"100 {y + 0.3 * MM:.3f} m 1000 {y + 0.3 * MM:.3f} l S\n").encode()
-        image = png(store_one(lines, size=A3)).convert("L")
+        image = png(read_one(lines, size=A3)).convert("L")
         x, mid = image.width // 2, round((841.89 - y) * 300 / 72)
         column = [image.getpixel((x, row)) for row in range(mid - 12, mid + 6)]
         ink = [i for i, level in enumerate(column) if level < 128]
@@ -151,14 +150,14 @@ def test_a_0p3_mm_gap_stays_open_at_300_dpi_wherever_it_lands():
 
 
 def test_colour_is_kept_and_monochrome_pages_are_stored_grey():
-    assert png(store_one(b"1 0 0 RG 5 w " + SECTION)).mode == "RGB"
-    assert png(store_one(SECTION)).mode == "L"
+    assert png(read_one(b"1 0 0 RG 5 w " + SECTION)).mode == "RGB"
+    assert png(read_one(SECTION)).mode == "L"
 
 
 # ------------------------------------------------------------ size limits
 
 def test_a_big_sheet_is_held_to_the_pixel_limit_and_says_so():
-    doc = store_one(SECTION, size=(3370, 2384))  # A0: 139 MP at 300 dpi
+    doc = read_one(SECTION, size=(3370, 2384))  # A0: 139 MP at 300 dpi
     figure = doc["figures"][0]
     assert figure["width"] * figure["height"] <= store.MAX_RENDER_PIXELS * 1.001
     assert figure["dpi"] == pytest.approx(152, abs=1)
@@ -167,15 +166,15 @@ def test_a_big_sheet_is_held_to_the_pixel_limit_and_says_so():
 
 def test_a_png_over_the_byte_limit_is_rendered_smaller_and_says_so(monkeypatch):
     monkeypatch.setattr(store, "MAX_RENDER_BYTES", 12_000)
-    doc = store_one(hatch(900))
+    doc = read_one(hatch(900))
     figure = doc["figures"][0]
-    assert store.figure_path(doc["id"], "p0_rendered").stat().st_size <= 12_000
+    assert len(doc["images"]["p0_rendered"]) <= 12_000
     assert figure["dpi"] < 300 and figure["width"] == pytest.approx(595 * figure["dpi"] / 72, abs=2)
 
 
 def test_user_unit_is_in_the_recorded_dpi():
     """PDFium ignores /UserUnit: 2 means each page unit is 2/72 inch."""
-    figure = store_one(SECTION, entries="/UserUnit 2")["figures"][0]
+    figure = read_one(SECTION, entries="/UserUnit 2")["figures"][0]
     assert figure["dpi"] == 300 and figure["width"] == pytest.approx(2 * 2480, abs=2)
 
 
@@ -185,10 +184,10 @@ def test_embedded_image_page_is_unchanged():
     pdf = Pdf()
     ref, jpeg = pdf.image((800, 600))
     pdf.page(place("Im0", 0, 0, 595, 446), xobjects={"Im0": ref})
-    doc = store.store_pdf("own.pdf", pdf.bytes())
+    doc = store.read_pdf(pdf.bytes())
     assert doc["figures"] == [{"crop_id": "p0_Im0", "page": 0, "width": 800, "height": 600,
                                "kind": "embedded_image", "dpi": None}]
-    assert store.figure_path(doc["id"], "p0_Im0").read_bytes() == jpeg  # lossless: the PDF's own bytes
+    assert doc["images"]["p0_Im0"] == jpeg  # lossless: the PDF's own bytes
 
 
 def test_a_manual_page_keeps_exactly_its_figures():
@@ -202,7 +201,7 @@ def test_a_manual_page_keeps_exactly_its_figures():
         xobjects[name] = pdf.image(size)[0]
         content += place(name, *box)
     pdf.page(content + text(6, 75), size=(540, 780), xobjects=xobjects)
-    doc = store.store_pdf("own.pdf", pdf.bytes())
+    doc = store.read_pdf(pdf.bytes())
     assert kinds(doc) == [(f"p0_Fg{i}", "embedded_image") for i in range(4)]
 
 
@@ -211,16 +210,16 @@ def test_small_figures_on_a_page_of_text_all_stay():
     xobjects = {f"Fg{i}": pdf.image((300, 300))[0] for i in range(3)}
     content = b"".join(place(name, 40 + 150 * i, 100, 30, 30) for i, name in enumerate(xobjects))  # 0.1% each
     pdf.page(content + text(50), xobjects=xobjects)
-    assert kinds(store.store_pdf("own.pdf", pdf.bytes())) == [(f"p0_Fg{i}", "embedded_image") for i in range(3)]
+    assert kinds(store.read_pdf(pdf.bytes())) == [(f"p0_Fg{i}", "embedded_image") for i in range(3)]
 
 
 def test_an_image_stored_in_a_form_is_found_as_before():
     pdf = Pdf()
     ref, jpeg = pdf.image((400, 400))
     pdf.page(b"q 500 0 0 500 40 40 cm /Fm0 Do Q\n", xobjects={"Fm0": pdf.form(place("Im0", 0, 0, 1, 1), {"Im0": ref})})
-    doc = store.store_pdf("own.pdf", pdf.bytes())
+    doc = store.read_pdf(pdf.bytes())
     assert kinds(doc) == [("p0_Im0", "embedded_image")]
-    assert store.figure_path(doc["id"], "p0_Im0").read_bytes() == jpeg
+    assert doc["images"]["p0_Im0"] == jpeg
 
 
 INLINE_IMAGE = b"BI /W 256 /H 256 /BPC 1 /CS /G ID " + b"\xaa" * (32 * 256) + b"\nEI\n"
@@ -229,13 +228,13 @@ INLINE_IMAGE = b"BI /W 256 /H 256 /BPC 1 /CS /G ID " + b"\xaa" * (32 * 256) + b"
 def test_an_inline_image_gives_a_figure_that_opens():
     """pypdf names it "~0~", which the crop id pattern refuses: it used to be
     listed but could never be opened, so it must not stand as a page's figure."""
-    doc = store_one(b"q 400 0 0 400 40 40 cm\n" + INLINE_IMAGE + b"Q\n")
+    doc = read_one(b"q 400 0 0 400 40 40 cm\n" + INLINE_IMAGE + b"Q\n")
     assert [f["kind"] for f in doc["figures"]] == ["embedded_image"]
-    assert store.figure_path(doc["id"], doc["figures"][0]["crop_id"]) is not None
+    assert doc["images"][doc["figures"][0]["crop_id"]]
 
 
 def test_an_inline_logo_is_a_logo():
-    doc = store_one(SECTION + b"q 40 0 0 40 500 40 cm\n" + INLINE_IMAGE + b"Q\n")
+    doc = read_one(SECTION + b"q 40 0 0 40 500 40 cm\n" + INLINE_IMAGE + b"Q\n")
     assert kinds(doc) == [("p0_rendered", "rendered_page")]
 
 
@@ -245,7 +244,7 @@ def test_an_inline_logo_is_a_logo():
 def test_a_title_block_logo_never_hides_the_drawing(logo):
     pdf = Pdf()
     pdf.page(SECTION + place("Lg", 500, 40, 40, 40), xobjects={"Lg": pdf.image(logo)[0]})
-    doc = store.store_pdf("own.pdf", pdf.bytes())
+    doc = store.read_pdf(pdf.bytes())
     assert kinds(doc) == [("p0_rendered", "rendered_page")]
     assert png(doc).mode == "RGB"  # the red logo is in the rendering; nothing is lost
 
@@ -255,7 +254,7 @@ def test_a_logo_measured_through_its_form_is_still_a_logo():
     pdf = Pdf()
     logo = pdf.form(place("Lg", 0, 0, 600, 600), {"Lg": pdf.image((600, 600))[0]})
     pdf.page(SECTION + b"q 0.05 0 0 0.05 500 40 cm /Fm0 Do Q\n", xobjects={"Fm0": logo})
-    assert kinds(store.store_pdf("own.pdf", pdf.bytes())) == [("p0_rendered", "rendered_page")]
+    assert kinds(store.read_pdf(pdf.bytes())) == [("p0_rendered", "rendered_page")]
 
 
 def test_a_real_figure_measured_through_its_form_stays():
@@ -263,28 +262,28 @@ def test_a_real_figure_measured_through_its_form_stays():
     pdf = Pdf()
     figure = pdf.form(place("Fg", 0, 0, 20, 20), {"Fg": pdf.image((600, 600))[0]})
     pdf.page(SECTION + b"q 20 0 0 20 40 400 cm /Fm0 Do Q\n", xobjects={"Fm0": figure})
-    assert kinds(store.store_pdf("own.pdf", pdf.bytes())) == [("p0_Fg", "embedded_image")]
+    assert kinds(store.read_pdf(pdf.bytes())) == [("p0_Fg", "embedded_image")]
 
 
 def test_a_drawing_beside_a_real_image_gives_both_and_drops_the_logo():
     pdf = Pdf()
     xobjects = {"Ph": pdf.image((800, 600))[0], "Lg": pdf.image((600, 600))[0]}
     pdf.page(hatch(300) + place("Ph", 40, 40, 300, 225) + place("Lg", 500, 40, 40, 40), xobjects=xobjects)
-    assert kinds(store.store_pdf("own.pdf", pdf.bytes())) == [("p0_Ph", "embedded_image"), ("p0_rendered", "rendered_page")]
+    assert kinds(store.read_pdf(pdf.bytes())) == [("p0_Ph", "embedded_image"), ("p0_rendered", "rendered_page")]
 
 
 def test_a_scan_in_a_vector_frame_stays_a_single_extraction():
     pdf = Pdf()
     frame = b"".join(f"{20 + i} {20 + i} 555 800 re S\n".encode() for i in range(8))  # 40 segments
     pdf.page(place("Im0", 30, 120, 535, 690) + frame, xobjects={"Im0": pdf.image((1600, 2000))[0]})
-    assert kinds(store.store_pdf("own.pdf", pdf.bytes())) == [("p0_Im0", "embedded_image")]
+    assert kinds(store.read_pdf(pdf.bytes())) == [("p0_Im0", "embedded_image")]
 
 
 def test_line_work_over_a_raster_is_rendered_as_well():
     """Hybrid exports paint a raster, then the real lines over it."""
     pdf = Pdf()
     pdf.page(place("Im0", 0, 0, 595, 842) + hatch(300), xobjects={"Im0": pdf.image((1600, 2000))[0]})
-    assert kinds(store.store_pdf("own.pdf", pdf.bytes())) == [("p0_Im0", "embedded_image"), ("p0_rendered", "rendered_page")]
+    assert kinds(store.read_pdf(pdf.bytes())) == [("p0_Im0", "embedded_image"), ("p0_rendered", "rendered_page")]
 
 
 def test_a_scan_cut_into_strips_is_rendered():
@@ -293,7 +292,7 @@ def test_a_scan_cut_into_strips_is_rendered():
     xobjects = {f"S{i}": pdf.image((1000, 100), (120, 120, 120))[0] for i in range(10)}
     content = b"".join(place(name, 0, 84 * i, 595, 84) for i, name in enumerate(xobjects))
     pdf.page(content, xobjects=xobjects)
-    assert kinds(store.store_pdf("own.pdf", pdf.bytes())) == [("p0_rendered", "rendered_page")]
+    assert kinds(store.read_pdf(pdf.bytes())) == [("p0_rendered", "rendered_page")]
 
 
 @pytest.mark.parametrize("line_work", [hatch(300), SECTION], ids=["big", "simple"])
@@ -301,44 +300,44 @@ def test_an_image_listed_but_never_drawn_cannot_hide_the_drawing(line_work):
     """Exporters often share one /Resources across pages."""
     pdf = Pdf()
     pdf.page(line_work, xobjects={"Un": pdf.image((800, 600))[0]})
-    assert kinds(store.store_pdf("own.pdf", pdf.bytes())) == [("p0_rendered", "rendered_page")]
+    assert kinds(store.read_pdf(pdf.bytes())) == [("p0_rendered", "rendered_page")]
 
 
 def test_a_big_vector_page_skips_pypdfs_slow_walk(monkeypatch):
     """Seconds per CAD sheet in pure Python, and nothing there can become a figure."""
     monkeypatch.setattr(store, "_embedded_images", lambda i, page: pytest.fail("pypdf walked this page"))
-    assert kinds(store_one(hatch(300))) == [("p0_rendered", "rendered_page")]
+    assert kinds(read_one(hatch(300))) == [("p0_rendered", "rendered_page")]
 
 
 def test_a_simple_drawing_with_a_notes_block_is_still_a_drawing():
     """12 layers (60 segments) under a title block and 600 characters of notes."""
     layers = b"".join(f"100 {200 + 20 * i} 400 20 re S\n".encode() for i in range(12))
-    assert kinds(store_one(layers + text(7, 80))) == [("p0_rendered", "rendered_page")]
+    assert kinds(read_one(layers + text(7, 80))) == [("p0_rendered", "rendered_page")]
 
 
 @pytest.mark.parametrize("content", [b"", b"1 g 0 0 595 842 re f\n", b"0.8 0.8 1 rg 0 0 595 842 re f\n"],
                          ids=["empty", "white-rectangle", "full-page-tint"])
 def test_a_blank_page_gives_nothing(content):
-    assert store_one(content)["figures"] == []
+    assert read_one(content)["figures"] == []
 
 
 def test_a_blank_rendering_gives_back_the_images_it_would_have_shown():
     """Line work that turns out invisible must not cost today's figures."""
     pdf = Pdf()
     pdf.page(b"1 g 0 0 595 842 re f\n" + place("Lg", 500, 40, 40, 40), xobjects={"Lg": pdf.image((600, 600), "white")[0]})
-    assert kinds(store.store_pdf("own.pdf", pdf.bytes())) == [("p0_Lg", "embedded_image")]
+    assert kinds(store.read_pdf(pdf.bytes())) == [("p0_Lg", "embedded_image")]
 
 
 def test_a_page_of_text_gives_nothing():
     rules = b"40 810 m 555 810 l S\n40 40 m 555 40 l S\n"
-    assert store_one(text(60) + rules)["figures"] == []
+    assert read_one(text(60) + rules)["figures"] == []
 
 
 def test_a_mixed_document_keeps_each_page_to_its_own_kind():
     pdf = Pdf()
     ref, _ = pdf.image((400, 300))
     pdf.page(place("Im0", 40, 400, 400, 300), xobjects={"Im0": ref}).page(SECTION).page().page(text(60))
-    doc = store.store_pdf("own.pdf", pdf.bytes())
+    doc = store.read_pdf(pdf.bytes())
     assert doc["pages"] == 4
     assert kinds(doc) == [("p0_Im0", "embedded_image"), ("p1_rendered", "rendered_page")]
     assert [f["page"] for f in doc["figures"]] == [0, 1]
@@ -350,9 +349,9 @@ def test_a_page_too_heavy_for_pypdf_still_uploads():
     """pypdf gives up on very long content streams. Before rendered pages, the
     unguarded text excerpt turned that into a failed upload."""
     with apply_configuration(stream_parsing_work_maximum_count=50):
-        doc = store_one(hatch(300) + b"BT /F1 8 Tf 40 40 Td (DETAIL 7) Tj ET\n")
+        doc = read_one(hatch(300) + b"BT /F1 8 Tf 40 40 Td (DETAIL 7) Tj ET\n")
     assert kinds(doc) == [("p0_rendered", "rendered_page")]
-    page = json.loads((store.doc_dir(doc["id"]) / "meta.json").read_text())["pages"][0]
+    page = doc["page_notes"][0]
     assert "DETAIL 7" in page["text_excerpt"]
     assert page["segments"] == 600 and page["chars"] > 0 and page["covered"] == 0  # why it went this way
 
@@ -363,7 +362,7 @@ def test_a_render_failure_is_reported_and_keeps_the_embedded_figures(monkeypatch
     monkeypatch.setattr(store, "_render_page", fail)
     pdf = Pdf()
     pdf.page(place("Im0", 40, 40, 300, 225) + hatch(300), xobjects={"Im0": pdf.image((800, 600))[0]})
-    doc = store.store_pdf("own.pdf", pdf.bytes())
+    doc = store.read_pdf(pdf.bytes())
     assert kinds(doc) == [("p0_Im0", "embedded_image")]
     assert doc["warnings"] == ["page 1 could not be rendered: no"]
 
@@ -374,7 +373,7 @@ def test_a_file_pdfium_cannot_open_keeps_its_embedded_figures(monkeypatch):
     monkeypatch.setattr(pypdfium2, "PdfDocument", fail)
     pdf = Pdf()
     pdf.page(place("Im0", 40, 40, 300, 225), xobjects={"Im0": pdf.image((800, 600))[0]})
-    doc = store.store_pdf("own.pdf", pdf.bytes())
+    doc = store.read_pdf(pdf.bytes())
     assert kinds(doc) == [("p0_Im0", "embedded_image")]
     assert "PDFium could not open" in doc["warnings"][0]
 
@@ -383,27 +382,43 @@ def test_uploads_may_overlap():
     """Uploads run off the event loop now, and PDFium is not thread-safe."""
     data = Pdf().page(hatch(300)).bytes()
     with ThreadPoolExecutor(4) as pool:
-        docs = list(pool.map(lambda _: store.store_pdf("own.pdf", data), range(8)))
-    assert len({store.figure_path(doc["id"], "p0_rendered").read_bytes() for doc in docs}) == 1
+        docs = list(pool.map(lambda _: store.read_pdf(data), range(8)))
+    assert len({doc["images"]["p0_rendered"] for doc in docs}) == 1
 
 
-def stored_documents():
-    con = store.db()
-    rows = con.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
-    con.close()
-    return rows, sorted(p.name for p in (store.var_root() / "docs").glob("*"))
-
-
-def test_only_the_drawing_is_kept_from_a_pdf():
-    before = stored_documents()
+def test_only_the_drawing_is_kept_from_a_pdf(tmp_path):
     pdf = Pdf()
     pdf.page(place("Im0", 40, 40, 300, 225), xobjects={"Im0": pdf.image((800, 600))[0]})
-    assert Image.open(io.BytesIO(studio._drawing("own.pdf", pdf.bytes()))).size == (800, 600)
-    assert stored_documents() == before
+    assert Image.open(io.BytesIO(studio._drawing(pdf.bytes()))).size == (800, 600)
+    assert list(tmp_path.iterdir()) == []
 
 
-def test_a_pdf_with_no_drawing_leaves_nothing_behind():
-    before = stored_documents()
+def test_a_pdf_with_no_drawing_leaves_nothing_behind(tmp_path):
     with pytest.raises(ValueError, match="no drawing"):
-        studio._drawing("own.pdf", Pdf().page(b"").bytes())
-    assert stored_documents() == before
+        studio._drawing(Pdf().page(b"").bytes())
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_studio_stops_reading_after_the_first_figure(monkeypatch, tmp_path):
+    pdf = Pdf().page()
+    pdf.page(place("Im0", 40, 40, 300, 225), xobjects={"Im0": pdf.image((800, 600))[0]}).page(SECTION)
+    page_figures = store._page_figures
+    visited = []
+
+    def read_page(index, page, document):
+        visited.append(index)
+        assert index < 2, "Studio should not render pages after its selected drawing"
+        return page_figures(index, page, document)
+
+    monkeypatch.setattr(store, "_page_figures", read_page)
+    assert Image.open(io.BytesIO(studio._drawing(pdf.bytes()))).size == (800, 600)
+    assert visited == [0, 1]
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_malformed_pdf_does_not_create_a_document_store(tmp_path):
+    from pypdf.errors import PdfReadError
+
+    with pytest.raises(PdfReadError):
+        studio._drawing(b"%PDF-broken")
+    assert list(tmp_path.iterdir()) == []

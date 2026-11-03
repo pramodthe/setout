@@ -12,6 +12,7 @@ export type Tool = "select" | "pan" | "orbit";
 const CLAY = new THREE.MeshStandardMaterial({ color: 0xb9b6ae, roughness: 0.92, metalness: 0 });
 const HOVER = 0x3b82f6;
 const CHOSEN = 0xf59e0b;
+const GHOST = 0.1;  /* the rest of the model while some parts are marked, so a buried part still shows */
 const STEP_MS = 650;
 const FOV = 32;
 const MARGIN = 1.22;  /* room left around a fitted view */
@@ -39,6 +40,7 @@ export class StudioViewport {
   private raycaster = new THREE.Raycaster();
   private pointer = new THREE.Vector2();
   private selected: string | null = null;
+  private marked = new Set<string>();
   private hovered: string | null = null;
   private tool: Tool = "select";
   private look: Look = "material";
@@ -112,6 +114,7 @@ export class StudioViewport {
     this.root.clear();
     this.parts.clear();
     this.hidden.clear();
+    this.marked.clear();
     this.root.add(gltf.scene);
     gltf.scene.updateMatrixWorld(true);
     this.box.setFromObject(gltf.scene);
@@ -184,9 +187,17 @@ export class StudioViewport {
   private tint(name: string): void {
     const part = this.parts.get(name);
     if (!part) return;
-    const colour = name === this.selected ? CHOSEN : name === this.hovered ? HOVER : 0x000000;
-    const strength = name === this.selected ? 0.42 : name === this.hovered ? 0.24 : 0;
-    const paint = (m: THREE.MeshStandardMaterial) => { m.emissive.setHex(colour); m.emissiveIntensity = strength; };
+    const chosen = name === this.selected || this.marked.has(name);
+    const ghost = this.marked.size > 0 && !this.marked.has(name);
+    const colour = chosen ? CHOSEN : name === this.hovered ? HOVER : 0x000000;
+    const strength = chosen ? 0.42 : name === this.hovered ? 0.24 : 0;
+    const paint = (m: THREE.MeshStandardMaterial) => {
+      m.emissive.setHex(colour);
+      m.emissiveIntensity = strength;
+      m.transparent = ghost;
+      m.opacity = ghost ? GHOST : 1;
+      m.depthWrite = !ghost;
+    };
     if (Array.isArray(part.mesh.material)) (part.mesh.material as THREE.MeshStandardMaterial[]).forEach(paint); else paint(part.mesh.material as THREE.MeshStandardMaterial);
   }
 
@@ -223,6 +234,12 @@ export class StudioViewport {
     this.selected = name;
     if (before) this.tint(before);
     if (name) this.tint(name);
+  }
+
+  /* Light up the parts of one measurement and let the rest go faint. An empty list brings everything back. */
+  mark(names: string[]): void {
+    this.marked = new Set(names);
+    for (const name of this.parts.keys()) this.tint(name);
   }
 
   /* Isometric and the flat views have no perspective, so they read like drawings from different sides. */
@@ -312,6 +329,7 @@ export class StudioViewport {
     this.downAt = null;
     if (moved > 4) return;
     const name = this.pick(e);
+    this.mark([]);
     this.select(name);
     this.onPick(name);
   }

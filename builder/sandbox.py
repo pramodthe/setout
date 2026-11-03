@@ -11,13 +11,14 @@ import modal
 app = modal.App("setout-blender")
 image = (modal.Image.debian_slim(python_version="3.13")
          .apt_install("libxrender1", "libxxf86vm1", "libxfixes3", "libxi6", "libxkbcommon0", "libsm6", "libgl1", "libegl1")
-         .pip_install("bpy==5.2.3", "numpy"))
+         .pip_install("bpy==5.2.3", "numpy", "trimesh==5.2.0", "manifold3d==3.5.4", "rtree==1.4.1", "scipy==1.18.1", "networkx==3.7"))
 
 
 @app.function(image=image, cpu=8.0, memory=8192, timeout=290, block_network=True)
-def live_step(kit: str, steps: list, views: list, export: bool = False):
+def live_step(kit: str, steps: list, views: list, export: bool = False, measure: str = "", relations: dict | None = None):
     """A model's live scene. The scene is the list of code steps it has run, replayed in order, so it needs no saved file, an undo only drops the last step, and every
-    size stays in readable code. The last step's failure comes back as feedback, and the steps before it still stand. Comes back in pieces, as the network is blocked."""
+    size stays in readable code. The last step's failure comes back as feedback, and the steps before it still stand. Comes back in pieces, as the network is blocked.
+    `measure` is builder/measure.py, which travels like the kit. A measurement that fails is reported and costs the step nothing."""
     import io
     import json
     import os
@@ -58,8 +59,18 @@ def live_step(kit: str, steps: list, views: list, export: bool = False):
         finally:
             sys.stdout = stdout
     rows = module.inventory()
-    meta = json.dumps({"error": error, "seconds": round(time.time() - started, 1), "parts": rows, "printed": printed.getvalue()[-2000:]}).encode()
+    measured = None
+    if measure and not error and rows:
+        try:
+            measuring = types.ModuleType("measure")
+            exec(compile(measure, "measure.py", "exec"), measuring.__dict__)
+            measured = measuring.measure(module.solids(), relations)
+        except Exception:
+            measured = {"error": traceback.format_exc(limit=3)[-600:]}
+    meta = json.dumps({"error": error, "seconds": round(time.time() - started, 1), "parts": rows, "printed": printed.getvalue()[-2000:], "measured": measured}).encode()
     yield "scene.json", meta
+    if error:
+        return  # send the failure immediately; don't render/export broken geometry
     for view in views:
         module.fit_view(view)
     if export:

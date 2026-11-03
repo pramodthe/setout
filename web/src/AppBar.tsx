@@ -1,4 +1,4 @@
-/* The bar across every page, so the whole app reads as one thing. */
+/* The bar across Studio pages. Its Setout link returns to the landing story. */
 
 import type { JSX, ReactNode } from "react";
 

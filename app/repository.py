@@ -236,7 +236,7 @@ class Repository:
         with self.engine.connect() as con:
             return self._run(con, job_id)
 
-    def reserve(self, fence, amounts):
+    def reserve(self, fence, amounts, token_floor=0):
         with d.transaction(self.engine) as con:
             self._check(con, fence)
             run = self._run(con, fence.job_id)
@@ -248,7 +248,8 @@ class Repository:
             for key, amount in amounts.items():
                 if amount < 0 or key not in DEFAULT_BUDGET:
                     raise ValueError("invalid reservation")
-                if used.get(key, 0) + reserved.get(key, 0) + amount > run["budget"][key]:
+                floor = token_floor if key == "tokens" else 0
+                if used.get(key, 0) + reserved.get(key, 0) + amount + floor > run["budget"][key]:
                     raise BudgetExceeded(f"{key} budget exhausted")
                 reserved[key] = reserved.get(key, 0) + amount
             con.execute(d.runs.update().where(d.runs.c.id == run["id"]).values(reserved=reserved))

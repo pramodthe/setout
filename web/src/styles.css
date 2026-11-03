@@ -11,6 +11,8 @@ html, body, #root { height: 100%; margin: 0; background: #f5f4f1; }
 .appbar a { text-decoration: none; color: inherit; }
 .appbar .brand { display: flex; align-items: center; gap: 8px; font-weight: 650; }
 .appbar .brand i { width: 18px; height: 18px; border-radius: 5px; background: conic-gradient(from 210deg, #2f6fed, #7c5cff, #ec7a3a, #2f6fed); display: block; }
+.appbar .storylink { color: #55554f; font-size: 12px; }
+.appbar .storylink:hover { color: #18181a; text-decoration: underline; }
 .appbar .topright { margin-left: auto; display: flex; align-items: center; gap: 6px; flex: none; }
 .studio .icon, .appbar .icon { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; color: var(--soft); }
 .appbar .icon:hover, .studio .icon:hover:not(:disabled) { background: var(--paper); color: var(--ink); }
@@ -58,6 +60,19 @@ html, body, #root { height: 100%; margin: 0; background: #f5f4f1; }
 .studio .checker li.missing b { background: #fbe6e4; color: #b3261e; }
 .studio .checker li.cant_tell b { background: var(--paper); color: var(--soft); }
 .studio .checker small { display: block; color: var(--soft); }
+.studio .checker .measuring { margin-top: 14px; }
+.studio .checker .measured { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.studio .checker .measured li { align-items: flex-start; }
+.studio .checker .measured li > span { flex: 1; min-width: 0; }
+.studio .checker li.fails b { background: #fdf0dd; color: #a35a0c; }
+.studio .checker li.unknown b, .studio .checker li.struck b { background: var(--paper); color: var(--soft); }
+.studio .checker li.struck .line { color: var(--soft); text-decoration: line-through; }
+.studio .checker .line { all: unset; display: block; cursor: pointer; border-radius: 4px; overflow-wrap: anywhere; }
+.studio .checker .line:hover { color: #a35a0c; }
+.studio .checker .line.on { color: #a35a0c; font-weight: 600; }
+.studio .checker .line:focus-visible, .studio .checker .strike:focus-visible { outline: 2px solid #2f6fed; outline-offset: 2px; }
+.studio .checker small .strike { margin-right: 10px; }
+.studio .checker .strike { flex: none; border: 0; background: none; padding: 0; font: inherit; font-size: 11px; color: var(--soft); cursor: pointer; text-decoration: underline; }
 .studio .rail { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 2px; padding: 5px; background: rgba(255, 255, 255, 0.96); border-radius: 13px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3); }
 .studio .rail hr { border: 0; border-top: 1px solid var(--line); margin: 3px 4px; }
 .studio .rail .icon { position: relative; width: 36px; height: 34px; }
@@ -99,6 +114,8 @@ html, body, #root { height: 100%; margin: 0; background: #f5f4f1; }
 .studio .hero { max-width: 760px; margin: 0 auto; text-align: center; }
 .studio .hero h1 { font-size: 34px; line-height: 1.15; font-weight: 650; letter-spacing: -0.02em; }
 .studio .hero p { margin-top: 10px; color: var(--soft); font-size: 15px; }
+.studio .build-method { display: inline-flex; align-items: center; gap: 8px; margin-top: 20px; font-size: 14px; cursor: pointer; }
+.studio .build-method input { accent-color: var(--accent); }
 .studio .drop { display: block; margin: 30px auto 0; padding: 44px 24px; border: 1.5px dashed #cfcdc6; border-radius: 18px; background: var(--card); cursor: pointer; transition: border-color 0.12s, background 0.12s; }
 .studio .drop:hover, .studio .drop.over { border-color: var(--accent); background: #f7f9ff; }
 .studio .drop strong { display: block; font-size: 15px; font-weight: 600; }

@@ -1,4 +1,4 @@
-"""Document store: uploaded PDFs, checksums, figures.
+"""Runtime location and in-memory extraction of drawings from uploaded PDFs.
 
 A figure is one image of a drawing. A PDF yields it in one of two ways, and
 every figure records which (`kind`):
@@ -10,33 +10,26 @@ every figure records which (`kind`):
                   draw in vector, so they hold no image to extract.
 
 _plan_page decides what each page gets. Blank pages and pages of plain text
-report no figure; nothing is faked. All state lives under var/ (SETOUT_VAR
-override, gitignored).
+report no figure; nothing is faked. PDF extraction writes no source documents,
+temporary images or separate database. Scene artifacts live under SETOUT_VAR.
 """
 
 from __future__ import annotations
 
-import hashlib
 import io
-import json
 import os
 import re
-import shutil
-import sqlite3
 import threading
-import uuid
 from pathlib import Path
 
 VAR = Path(os.environ.get("SETOUT_VAR", "var"))
-DOC_ID = re.compile(r"^[0-9a-f]{12}$")  # uuid4().hex[:12]
-CROP_ID = re.compile(r"^p\d+_[A-Za-z0-9_.-]+$")  # p<page>_<pdf image name> or p<page>_rendered
 
 MIN_FIGURE_PX = 200  # a smaller embedded image is an icon, never a figure
 
 # What makes a page a drawing (_plan_page). Set against the reference manual,
 # whose page furniture is 25 path segments under 450+ characters (18 per segment),
 # whose smallest real figure covers 8% of its page and whose icons cover 0.6%.
-# Unproven on real CAD exports, so meta.json records these measures per page. A
+# Unproven on real CAD exports, so extraction records these measures per page. A
 # wrong call must cost a spare figure, not a lost drawing.
 CHARS_PER_SEGMENT = 12   # more text per segment than this is a page of text
 MIN_IMAGE_SHARE = 0.03   # beside line work, an image placed smaller is a logo
@@ -48,7 +41,7 @@ LOST_IMAGE_SHARE = 0.25  # images this large that gave no figure still get rende
 # whether they stay apart depends on where they land.
 RENDER_DPI = 300
 # Holds A2 at 300 dpi, and A1 at 215 dpi where that gap still shows. Well under
-# Pillow's 89 MP decompression-bomb warning, which sam.upright would hit.
+# Pillow's decompression-bomb warning.
 MAX_RENDER_PIXELS = 36_000_000
 MAX_RENDER_BYTES = 37_000_000  # the model API's 50 MB inline limit, after base64
 INK_CONTRAST = 32  # grey levels from the background that count as a mark
@@ -59,20 +52,6 @@ _PDFIUM = threading.Lock()  # PDFium is not thread-safe, even across documents
 def var_root() -> Path:
     VAR.mkdir(parents=True, exist_ok=True)
     return VAR
-
-
-def db() -> sqlite3.Connection:
-    con = sqlite3.connect(var_root() / "setout.db")
-    con.execute("""CREATE TABLE IF NOT EXISTS documents(
-        id TEXT PRIMARY KEY, filename TEXT, sha256 TEXT, pages INTEGER,
-        meta TEXT, created DATETIME DEFAULT CURRENT_TIMESTAMP)""")
-    return con
-
-
-def doc_dir(doc_id: str) -> Path:
-    d = var_root() / "docs" / doc_id
-    d.mkdir(parents=True, exist_ok=True)
-    return d
 
 
 def _embedded_images(i: int, page) -> list[tuple[dict, bytes, str]]:
@@ -106,7 +85,7 @@ def _embedded_images(i: int, page) -> list[tuple[dict, bytes, str]]:
         if w < MIN_FIGURE_PX or h < MIN_FIGURE_PX:
             continue
         ext = "jpg" if fmt == "JPEG" else "png"
-        # Only ids CROP_ID would refuse change: pypdf names inline images "~0~".
+        # Keep stable simple identifiers, including inline images named "~0~".
         stem = re.sub(r"[^A-Za-z0-9_.-]", "_", name.rsplit(".", 1)[0])
         found.append(({"crop_id": f"p{i}_{stem}", "page": i, "width": w, "height": h,
                        "kind": "embedded_image", "dpi": None}, payload, ext))
@@ -208,7 +187,7 @@ def _render_page(page, user_unit: float) -> tuple[bytes, int, int, float] | None
 
 
 def _page_figures(i: int, page, pdf) -> tuple[list[tuple], dict, str | None]:
-    """A page's (figure, bytes, extension) entries, notes for meta.json and any
+    """A page's (figure, bytes, extension) entries, extraction notes and any
     warning. A PDFium failure must not cost what pypdf can still read."""
     notes = {"text_excerpt": ""}
     if pdf is None:
@@ -238,16 +217,17 @@ def _page_figures(i: int, page, pdf) -> tuple[list[tuple], dict, str | None]:
             handle.close()
 
 
-def store_pdf(filename: str, data: bytes) -> dict:
+def read_pdf(data: bytes, *, first_only=False) -> dict:
+    """Extract figure metadata and bytes without writing files.
+
+    Studio asks for the first figure, so later pages aren't rendered or retained.
+    Full extraction remains useful for checking PDF handling offline.
+    """
     from pypdf import PdfReader  # local import: clearer error without dep
     import pypdfium2
 
-    sha = hashlib.sha256(data).hexdigest()
     reader = PdfReader(io.BytesIO(data))
-    doc_id = uuid.uuid4().hex[:12]
-    d = doc_dir(doc_id)
-    (d / "original.pdf").write_bytes(data)
-    figures, notes, warnings = [], [], []
+    figures, images, notes, warnings = [], {}, [], []
     with _PDFIUM:
         try:
             pdf = pypdfium2.PdfDocument(data)
@@ -257,47 +237,18 @@ def store_pdf(filename: str, data: bytes) -> dict:
         try:
             for i, page in enumerate(reader.pages):
                 entries, page_notes, warning = _page_figures(i, page, pdf)
-                for figure, payload, ext in entries:
-                    (d / f"{figure['crop_id']}.{ext}").write_bytes(payload)
+                for figure, payload, _ in entries:
+                    images[figure["crop_id"]] = payload
                     figures.append(figure)
+                    if first_only:
+                        break
                 notes.append(page_notes)
                 if warning:
                     warnings.append(warning)
+                if first_only and figures:
+                    break
         finally:
             if pdf is not None:
                 pdf.close()
-    meta = {"pages": [{"index": i,
-                       "width_pt": float(reader.pages[i].mediabox.width),
-                       "height_pt": float(reader.pages[i].mediabox.height),
-                       **notes[i],
-                       "figures": [f for f in figures if f["page"] == i]}
-                      for i in range(len(reader.pages))]}
-    (d / "meta.json").write_text(json.dumps(meta, indent=2))
-    con = db()
-    con.execute("INSERT INTO documents(id, filename, sha256, pages, meta) "
-                "VALUES(?,?,?,?,?)",
-                (doc_id, filename, sha, len(reader.pages),
-                 json.dumps({"figures": figures, "warnings": warnings})))
-    con.commit()
-    con.close()
-    return {"id": doc_id, "filename": filename, "sha256": sha,
-            "pages": len(reader.pages), "figures": figures, "warnings": warnings}
-
-
-def remove_document(doc_id: str) -> None:
-    shutil.rmtree(var_root() / "docs" / doc_id, ignore_errors=True)
-    con = db()
-    con.execute("DELETE FROM documents WHERE id=?", (doc_id,))
-    con.commit()
-    con.close()
-
-
-def figure_path(doc_id: str, crop_id: str) -> Path | None:
-    if not DOC_ID.match(doc_id) or not CROP_ID.match(crop_id) or ".." in crop_id:
-        return None
-    d = var_root() / "docs" / doc_id  # look up only; never create a directory
-    for ext in ("jpg", "png"):
-        p = d / f"{crop_id}.{ext}"
-        if p.exists():
-            return p
-    return None
+    return {"pages": len(reader.pages), "figures": figures, "images": images,
+            "page_notes": notes, "warnings": warnings}
