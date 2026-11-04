@@ -20,9 +20,9 @@ export default function Root(): JSX.Element {
     return () => removeEventListener("hashchange", follow);
   }, []);
   const scene = hash.match(/^#\/studio\/([^?]+)/);
-  if (scene) return <Suspense fallback={<div style={{ minHeight: "100vh", background: "#111513" }} />}><Studio key={scene[1]} sceneId={decodeURIComponent(scene[1])} /></Suspense>;
-  if (hash === "#/app" || hash.startsWith("#/app?")) return <Suspense fallback={<div style={{ minHeight: "100vh", background: "#111513" }} />}><Studio key="home" sceneId={null} /></Suspense>;
-  return <Suspense fallback={<div style={{ minHeight: "100vh", background: "#111513" }} />}><Anatomy /></Suspense>;
+  if (scene) return <Suspense fallback={<div style={{ minHeight: "100vh", background: "#e4e4e2" }} />}><Studio key={scene[1]} sceneId={decodeURIComponent(scene[1])} /></Suspense>;
+  if (hash === "#/app" || hash.startsWith("#/app?")) return <Suspense fallback={<div style={{ minHeight: "100vh", background: "#e4e4e2" }} />}><Studio key="home" sceneId={null} /></Suspense>;
+  return <Suspense fallback={<div style={{ minHeight: "100vh", background: "#c7c7c7" }} />}><Anatomy /></Suspense>;
 }
 
 createRoot(document.getElementById("root")!).render(

@@ -13,15 +13,16 @@ export default function Home({ scenes, onFile, onDelete, error }: { scenes: Card
   return (
     <main className="home">
       <div className="hero">
-        <h1>Turn a section drawing into a 3D detail</h1>
-        <p>Muse reads your drawing and builds every part in Blender, checking its own work as it goes.</p>
-        <label className="build-method"><input type="checkbox" checked={parallel} onChange={(e) => setParallel(e.target.checked)} /> Try parallel build (experimental)</label>
-        {parallel && <p>Builds component groups together and uses suitable parts from your library, then checks the assembly against the drawing.</p>}
+        <h1>Bring a drawing</h1>
+        <p className="lead">Drop a section drawing or a photo of a detail. Muse builds every part in Blender and checks its own work against your drawing.</p>
         <label className={`drop${over ? " over" : ""}`} onDragOver={(e) => { e.preventDefault(); setOver(true); }} onDragLeave={() => setOver(false)} onDrop={drop}>
-          <strong>Drop a section drawing here</strong>
-          <span>or click to choose a PDF, PNG or JPG</span>
+          <strong>Drop a drawing here</strong>
+          <span>A PDF, PNG or JPG. One detail at a time.</span>
+          <span className="solid">Choose a file<span className="square">{ICONS.upload}</span></span>
           <input id="studioFile" type="file" accept="application/pdf,image/png,image/jpeg" onChange={pick} />
         </label>
+        <label className="build-method"><input type="checkbox" checked={parallel} onChange={(e) => setParallel(e.target.checked)} /> Try the parallel build (experimental)</label>
+        {parallel && <p className="quiet method-note">Builds groups of parts together and uses suitable parts from your library, then checks the assembly against the drawing.</p>}
         {error && <p className="warm" role="alert">{error}</p>}
       </div>
       {scenes.length > 0 && (
@@ -30,11 +31,11 @@ export default function Home({ scenes, onFile, onDelete, error }: { scenes: Card
           <div className="sc-grid">
             {scenes.map((s) => (
               <div key={s.id} className="sc-item">
-              <a className="sc-card" href={`#/studio/${s.id}`}>
-                <div className="thumb">{s.has_preview && <img src={`/api/studio/${s.id}/preview`} alt="" loading="lazy" />}</div>
-                <div className="meta"><strong>{s.title}</strong><span>{s.state === "working" ? "Muse is building" : s.state === "failed" ? "Stopped" : `${s.parts} parts`}</span></div>
-              </a>
-              {s.state !== "working" && <button className="sc-delete" aria-label={`Delete ${s.title}`} title="Delete" onClick={() => onDelete(s)}>{ICONS.trash}</button>}
+                <a className="sc-card" href={`#/studio/${s.id}`}>
+                  <div className="thumb">{s.has_preview && <img src={`/api/studio/${s.id}/preview`} alt="" loading="lazy" />}</div>
+                  <div className="meta"><strong>{s.title}</strong><span>{s.state === "working" ? "Muse is building" : s.state === "failed" ? "Stopped" : `${s.parts} parts`}</span></div>
+                </a>
+                {s.state !== "working" && <button className="sc-delete" aria-label={`Delete ${s.title}`} title="Delete" onClick={() => onDelete(s)}>{ICONS.trash}</button>}
               </div>
             ))}
           </div>
