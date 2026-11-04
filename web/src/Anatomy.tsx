@@ -3,6 +3,7 @@ import type { CSSProperties, ReactNode } from "react";
 import "@fontsource-variable/inter-tight";
 import type { AnatomyScene, SceneStatus } from "./anatomyScene";
 import { AnatomyFilm } from "./anatomyFilm";
+import Mark from "./Mark";
 import "./anatomy.css";
 
 // Each chapter is one screen of scrolling; the film follows the same progress.
@@ -23,10 +24,6 @@ function Arrow({ down = false }: { down?: boolean }) {
   return <span className="anatomy-arrow" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none"><path d={down ? "M8 3v10M3.5 8.5 8 13l4.5-4.5" : "M4.5 11.5 11.5 4.5M5.5 4.5h6v6"} stroke="currentColor" strokeWidth="1.3" /></svg></span>;
 }
 
-// An I-joist in section: the part this story starts from.
-function Mark() {
-  return <svg className="anatomy-mark" viewBox="0 0 24 28" fill="none" aria-hidden="true"><path d="M3 2.5h18v4.5h-7v14h7v4.5H3V21h7V7H3z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" /></svg>;
-}
 
 export default function Anatomy() {
   const root = useRef<HTMLDivElement>(null);
@@ -133,7 +130,7 @@ export default function Anatomy() {
   return <div ref={root} className={`anatomy${exploring ? " anatomy-exploring" : ""}${status.ready ? " anatomy-ready" : ""}`}>
     <a className="anatomy-skip" href="#anatomy-story" onClick={(e) => { e.preventDefault(); document.getElementById("anatomy-story")?.focus(); }}>Skip to the story</a>
     <header className="anatomy-header" aria-hidden={exploring || undefined}>
-      <button className="anatomy-brand" onClick={() => go(0)} aria-label="Setout, back to the top"><Mark />Setout</button>
+      <button className="anatomy-brand" onClick={() => go(0)} aria-label="Setout, back to the top"><Mark className="anatomy-mark" />Setout</button>
       <a className="anatomy-button" href="#/app">Open Studio <Arrow /></a>
     </header>
 

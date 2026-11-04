@@ -1,7 +1,8 @@
 /* The studio: a drawing goes in, Muse builds it in live Blender, and a person looks through the parts and asks for changes. Nothing here is verified, and the page says so. */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { FormEvent, JSX } from "react";
+import type { CSSProperties, FormEvent, JSX } from "react";
+import "@fontsource-variable/inter-tight";
 import AppBar from "./AppBar";
 import ConfirmDelete from "./ConfirmDelete";
 import Home from "./Home";
@@ -146,35 +147,36 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
     if (response.ok) setScene((await response.json()) as Scene); else setError("That step couldn't be undone");
   };
 
-  if (!sceneId) return <div className="studio"><AppBar right={<a className="storylink" href="#/">Explore the house ↗</a>} /><Home scenes={scenes} onFile={(f, method) => void upload(f, method)} onDelete={setDoomed} error={error} />{doomed && <ConfirmDelete title={doomed.title} onCancel={closeDelete} onConfirm={() => void remove()} />}</div>;
+  if (!sceneId) return <div className="studio"><AppBar right={<a className="storylink" href="#/">The story</a>} /><Home scenes={scenes} onFile={(f, method) => void upload(f, method)} onDelete={setDoomed} error={error} />{doomed && <ConfirmDelete title={doomed.title} onCancel={closeDelete} onConfirm={() => void remove()} />}</div>;
 
   const row = scene?.parts.find((r) => r.name === selected);
   const stepText = playing !== null && scene ? scene.intents[playing - 1] : null;
   const unbuilt = !viewable;
   const right = (
     <>
-      <button className="ghost" onClick={play} disabled={!ready}>{playing !== null ? ICONS.stop : ICONS.play}{playing !== null ? "Stop" : "Play build"}</button>
+      {scene && scene.tokens > 0 && <span className="quiet tokens">{scene.tokens.toLocaleString()} tokens</span>}
+      {scene && !working && <button className="icon" aria-label="Delete this scene" title="Delete" onClick={() => setDoomed({ id: scene.id, title: scene.title })}>{ICONS.trash}</button>}
       <a className="icon" href={ready ? `/api/studio/${scene.id}/model.glb` : undefined} download="detail.glb" aria-label="Download model" title="Download GLB" aria-disabled={!ready}>{ICONS.download}</a>
       <button className={`icon${panel ? " on" : ""}`} aria-label="Toggle the side panel" aria-pressed={panel} onClick={() => setPanel(!panel)}>{ICONS.panel}</button>
+      <button className="solid" onClick={play} disabled={!ready}>{playing !== null ? "Stop" : "Play build"}<span className="square">{playing !== null ? ICONS.stop : ICONS.play}</span></button>
     </>
   );
 
   return (
     <div className="studio">
-      <AppBar right={right} />
-      <div className="subbar">
-        <a className="allback" href="#/app">{ICONS.back}All details</a>
-        {name === null ? <h1>{scene?.title ?? "Loading"}</h1> : (
-          <form onSubmit={(e) => { e.preventDefault(); void rename(); }}>
-            <input className="rename" aria-label="Scene name" autoFocus maxLength={60} value={name} onChange={(e) => setName(e.target.value)} onBlur={() => void rename()} onKeyDown={(e) => { if (e.key === "Escape") setName(null); }} />
-          </form>
-        )}
-        {scene && name === null && <button className="icon" aria-label="Rename" title="Rename" onClick={() => setName(scene.title)}>{ICONS.pencil}</button>}
-        {scene && <span className="pill">{working ? "Muse is building" : `${scene.parts.length} parts`}</span>}
-        <span className="pill">Not verified</span>
-        {scene && !working && <button className="icon subright" aria-label="Delete this scene" title="Delete" onClick={() => setDoomed({ id: scene.id, title: scene.title })}>{ICONS.trash}</button>}
-        {scene && scene.tokens > 0 && <span className="pill">{scene.tokens.toLocaleString()} tokens</span>}
-      </div>
+      <AppBar right={right}>
+        <div className="scenehead">
+          <a className="allback" href="#/app" aria-label="All details" title="All details">{ICONS.back}</a>
+          {name === null ? <h1>{scene?.title ?? "Loading"}</h1> : (
+            <form onSubmit={(e) => { e.preventDefault(); void rename(); }}>
+              <input className="rename" aria-label="Scene name" autoFocus maxLength={60} value={name} onChange={(e) => setName(e.target.value)} onBlur={() => void rename()} onKeyDown={(e) => { if (e.key === "Escape") setName(null); }} />
+            </form>
+          )}
+          {scene && name === null && <button className="icon" aria-label="Rename" title="Rename" onClick={() => setName(scene.title)}>{ICONS.pencil}</button>}
+          {scene && <span className="quiet">{working ? "Muse is building" : `${scene.parts.length} parts`}</span>}
+          <span className="tag">Not verified</span>
+        </div>
+      </AppBar>
       <div className={`work${panel ? "" : " wide"}`}>
         <div className="stagewrap">
           <div ref={stage} className="gl" />
@@ -204,13 +206,13 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
                 <button className="icon" aria-label="Undo the last step" data-tip="Undo the last step" disabled={busy || working || !scene?.step_count} onClick={() => void undo()}>{ICONS.undo}</button>
               </div>
               <div className="sliders">
-                <label>Pull apart<input type="range" aria-label="Pull apart" min={0} max={100} value={spread} onChange={(e) => { const v = Number(e.target.value); setSpread(v); view.current?.setSpread(v / 100); }} /></label>
+                <label>Pull apart<input type="range" aria-label="Pull apart" min={0} max={100} value={spread} style={{ "--fill": `${spread}%` } as CSSProperties} onChange={(e) => { const v = Number(e.target.value); setSpread(v); view.current?.setSpread(v / 100); }} /></label>
               </div>
             </>
           )}
           {(ready || scene?.state === "failed") && (
             <form className="dock" onSubmit={send}>
-              <div className="ask"><i /><input id="studioFeedback" aria-label="Tell Muse what to change" placeholder="Tell Muse what to change…" value={text} onChange={(e) => setText(e.target.value)} /><button className="send" aria-label="Send" disabled={!text.trim()}>{ICONS.send}</button></div>
+              <div className="ask"><input id="studioFeedback" aria-label="Tell Muse what to change" placeholder="Tell Muse what to change" value={text} onChange={(e) => setText(e.target.value)} /><button className="send" aria-label="Send" disabled={!text.trim()}>{ICONS.send}</button></div>
             </form>
           )}
         </div>
@@ -220,7 +222,7 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
               <>
                 <div className="tree"><h2>Scene tree</h2>{scene && <SceneTree rows={scene.parts} selected={selected} hidden={hidden} onSelect={select} onHide={hide} />}</div>
                 {row ? <Props row={row} intent={scene?.intents[row.step - 1]} /> : scene?.checks?.last ? <Checker checks={scene.checks} measuring={scene.measuring} marked={marked} onMark={mark} onStrike={(index, struck) => void strike(index, struck)} onFix={(words) => void tell(words)} /> : scene && scene.unsure.length > 0 ? (
-                  <section className="props"><h3>Muse wasn't sure about</h3><ul style={{ margin: 0, paddingLeft: 18, color: "#6e6d68" }}>{scene.unsure.map((u) => <li key={u}>{u}</li>)}</ul></section>
+                  <section className="props"><h3>Muse wasn't sure about</h3><ul className="unsure">{scene.unsure.map((u) => <li key={u}>{u}</li>)}</ul></section>
                 ) : null}
               </>
             ) : (

@@ -16,6 +16,7 @@ export const ICONS = {
   top: viewCube("M12 3l8 4.5L12 12 4 7.5z"),
   perspective: svg(<><path d="M4 5.5 15 8.500v7L4 18.500z" /><path d="M15 8.500 20 10v4l-5 1.500" /><path d="M4 12h16" strokeDasharray="1.500 2.500" /></>, 18),
   undo: svg(<><path d="M8 5 3 10l5 5" /><path d="M3 10h11a6 6 0 0 1 0 12h-3" /></>),
+  upload: svg(<><path d="M12 16V5M7 9l5-5 5 5" /><path d="M5 20h14" /></>),
   download: svg(<><path d="M12 4v11M7 11l5 5 5-5" /><path d="M5 20h14" /></>),
   panel: svg(<><rect x="3" y="4" width="18" height="16" rx="2.500" /><path d="M15 4v16" /></>),
   send: svg(<path d="M12 19V5M6 11l6-6 6 6" />),
