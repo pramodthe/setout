@@ -34,9 +34,9 @@ class Worker:
         thread.start()
         try:
             job = self.repo.get(d.jobs, fence.job_id)
-            if job["kind"] != "studio_build":
+            if job["kind"] not in studio.JOBS:
                 raise ValueError(f"unsupported job kind: {job['kind']}")
-            studio.run_job(self.repo, fence, job, ModelGateway(self.repo, fence, self.responder))
+            studio.JOBS[job["kind"]](self.repo, fence, job, ModelGateway(self.repo, fence, self.responder))
         except LostLease:
             pass
         except (BudgetExceeded, ProviderRejected) as error:

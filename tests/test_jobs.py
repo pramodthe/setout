@@ -108,3 +108,26 @@ def test_separate_processes_cannot_spend_the_last_call_twice(repo):
     for worker in workers:
         worker.join(timeout=30)
     assert sum(spent) == 1 and repo.run(job["id"])["reserved"]["model_calls"] == 1
+
+
+def test_builder_leaves_tokens_available_for_an_independent_final_check(repo):
+    from app.model_gateway import ModelGateway
+    from app.repository import tokens_left
+    from builder.loop import CHECK_RESERVE
+
+    repo.enqueue("studio_build", {}, budget={"tokens": CHECK_RESERVE + 13_000})
+    fence = repo.claim("worker")
+    sent = []
+
+    def responder(payload):
+        sent.append(payload)
+        return {"output": [], "usage": {"input_tokens": 4096, "output_tokens": payload["max_output_tokens"]}}
+
+    gateway = ModelGateway(repo, fence, responder)
+    payload = {"input": [], "max_output_tokens": 32768}
+    gateway.call(payload, "studio", "turn-1", reserve_tokens=CHECK_RESERVE)
+    assert tokens_left(repo.run(fence.job_id)) == CHECK_RESERVE
+    with pytest.raises(BudgetExceeded):
+        gateway.call(payload, "studio", "turn-2", reserve_tokens=CHECK_RESERVE)
+    gateway.call({"input": [], "max_output_tokens": 24576}, "studio_check", "final-check")
+    assert len(sent) == 2 and sent[-1]["max_output_tokens"] == 24576

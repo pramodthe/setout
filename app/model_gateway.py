@@ -48,13 +48,16 @@ class ModelGateway:
     def __init__(self, repo, fence, responder=None):
         self.repo, self.fence = repo, fence
         self.responder = responder or meta_client.respond_tools
+        self.replayed, self.usage = False, {}  # about the last call: was it a checkpoint, and what did it cost
 
-    def call(self, payload, purpose, operation_key, responder=None):
+    def call(self, payload, purpose, operation_key, responder=None, reserve_tokens=0):
         run = self.repo.run(self.fence.job_id)
         steps = [s for s in self.repo.list(d.steps, d.steps.c.run_id == run["id"], order=d.steps.c.n)
                  if s["kind"] == "model" and s["request"].get("purpose") == purpose]
         matching = [s for s in steps if s["request"].get("operation_key") == operation_key]
-        if matching and matching[-1]["state"] == "completed":
+        self.replayed = bool(matching) and matching[-1]["state"] == "completed"
+        if self.replayed:
+            self.usage = matching[-1]["response"].get("usage") or {}
             return matching[-1]["response"]
         if matching:
             payload = matching[-1]["request"]["payload"]
@@ -68,12 +71,12 @@ class ModelGateway:
             input_estimate -= (steps[-1]["tokens"] or {}).get("input_tokens", 0)
         input_estimate = max(4096, input_estimate)
         wanted = payload.get("max_output_tokens", 4096)
-        output_cap = min(wanted, tokens_left(run) - input_estimate)
+        output_cap = min(wanted, tokens_left(run) - input_estimate - reserve_tokens)
         if output_cap < (min(TURN_MIN_OUTPUT, wanted) if purpose == "studio" else 1024):
             raise BudgetExceeded("tokens budget exhausted")
         payload = {**payload, "max_output_tokens": output_cap}
         reservation = {"model_calls": 1, "tokens": input_estimate + output_cap}
-        self.repo.reserve(self.fence, reservation)
+        self.repo.reserve(self.fence, reservation, token_floor=reserve_tokens)
         # An uncertain old reservation remains charged after a crash. The
         # repeated dispatch is a new, separately reserved provider request.
         step_id = self.repo.model_request(self.fence, {"purpose": purpose,
@@ -103,6 +106,7 @@ class ModelGateway:
                 detail = ""
             raise ProviderRejected(f"provider rejected the {purpose} request ({error.code}): {detail}") from error
         self.repo.model_response(self.fence, step_id, response, reservation)
+        self.usage = response.get("usage") or {}
         return response
 
     def json(self, text, images, schema, purpose, operation_key, model=None):
@@ -110,13 +114,16 @@ class ModelGateway:
         content += [{"type": "input_image", "image_url": "artifact:" + ident} for ident in images]
         # Reasoning counts as output: seen live, a critic spent all of 8192 thinking,
         # and a program 30.9k of 32768, one step from coming back empty.
-        limit = {"studio_features": 16384, "studio_check": 24576}.get(purpose, 8192)
+        limit = {"studio_features": 16384, "studio_contract": 16384, "studio_match": 32768, "studio_check": 24576,
+                 "studio_plan": 16384, "studio_component": 12288, "studio_repair": 16384}.get(purpose, 8192)
+        generation = purpose in ("studio_plan", "studio_component")
         payload = {"model": model or meta_client.default_model(), "max_output_tokens": limit,
-                   "reasoning": {"effort": "medium"},
+                   "reasoning": {"effort": "low" if generation else "medium"},
                    "input": [{"role": "user", "content": content}],
                    "text": {"format": {"type": "json_schema", "name": purpose,
                                         "schema": schema, "strict": True}}}
-        response = self.call(payload, purpose, operation_key)
+        reserve = 50_000 if purpose in ("studio_plan", "studio_component", "studio_repair") else 0
+        response = self.call(payload, purpose, operation_key, reserve_tokens=reserve)
         if response.get("status") == "incomplete":
             raise ValueError(f"{purpose} reached the provider output limit, so nothing came back; call the tool again")
         return structured(response)

@@ -1,5 +1,5 @@
 """Generic shapes for headless Blender, built from sizes in mm. Only shapes, never components: every
-real part, a door, a wall, a fixing, is written by the model. That is the owner's rule.
+real part is written by the model or placed whole from the owner's library.
 
 Across, up and along are y, z and x: a section lies in the y-z plane and runs along x. Every part joins
 a group, and the groups are what an exploded view pulls apart.
@@ -13,7 +13,7 @@ from pathlib import Path
 import bpy
 from mathutils import Vector
 
-__all__ = ["start", "materials", "material", "prism", "box", "sheet", "lathe", "rod"]
+__all__ = ["start", "materials", "material", "prism", "box", "sheet", "rounded_path", "lathe", "rod", "mesh_part"]
 
 MM = 0.001
 OUT = Path(os.environ.get("SETOUT_OUT", "."))
@@ -74,9 +74,78 @@ def sheet_outline(path, thickness):
     return [tuple(p) for p in points] + [tuple(p) for p in reversed(offset)]
 
 
+def _simple_outline(points):
+    """A self-crossing section cannot be triangulated into a reliable solid."""
+    def cross(a, b, c):
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+
+    def on(a, b, p):
+        return all(min(a[k], b[k]) - 1e-8 <= p[k] <= max(a[k], b[k]) + 1e-8 for k in (0, 1))
+
+    n = len(points)
+    for i in range(n):
+        a, b = points[i], points[(i + 1) % n]
+        for j in range(i + 2, n):
+            if i == 0 and j == n - 1:
+                continue
+            c, d = points[j], points[(j + 1) % n]
+            ab_c, ab_d, cd_a, cd_b = cross(a, b, c), cross(a, b, d), cross(c, d, a), cross(c, d, b)
+            if (ab_c * ab_d < 0 and cd_a * cd_b < 0 or
+                abs(ab_c) < 1e-8 and on(a, b, c) or abs(ab_d) < 1e-8 and on(a, b, d) or
+                abs(cd_a) < 1e-8 and on(c, d, a) or abs(cd_b) < 1e-8 and on(c, d, b)):
+                return False
+    return True
+
+
 def sheet(name, path, thickness, x0, x1, material, group):
-    """One continuous bent sheet: a membrane, flashing or tray, however many times it folds."""
-    return prism(name, sheet_outline(path, thickness), x0, x1, material, group)
+    """One continuous bent sheet. Thickness offsets LEFT of the directed (y,z) path. Keep inner bends wider than thickness; reversing or self-crossing folds are rejected, not filled with spurious triangles."""
+    outline = sheet_outline(path, thickness)
+    if not _simple_outline(outline):
+        turns = []
+        for i in range(1, len(path) - 1):
+            a, p, b = path[i - 1:i + 2]
+            length = math.dist(a, p) * math.dist(p, b)
+            if length:
+                turns.append((sum((p[k] - a[k]) * (b[k] - p[k]) for k in (0, 1)) / length, i))
+        sharpest = min(turns) if turns else (1, 0)
+        detail = f"; sharp reversal near path vertices {path[sharpest[1] - 1:sharpest[1] + 2]}" if sharpest[0] < -0.5 else ""
+        raise ValueError(f"sheet {name!r} crosses itself after thickness offset{detail}; correct the path itself (including a faulty shared outline), remove backtracking, or increase bend radius relative to thickness")
+    return prism(name, outline, x0, x1, material, group)
+
+
+def rounded_path(path, radius, segments=12):
+    """Round the interior corners of an open (y,z) path with tangent circular arcs, for sheet(). Radius is mm, clamped to fit adjacent segments; endpoints stay fixed."""
+    points = [tuple(p) for p in path]
+    if radius < 0 or not math.isfinite(radius) or segments < 1:
+        raise ValueError("rounding needs a nonnegative radius and at least one segment")
+    if len(points) < 3 or radius == 0:
+        return points
+    result = [points[0]]
+    for a, p, b in zip(points, points[1:], points[2:]):
+        left, right = math.dist(a, p), math.dist(b, p)
+        if min(left, right) < 1e-9:
+            continue
+        u = ((a[0] - p[0]) / left, (a[1] - p[1]) / left)
+        v = ((b[0] - p[0]) / right, (b[1] - p[1]) / right)
+        turn = -u[0] * v[1] + u[1] * v[0]
+        if abs(turn) < 1e-9:
+            result.append(p)
+            continue
+        half = math.acos(max(-1, min(1, u[0] * v[0] + u[1] * v[1]))) / 2
+        cut = min(radius / math.tan(half), left * 0.49, right * 0.49)
+        actual = cut * math.tan(half)
+        bisector = (u[0] + v[0], u[1] + v[1])
+        length = math.hypot(*bisector)
+        center = tuple(p[k] + bisector[k] / length * actual / math.sin(half) for k in (0, 1))
+        start = tuple(p[k] + u[k] * cut for k in (0, 1))
+        end = tuple(p[k] + v[k] * cut for k in (0, 1))
+        angle = math.atan2(start[1] - center[1], start[0] - center[0])
+        delta = math.atan2(end[1] - center[1], end[0] - center[0]) - angle
+        delta = delta % math.tau if turn > 0 else -((-delta) % math.tau)
+        result.extend((center[0] + actual * math.cos(angle + delta * i / segments),
+                       center[1] + actual * math.sin(angle + delta * i / segments)) for i in range(segments + 1))
+    result.append(points[-1])
+    return result
 
 
 def lathe(name, profile, origin, direction, material, group, sides=20, smooth=True):
@@ -105,6 +174,26 @@ def lathe(name, profile, origin, direction, material, group, sides=20, smooth=Tr
 def rod(name, a, b, radius, material, group, sides=16):
     a, b = Vector(a), Vector(b)
     return lathe(name, [(radius, 0), (radius, (b - a).length)], a, b - a, material, group, sides)
+
+
+def mesh_part(name, triangles, origin, direction, material, group, roll=0):
+    """Place a supplied triangle mesh whole, without scaling. Local +z follows direction; roll rotates about it in degrees. Coordinates and origin are mm."""
+    axis = Vector(direction)
+    if axis.length < 1e-9:
+        raise ValueError("a library part needs a nonzero direction")
+    from mathutils import Quaternion
+    rotation = Vector((0, 0, 1)).rotation_difference(axis.normalized()) @ Quaternion((0, 0, 1), math.radians(roll))
+    base, vertices, faces, indices = Vector(origin), [], [], {}
+    for triangle in triangles:
+        face = []
+        for point in triangle:
+            key = tuple(point)
+            if key not in indices:
+                indices[key] = len(vertices)
+                vertices.append(tuple(base + rotation @ Vector(point)))
+            face.append(indices[key])
+        faces.append(tuple(face))
+    return _add(name, vertices, faces, material, group)
 
 
 def _material(name, base, roughness=0.6, metallic=0.0, noise=0.0, bump=0.0, scale=60.0, vary=0.0, transmission=0.0, ior=1.45):
@@ -191,7 +280,12 @@ def material(name, base, roughness=0.6, metallic=0.0, transmission=0.0) -> str:
 
 def fit_view(view, section_at=0, size=(1000, 750), samples=14) -> None:
     """One standard view of the whole scene, framed from what was built, so a model never places a camera. Angled views frame the detail, so a full-height door can't shrink a sill to nothing."""
+    size = tuple(view.get("size", size)) if isinstance(view, dict) else size
+    focus = view.get("parts", []) if isinstance(view, dict) else []
+    view = view["view"] if isinstance(view, dict) else view
     meshes = [o for o in bpy.context.scene.objects if o.type == "MESH"]
+    if focus:
+        meshes = [o for o in meshes if o.name in focus]
     if not meshes:
         return
 
@@ -208,9 +302,9 @@ def fit_view(view, section_at=0, size=(1000, 750), samples=14) -> None:
         shot("top.jpg", (middle.x, middle.y, high.z + 4000), tuple(middle), size=size, samples=samples, ortho=1.12 * max(high.y - low.y, 1.33 * (high.x - low.x)))
     else:
         tall = TALL * (high.z - low.z) / 1000
-        short = [o for o in meshes if o.dimensions.z < tall or min(o.dimensions.x, o.dimensions.y) > SLENDER * o.dimensions.z] or meshes
+        short = meshes if focus else ([o for o in meshes if o.dimensions.z < tall or min(o.dimensions.x, o.dimensions.y) > SLENDER * o.dimensions.z] or meshes)
         low, high = extent(short)
-        middle, span = (low + high) / 2, max(high - low)
+        middle, span = (low + high) / 2, max(max(high - low), 10)
         side = high.y + 1.0 * span if view == "other_side" else low.y - 1.0 * span
         shot(f"{view}.jpg", (low.x - 1.25 * span, side, middle.z + 0.55 * span), tuple(middle), lens=42, size=size, samples=samples)
 
@@ -229,6 +323,21 @@ def inventory() -> list:
     return rows
 
 
+def solids() -> dict:
+    """Every part as vertices in mm and triangles, for measuring how they meet, with any modifier applied as the export applies it."""
+    graph = bpy.context.evaluated_depsgraph_get()
+    out = {}
+    for obj in bpy.context.scene.objects:
+        if obj.type != "MESH":
+            continue
+        held = obj.evaluated_get(graph)
+        mesh = held.to_mesh()
+        mesh.calc_loop_triangles()
+        out[obj.name] = ([tuple((held.matrix_world @ v.co) / MM) for v in mesh.vertices], [tuple(t.vertices) for t in mesh.loop_triangles])
+        held.to_mesh_clear()
+    return out
+
+
 def stage(sky=(0.92, 0.93, 0.95)) -> None:
     scene = bpy.context.scene
     scene.render.engine = "CYCLES"
@@ -236,20 +345,33 @@ def stage(sky=(0.92, 0.93, 0.95)) -> None:
     scene.cycles.use_denoising = True
     world = bpy.data.worlds.new("sky")
     world.use_nodes = True
-    world.node_tree.nodes["Background"].inputs[0].default_value = (*sky, 1)
-    world.node_tree.nodes["Background"].inputs[1].default_value = 0.75
+    tree = world.node_tree
+    ambient = tree.nodes["Background"]
+    ambient.inputs[0].default_value = (*sky, 1)
+    ambient.inputs[1].default_value = 0.4
+    # A bright backdrop need not light every face equally: keep joints and bends readable.
+    backdrop = tree.nodes.new("ShaderNodeBackground")
+    backdrop.inputs[0].default_value = (*sky, 1)
+    backdrop.inputs[1].default_value = 1
+    rays = tree.nodes.new("ShaderNodeLightPath")
+    mix = tree.nodes.new("ShaderNodeMixShader")
+    tree.links.new(rays.outputs["Is Camera Ray"], mix.inputs[0])
+    tree.links.new(ambient.outputs[0], mix.inputs[1])
+    tree.links.new(backdrop.outputs[0], mix.inputs[2])
+    tree.links.new(mix.outputs[0], tree.nodes["World Output"].inputs["Surface"])
     scene.world = world
     data = bpy.data.lights.new("sun", "SUN")
-    data.energy = 3.2
+    data.energy = 2.8
     data.angle = math.radians(14)
     sun = bpy.data.objects.new("sun", data)
-    sun.rotation_euler = (math.radians(55), math.radians(12), math.radians(-40))
+    sun.rotation_euler = (math.radians(35), 0, math.radians(35))
     scene.collection.objects.link(sun)
 
 
 def shot(file, eye, target, lens=45, size=(1500, 1050), samples=48, ortho=None) -> None:
     scene = bpy.context.scene
     data = bpy.data.cameras.new("camera")
+    data.clip_start = 0.001  # close-ups of thin parts must not disappear at the default near plane
     data.clip_end = 200
     if ortho:
         data.type = "ORTHO"

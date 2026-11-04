@@ -21,12 +21,14 @@ Built for the **Meta Global AI Developer Hackathon 2026**, Indie Developer track
 ## The rules that keep it honest
 
 - **The model writes the 3D.** `builder/kit.py` holds generic shapes only. Never add a component to it
-  and never hand-model a part, which the owner ruled out.
+  and never hand-model a part. The owner authorized hybrid building: suitable whole meshes from their
+  own library may be placed rigidly; never stretch or rescale them to disguise a mismatch.
 - **Never invent a dimension, label, product or approval.** A brand printed on a picture is never a part name.
 - **Sizes are assumptions.** Drawings aren't to scale, nothing is measured from pixels, and every scene is
   marked "Not verified". Never claim otherwise.
 - **The checker is independent.** It never sees the builder's words, code decides from its ticks, and it
-  is never loosened to make a scene pass.
+  is never loosened to make a scene pass. Measuring (`builder/measure.py`) runs after the build, for the person
+  only: it never changes the verdict. Part names and a model's own materials never reach the model that matches parts.
 - **Model code runs only in the no-network Modal sandbox,** after `check()` in `builder/loop.py`.
 - **No compliance verdict on real installations.** It shows a detail, and doesn't grade real work.
 
@@ -43,11 +45,10 @@ Run from the repo root, with `.venv` activated.
 
 ```sh
 python -m pytest tests/ -q                                  # no network: model and sandbox are stubbed
-python -m pytest tests/test_studio.py -q                    # one file
+python -m pytest tests/test_studio.py -q -k undo            # one file, or the tests matching a name
 SETOUT_VAR=var python -m uvicorn app.main:app --port 8000   # API and web/dist, with an embedded worker
-SETOUT_WORKER=external python -m app.worker                 # or run the worker separately
 modal deploy builder/sandbox.py                             # after changing the sandbox
-python -m builder.loop <drawing> <name>                     # one build from the command line
+python -m builder.loop <drawing> <name>                     # one build from the command line, saved in var/live/<name>
 
 cd web
 npm run build     # tsc -b && vite build -> web/dist, which the server serves
@@ -55,6 +56,14 @@ npm run dev       # Vite dev server, /api proxied to :8000
 npx tsc -b        # type-check
 npm run lint      # oxlint
 ```
+
+To run the worker apart, start the server with `SETOUT_WORKER=external` and run `python -m app.worker` beside it
+(`--once` takes one job). The variable only stops the server starting its own worker, so it does nothing on the
+worker's command.
+
+CI (`.github/workflows/checks.yml`) runs pytest, `tsc -b`, lint and the build, on Python 3.13 and Node 24. The web
+app has no tests, and Python has no linter. `tests/conftest.py` points the store at a temp folder, so tests never
+touch `var/`.
 
 The owner's scenes are in `var/`. Old drawings and backups are in `~/Desktop/setout-archive`, outside the repo.
 
@@ -65,38 +74,100 @@ POST /api/studio    app/main.py -> app/studio.py: the drawing as a PNG artifact,
 app/worker.py       leases the job (60 s, heartbeat 15 s, fencing, retry with backoff)
   app/studio.py     build(): runs the loop, saves steps, previews, parts and the checker's results
     builder/loop.py     Live: Muse's tool loop
-      run_python, look, list_parts, undo, finish
+      run_python, look (whole scene or named parts), inspect_source, list_parts, undo, finish
       builder/sandbox.py  live_step on Modal: replays the steps in Blender, no network
       builder/kit.py      shapes, renders and export, sent to the sandbox on every call
-    builder/checker.py  reads the source once, ticks it at finish, code decides
+    builder/hybrid.py   optional shared plan -> concurrent components -> assembly check and targeted repair
+    builder/library.py owner's optional DAE/ZIP hardware library, pinned into generated steps
+    builder/checker.py  reads the source once (feedback reuses that list), ticks it at finish, code decides
+  app/studio.py     measure(): a studio_measure job once a scene is ready, so nobody waits for it
+    builder/checker.py  the contract: parts and relations read from the source, matched to objects without their names
+    builder/measure.py  in the sandbox: what floats, what overlaps, which relations hold
 web/src/Studio.tsx  polls the scene, then shows model.glb in three.js (viewport.ts)
 ```
 
-Routes: `#/` home · `#/studio/<id>` a scene. API: `/api/studio` (GET, POST), `/api/studio/{id}` (GET, PATCH, DELETE),
-`/api/studio/{id}/{drawing|preview|model.glb}`, `/feedback`, `/undo`, `/api/ai/status`.
+Routes: `#/` Setout house story · `#/anatomy` redirects to `#/` · `#/app` Studio upload/gallery · `#/studio/<id>` a scene. API: `/api/studio` (GET, POST), `/api/studio/{id}` (GET, PATCH, DELETE),
+`/api/studio/{id}/{drawing|preview|model.glb}`, `/feedback`, `/undo`, `/relations/{index}`, `/api/ai/status`.
 
 How it fits together, and what isn't obvious from any one file:
 
 - **A scene is its list of code steps** (`studio_scenes.steps`), replayed from a clean start on every call. There
   is no saved Blender file. A step that fails isn't kept, and the error goes back to Muse. Undo drops a step.
+- **Parallel builds are opt-in.** Upload with `method=hybrid`, or select the checkbox in Studio. The plan
+  gives every component the same parameters and outlines. Up to three isolated model calls generate
+  groups concurrently; their programs are replayed in plan order, not completion order. A complete assembly
+  is rendered/exported once before the independent check. One targeted visual repair is allowed; a worse
+  or failed repair keeps the earlier checked assembly. Feedback remains serial. `checks.build` records the
+  plan, stage timings and selected asset ids. Components never receive geometry measurement results.
+  Planning uses the source-only checklist and must assign every item. Plan/code calls use low reasoning;
+  independent checking and repairs keep medium reasoning. `rounded_path` supplies generic tangent fillets
+  so the model need not derive the same geometry repeatedly.
+  Component code also undergoes name resolution before dispatch. Invalid sheet sections fail in the sandbox;
+  errors return without rendering/exporting broken geometry. At most two execution repairs precede checking.
+  Once a valid GLB exists it is viewable while checking continues; editing stays locked until the job finishes.
+  Keep this opt-in: the first roof experiment needed repairs and service retries, so it did not establish
+  an end-to-end speed or fidelity gain over the serial builder.
+- **Library geometry is pinned.** `SETOUT_LIBRARY` defaults to `SETOUT_VAR/library`. `place_asset` accepts
+  literal catalog ids only; the corresponding triangles are embedded into that component's saved step.
+  `mesh_part` is a generic rigid placement helper, not a catalog of hand-built components. Assets remain
+  in their original proportions. Catalog names are hints, not evidence that a part fits the drawing.
+- **Concurrent calls use separate gateways.** Per-call usage/replay state must not be shared. SQLite's
+  writer transaction reserves budgets and the final check's token allowance atomically; resource leases
+  still limit provider concurrency. Checkpoint keys include the prompt and artifact ids.
 - **The kit travels with each call,** so changing `builder/kit.py` needs no deploy. Changing
-  `builder/sandbox.py` does.
+  `builder/sandbox.py` does. Muse's notes on the kit are generated from it (`loop.api()`), so a docstring there is
+  prompt text, and a new shape has to go in `__all__` and in the list in `api()`.
+- **Repairs keep a checked fallback.** All source items must be seen as right; `should` affects repair priority,
+  not whether an error passes. Uncertain items and `not_in_source` also prevent a pass. Within a build, a worse
+  repair restores the earlier steps, intents, preview and report. Essential items take priority over extras and
+  smaller details. `checks.rounds` records attempts; `checks.last` belongs to the retained geometry, so it may
+  differ from the last attempted round. Undo and an unchecked revision clear the old verdict.
+- **Inspect before guessing.** The builder receives the source-only checklist and can crop the original image
+  with `inspect_source` or frame named objects with `look`. Focused renders keep surrounding objects visible.
+  Image coordinates locate a crop; they never determine physical dimensions. No geometry measurements are
+  fed back to the builder, and the checker still sees only the source, its own five standard renders and
+  overlapping close-ups of the cut face, rendered at higher resolution. No part names guide those crops.
+- **The contract:** the source's parts and how they relate, read once and then kept, because two readings agree on
+  only about 60% of their relations. Its parts are matched to objects by number and extent, and `measure.py` decides
+  each relation from the geometry. It tests touching, order and overlap, never a size. A person can strike out a
+  relation Muse misread.
+- **Measuring never slows a build.** Matching alone takes about 4 minutes of model time, so the build ends first
+  and a `studio_measure` job follows. If it fails, the scene simply has no measurements. Low reasoning effort is
+  3 to 10 times faster but matched parts wrongly, and a wrong match is a false alarm.
+- **Measuring goes to the person, never to the builder.** The Checker panel shows it, and a person can strike out a
+  misreading or send a fault to Muse as feedback. Sent to Muse automatically it did harm: told after every step it
+  chased overlaps, and told at `finish` it rebuilt a passing parapet and the checker then failed it. Of 14 relations
+  that failed across 11 scenes, 4 were Muse misreading the source. Blocking on `covers` or `on` is the owner's call,
+  by eye, over more scenes.
+- **`measure.py` travels with each call** like the kit, so changing it needs no deploy. Its packages are in the
+  sandbox image and in `requirements.txt` for the tests. A mesh that isn't closed can have inside-out normals, so
+  it never asks which way a normal points, only whether two faces are parallel.
+- **Build playback:** `live_step` tags each object with the step that made it, the GLB carries that as extras, and
+  `viewport.ts` plays the steps back from it.
 - **Frame:** the section lies at x = 0 and the assembly runs along +x. z is up, in mm. Looking at the cut
   face, **+y is on the viewer's left**, so a drawing's left edge is the largest y. Stating this wrongly once
   made Muse mirror finished scenes.
 - **Model calls go through `app/model_gateway.py`:** budgeted, checkpointed in `agent_steps`, replayed on retry.
-  Pictures are artifacts, so a checkpoint never holds an image. Tokens count what is paid: uncached input
-  plus output (`repository.billed_tokens`).
+  A retry goes back to the job's `from_step`, so the model's answers come from checkpoints and the tools run again,
+  which rebuilds the scene rather than adding to it. Pictures are artifacts, so a checkpoint never holds an image. Tokens count what is paid: uncached input
+  plus output (`repository.billed_tokens`). `python -m builder.loop` skips the gateway: it calls the provider
+  directly, keeps only the loop's own limits, and leaves no scene in the app.
+- **Two limits stop a build:** `TURNS` and `TOKENS` in `builder/loop.py`, and the job's `DEFAULT_BUDGET` in
+  `app/repository.py`. Past `WRAP_UP` Muse is told to finish. `CHECK_RESERVE` leaves 50,000 tokens for the final
+  check; studio model dispatches preserve that allowance too. A hard stop that cannot check an unfinished
+  repair restores the earlier checked scene if available. Otherwise the partial model is explicitly unchecked.
 - **Files are stored once, by content,** so two scenes can share one. `studio.delete` keeps any file another scene uses.
-- **A PDF is only read once:** `studio._drawing` keeps its first figure as a PNG artifact and removes the stored PDF.
+- **PDF extraction stays in memory:** `studio._drawing` keeps the first figure from `app/store.py` as a PNG artifact.
+  It stops before later pages and creates no temporary document database, PDF or image files.
 - **Long CPU work on the server starves the job heartbeat,** and a job loses its lease. Keep it out of the worker.
 - **Muse reads alone.** Examples in its prompt make it copy them onto a different drawing.
 - **Image embeddings can't compare line drawings.** To an image model they all look alike.
 - **Colours:** Blender's renders have procedural surfaces, and the GLB carries plain colours
   (`flatten_materials`). The shapes are the same.
 - **Schema changes need a migration.** `tests/test_migrations.py` fails when `app/database.py` and
-  `migrations/` differ.
-- **`web/src/styles.css` holds all the styling,** scoped under `.studio` and `.appbar`.
+  `migrations/` differ. Migrations run when `Repository` opens the store, and a store whose revision is no longer in
+  `migrations/` is refused, not upgraded.
+- **The landing story uses `web/src/anatomy.css`.** Its film owns scroll playback; `anatomyScene.ts` is the optional interactive explorer. Studio styling stays in `web/src/styles.css`, scoped under `.studio` and `.appbar`. The story's house is an illustration; Studio builds one local detail from a drawing at a time.
 
 ## Conventions
 
