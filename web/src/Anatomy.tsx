@@ -10,13 +10,13 @@ import "./anatomy.css";
 // `place` puts the copy where that stretch of film leaves the frame empty.
 type Chapter = { name: string; place: "top" | "bottom"; title: ReactNode; body?: string };
 const chapters: Chapter[] = [
-  { name: "The question", place: "top", title: <><span>What holds</span><span>up your</span><span>floor?</span></> },
-  { name: "Lift the floor", place: "top", title: "Lift the floor", body: "Under the boards is a row of timber I-joists. What you walk on is only the top layer." },
-  { name: "Follow a joist", place: "bottom", title: "Follow a joist", body: "Every joist has to end somewhere. Where it meets the beam, the load changes hands." },
-  { name: "The hanger", place: "top", title: "The hanger", body: "A folded steel hanger holds the joist against the beam. Once the ceiling is closed, nobody sees it again." },
-  { name: "Every part", place: "bottom", title: "Every part" },
-  { name: "One detail at a time", place: "top", title: "One detail at a time", body: "Upload a section drawing or a photo of a detail. Muse, Setout’s builder, models it in Blender, checks the model against your drawing and names every part." },
-  { name: "Your drawing", place: "bottom", title: "Your drawing next", body: "The house is back together, and now you know what is inside it." },
+  { name: "See it built before it’s built", place: "top", title: <><span>See it built</span><span>before it’s built</span></> },
+  { name: "Drawings leave it out", place: "top", title: "Drawings leave it out", body: "A plan shows the room. A section shows lines. The boards, joists, fixings, and the order they go in, are left to your imagination." },
+  { name: "CAD stops short", place: "bottom", title: "CAD stops short", body: "Even a full Revit model rarely draws every fixing. It takes too long by hand, and the small details are where things go wrong on site." },
+  { name: "This is the level we build at", place: "top", title: "This is the level we build at", body: "Down to the hanger that holds a joist to its beam, the part nobody sees once the ceiling is closed." },
+  { name: "Made for the people who explain it", place: "bottom", title: "Made for the people who explain it" },
+  { name: "One detail at a time", place: "top", title: "One detail at a time", body: "Today, Muse builds one detail from one drawing in live Blender. It names every part, checks the model against your drawing, and marks every size as an assumption." },
+  { name: "Start with one detail", place: "bottom", title: "Start with one detail", body: "Bring a section drawing or a photo of a detail." },
 ];
 const layers = [{ id: -1, label: "Everything", color: "#fff" }, { id: 0, label: "Surfaces", color: "#d3cfc1" }, { id: 1, label: "Structure", color: "#b48b56" }, { id: 2, label: "Services", color: "#5f8e8d" }, { id: 4, label: "Insulation and envelope", color: "#a39c74" }, { id: 3, label: "Ground", color: "#8f7258" }];
 
@@ -43,7 +43,7 @@ export default function Anatomy() {
 
   useEffect(() => {
     const title = document.title;
-    document.title = "Setout: what holds up your floor?";
+    document.title = "Setout: see it built before it’s built";
     document.body.classList.add("anatomy-page");
     scrollTo(0, 0);
     const media = matchMedia("(prefers-reduced-motion: reduce)");
@@ -149,19 +149,20 @@ export default function Anatomy() {
         {index === 0 && <>
           <h1 id="anatomy-title-0" className="anatomy-hero-title">{item.title}</h1>
           <div className="anatomy-hero-foot">
-            <p className="anatomy-lead">Setout turns a drawing of a building detail into a 3D model with every part named.</p>
-            <button className="anatomy-button" onClick={() => go(1)}>Look under the floor <Arrow down /></button>
+            <p className="anatomy-lead">Setout’s AI turns a construction drawing into a 3D model of the detail, part by part, so anyone can see how it goes together.</p>
+            <button className="anatomy-button" onClick={() => go(1)}>Look closer <Arrow down /></button>
           </div>
         </>}
-        {index === 4 && <div className="anatomy-copy">
-          <h2 id="anatomy-title-4" className="anatomy-count"><span className="anatomy-visually-hidden">Every part: </span>{status.components?.toLocaleString() || "6,405"}</h2>
-          <p className="anatomy-body">pieces in this one house model. Each place where two of them meet is a detail.</p>
-        </div>}
-        {index !== 0 && index !== 4 && <div className="anatomy-copy">
+        {index !== 0 && <div className="anatomy-copy">
           <h2 id={`anatomy-title-${index}`}>{item.title}</h2>
-          <p className="anatomy-body">{item.body}</p>
-          {index === 3 && <p className="anatomy-note">The hanger in this model is a Simpson LUS210, drawn from the source file. It is an illustration, not a checked connection. <a href="https://strongtie.com.au/lus-double-shear-joist-hanger" target="_blank" rel="noreferrer">About joist hangers</a></p>}
-          {index === 5 && <><p className="anatomy-note">Sizes stay marked as assumptions, because a drawing is never measured from its pixels.</p><a className="anatomy-button" href="#/app">Open Studio <Arrow /></a></>}
+          {item.body && <p className="anatomy-body">{item.body}</p>}
+          {index === 4 && <ul className="anatomy-who">
+            <li><b>Manufacturers</b> show how your product is installed.</li>
+            <li><b>Architects and engineers</b> explain a detail without a meeting.</li>
+            <li><b>Builders</b> see clashes and gaps worth checking before work starts.</li>
+          </ul>}
+          {index === 3 && <p className="anatomy-note">This house is an illustration rendered in Blender. Setout didn’t build it.</p>}
+          {index === 5 && <a className="anatomy-button" href="#/app">Open Studio <Arrow /></a>}
           {index === 6 && <div className="anatomy-actions">
             <a className="anatomy-button" href="#/app">Open Studio <Arrow /></a>
             <button ref={exploreTrigger} className="anatomy-button anatomy-button-quiet" onClick={openExplore} disabled={!status.ready}>Take the house apart</button>
