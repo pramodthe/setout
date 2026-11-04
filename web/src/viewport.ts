@@ -61,6 +61,7 @@ export class StudioViewport {
   private playing = 0;
   private playStep: number | null = null;
   private visible = true;
+  private finished = false;
   private frameId = 0;
   private downAt: [number, number] | null = null;
   private observer: ResizeObserver;
@@ -82,6 +83,7 @@ export class StudioViewport {
     host.append(this.renderer.domElement);
     const environment = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = environment.fromScene(new RoomEnvironment(), 0.04).texture;
+    environment.dispose();
     const sun = this.sun;
     sun.position.set(-4, 6, 3);
     sun.castShadow = true;
@@ -130,9 +132,12 @@ export class StudioViewport {
     this.fitOrtho();
   }
 
-  async load(url: string, preserveView = false): Promise<void> {
+  async load(url: string, preserveView = false, finished = false): Promise<void> {
     const gltf = await new GLTFLoader().loadAsync(url);
     if (this.disposed) { release(gltf.scene); return; }
+    this.finished = finished;
+    this.sun.intensity = finished ? 0.65 : 0.95;
+    this.renderer.toneMappingExposure = finished ? 0.78 : 0.72;
     release(this.root, [...this.parts.values()].flatMap((part) => Array.isArray(part.own) ? part.own : [part.own]));
     this.root.clear();
     this.parts.clear();
@@ -155,7 +160,7 @@ export class StudioViewport {
         const held = m.clone() as THREE.MeshStandardMaterial;
         for (const texture of [held.map, held.normalMap, held.roughnessMap]) if (texture) texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
         held.side = THREE.DoubleSide;
-        held.envMapIntensity = 0.55;
+        held.envMapIntensity = finished ? 0.85 : 0.55;
         held.polygonOffset = thin;
         held.polygonOffsetFactor = held.polygonOffsetUnits = -2;
         return held;
@@ -223,6 +228,7 @@ export class StudioViewport {
   setLook(look: Look): void {
     this.look = look;
     for (const part of this.parts.values()) {
+      part.edges.visible = look === "clay" || !this.finished;
       if (look === "clay") {
         const clay = CLAY.clone();
         clay.side = THREE.DoubleSide;

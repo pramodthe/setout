@@ -170,7 +170,9 @@ How it fits together, and what isn't obvious from any one file:
   `builder/presentation.py` reads only embedded GLB data, never generated Python. It bakes generic surface
   textures, preserves mesh geometry and part metadata, and renders one still. Unknown or textured materials
   stay intact. Original geometry, checker reports and measurements remain unchanged. The frontend upgrades
-  surfaces in place and offers a 3D/Render switch; a failure keeps the original model usable. Source model ids,
+  surfaces in place and offers a Realistic 3D/Image switch; a failure keeps the original model usable. Existing
+  scenes and retries use the Studio's Enhance 3D action (`POST /api/studio/{id}/presentation`); reads never
+  start chargeable work. Duplicate clicks reuse the same job. Source model ids,
   job fencing and a renderer version prevent stale results. Artifacts and timings live in `presentation` and
   job logs. Local rendering needs Blender; Modal uses the separate `setout-presentation` app, deployed with
   `modal deploy builder/render_sandbox.py`. The still uses fixed studio lighting; it doesn't reproduce hidden

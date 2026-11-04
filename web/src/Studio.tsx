@@ -42,6 +42,7 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
   const [shot, setShot] = useState(0);
   const [current, setCurrent] = useState<View>("iso");
   const [display, setDisplay] = useState<"3d" | "render">("3d");
+  const [requestingRender, setRequestingRender] = useState(false);
   const modelLoaded = useRef<Promise<void> | null>(null);
   const feedEnd = useRef<HTMLDivElement>(null);
 
@@ -81,7 +82,7 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
     const created = view.current;
     let cancelled = false;
     if (surface && created) void modelLoaded.current?.then(async () => {
-      if (!cancelled) await created.load(surface, true);
+      if (!cancelled) await created.load(surface, true, true);
     }).catch(() => { /* Keep the original model if its surface download fails. */ });
     return () => { cancelled = true; };
   }, [model, surface]);
@@ -148,6 +149,20 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
     setBusy(false);
     if (response.ok) setScene((await response.json()) as Scene); else setError("That step couldn't be undone");
   };
+  const enhance = async () => {
+    if (!scene || requestingRender || rendering) return;
+    setRequestingRender(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/studio/${scene.id}/presentation`, { method: "POST" });
+      if (!response.ok) throw new Error(((await response.json().catch(() => ({}))) as { detail?: string }).detail ?? "Enhancement couldn't start");
+      setScene((await response.json()) as Scene);
+    } catch (failure) {
+      setError((failure as Error).message);
+    } finally {
+      setRequestingRender(false);
+    }
+  };
 
   if (!sceneId) return <div className="studio"><AppBar right={<a className="storylink" href="#/">The story</a>} /><Home scenes={scenes} onFile={(f, method) => void upload(f, method)} onDelete={setDoomed} error={error} />{doomed && <ConfirmDelete title={doomed.title} onCancel={closeDelete} onConfirm={() => void remove()} />}</div>;
 
@@ -183,11 +198,13 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
         <div className="stagewrap">
           <div ref={stage} className={`gl${showingRender ? " concealed" : ""}`} aria-hidden={showingRender} />
           {showingRender && <figure className="presentation"><img src={render!} alt={`Studio render of ${scene?.title}`} /><figcaption>Full assembly · Studio lighting</figcaption></figure>}
-          {viewable && (render || rendering || scene?.presentation?.state === "failed") && <div className="presentation-tools">
+          {viewable && (render || rendering || (ready && scene?.can_render)) && <div className="presentation-tools">
             {render ? <div className="view-switch" role="group" aria-label="Presentation view">
-              <button aria-pressed={!showingRender} onClick={() => setDisplay("3d")}>3D</button>
-              <button aria-pressed={showingRender} onClick={() => { view.current?.stopPlay(); setPlaying(null); setDisplay("render"); }}>Render</button>
-            </div> : <span className="render-status" role="status">{rendering ? "Preparing studio render…" : "Render unavailable · 3D is ready"}</span>}
+              <button aria-pressed={!showingRender} onClick={() => setDisplay("3d")}>Realistic 3D</button>
+              <button aria-pressed={showingRender} onClick={() => { view.current?.stopPlay(); setPlaying(null); setDisplay("render"); }}>Image</button>
+            </div> : rendering ? <span className="render-status" role="status">Improving materials… 3D is ready to explore</span> : <div className="view-switch">
+              <button disabled={requestingRender} onClick={() => void enhance()}>{requestingRender ? "Starting…" : scene?.presentation?.state === "failed" ? "Retry enhancement" : "Enhance 3D"}</button>
+            </div>}
           </div>}
           {unbuilt && (
             <div className="liveshot">

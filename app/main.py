@@ -96,6 +96,11 @@ async def scene_diagnostics(ident: str) -> dict:
     return await run_in_threadpool(_call, studio.diagnostics, ident)
 
 
+@app.post("/api/studio/{ident}/presentation", status_code=202)
+async def present(ident: str) -> dict:
+    return await run_in_threadpool(_call, studio.present, ident)
+
+
 @app.get("/api/studio/{ident}/{which}")
 async def scene_file(ident: str, which: str) -> Response:
     data, media = await run_in_threadpool(_call, studio.file_of, ident, which)

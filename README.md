@@ -104,11 +104,14 @@ Export `SETOUT_RENDERER=local` in the server/worker environment to use an instal
 its executable with `SETOUT_BLENDER`), for example `SETOUT_RENDERER=local python -m uvicorn app.main:app --port 8000`.
 For a server without Blender, deploy `modal deploy builder/render_sandbox.py` and set `SETOUT_RENDERER=modal`.
 This is off by default. New or revised scenes become interactive first; a separate worker then bakes surface
-textures and makes one still. The **3D / Render** switch appears when it finishes. Both embedded workers and
+textures and makes one still. The interactive model gains its finished materials automatically; the
+**Realistic 3D / Image** switch offers an optional still. Existing models have an **Enhance 3D** action in the
+Studio, and failed finishing can be retried there without rebuilding geometry. Both embedded workers and
 `python -m app.worker` run separate build and render lanes; `--lane render` can run the renderer on its own.
 Failures leave the original model available. The finishing pass changes presentation, not geometry or
 checker results; it cannot supply missing fixings or other unmodelled detail. Existing scenes are not
-automatically reprocessed. The Modal finishing service is separate from the generation sandbox.
+automatically reprocessed. `POST /api/studio/{id}/presentation` starts their finishing job; repeated clicks
+reuse a pending or completed result. The Modal finishing service is separate from the generation sandbox.
 
 ## Backend diagnostics
 

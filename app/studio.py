@@ -103,7 +103,25 @@ def get(ident) -> dict:
         if job["state"] in ("failed", "needs_review"):
             row = {**row, "state": "failed", "error": (job["error"] or {}).get("message") or "the job stopped"}
     waiting = (row["checks"] or {}).get("measure_job")
-    return {k: v for k, v in row.items() if k != "steps"} | {"step_count": len(row["steps"] or []), "queued": queued, "live_model": live_model and row["state"] == "working", "measuring": bool(waiting) and repo.get(d.jobs, waiting)["state"] in ("queued", "running"), "presentation": presentation.status(repo, row)}
+    return {k: v for k, v in row.items() if k != "steps"} | {"step_count": len(row["steps"] or []), "queued": queued, "live_model": live_model and row["state"] == "working", "measuring": bool(waiting) and repo.get(d.jobs, waiting)["state"] in ("queued", "running"), "presentation": presentation.status(repo, row), "can_render": presentation.enabled()}
+
+
+def present(ident) -> dict:
+    """Start or retry finishing from the app, including scenes built before it was enabled."""
+    repo = repository()
+    with d.transaction(repo.engine) as con:
+        row = con.execute(sa.select(d.studio_scenes).where(d.studio_scenes.c.id == ident)).mappings().first()
+        if row is None:
+            raise KeyError(ident)
+        if row["state"] == "working":
+            raise Busy("Wait for this model to finish building")
+        if row["state"] != "ready" or not row["model_artifact_id"]:
+            raise ValueError("This scene has no finished model to render")
+        if not presentation.enabled():
+            raise ValueError("Rendering is not enabled on this server")
+        presentation.schedule_in(repo, con, row)
+    ensure_worker()
+    return get(ident)
 
 
 def diagnostics(ident) -> dict:

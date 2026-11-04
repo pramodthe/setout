@@ -3,10 +3,12 @@ import json
 import struct
 
 import pytest
+from fastapi.testclient import TestClient
 
 from app import database as d, presentation, studio
 from app.repository import LostLease, Repository, uid
 from app.worker import Worker
+from app.main import app
 
 
 def glb(doc=None):
@@ -63,6 +65,52 @@ def test_ready_model_stays_usable_then_gains_surfaces_and_a_render(repo):
     studio._set(repo, made["id"], state="ready")
     assert len(repo.list(d.jobs)) == 1  # repeated publish/restart reuses the render
     assert studio.get(made["id"])["presentation"]["state"] == "succeeded"
+
+
+def test_app_can_enhance_an_existing_model_without_an_ai_call(repo, monkeypatch):
+    monkeypatch.setenv("SETOUT_RENDERER", "off")
+    made = scene(repo)
+    assert not made["can_render"] and made["presentation"] is None
+    monkeypatch.setenv("SETOUT_RENDERER", "local")
+    monkeypatch.setattr(studio.meta_client, "configured", lambda: False)
+    client = TestClient(app)
+    first = client.post(f"/api/studio/{made['id']}/presentation")
+    assert first.status_code == 202
+    queued = first.json()
+    assert queued["can_render"] and queued["state"] == "ready"
+    assert queued["presentation"]["state"] == "queued"
+    second = client.post(f"/api/studio/{made['id']}/presentation")
+    assert second.json()["presentation"]["job_id"] == queued["presentation"]["job_id"]
+    assert len(repo.list(d.jobs)) == 1
+    done = finish(repo, queued)
+    assert client.get(f"/api/studio/{made['id']}/render").content == b"rendered-image"
+    assert done["checks"] == made["checks"] and done["tokens"] == made["tokens"]
+    again = client.post(f"/api/studio/{made['id']}/presentation")
+    assert again.json()["presentation"]["state"] == "succeeded" and len(repo.list(d.jobs)) == 1
+
+
+def test_app_retries_a_failed_enhancement_without_rebuilding(repo, monkeypatch):
+    made = scene(repo)
+    fence = repo.claim("failed-render", only_ids=[made["presentation"]["job_id"]])
+    repo.end(fence, "failed", error={"message": "temporary renderer error"})
+    monkeypatch.setattr(studio.meta_client, "configured", lambda: False)
+    retried = TestClient(app).post(f"/api/studio/{made['id']}/presentation")
+    assert retried.status_code == 202
+    assert retried.json()["presentation"]["job_id"] != made["presentation"]["job_id"]
+    done = finish(repo, retried.json())
+    assert done["state"] == "ready" and done["model_artifact_id"] == made["model_artifact_id"]
+
+
+@pytest.mark.parametrize("state,model,enabled,expected", [("working", True, True, 409), ("ready", False, True, 422), ("ready", True, False, 422)])
+def test_render_action_rejects_unavailable_models_or_disabled_service(repo, monkeypatch, state, model, enabled, expected):
+    monkeypatch.setenv("SETOUT_RENDERER", "off")
+    made = scene(repo)
+    studio._set(repo, made["id"], state=state, model_artifact_id=made["model_artifact_id"] if model else None)
+    if enabled:
+        monkeypatch.setenv("SETOUT_RENDERER", "local")
+    response = TestClient(app).post(f"/api/studio/{made['id']}/presentation")
+    assert response.status_code == expected
+    assert not repo.list(d.jobs)
 
 
 def test_render_failure_does_not_fail_or_block_model(repo, monkeypatch):
