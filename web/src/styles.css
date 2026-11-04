@@ -114,8 +114,7 @@ html, body, #root { height: 100%; margin: 0; background: #e4e4e2; }
 .studio .say::before { content: ""; width: 6px; height: 6px; margin: 7px auto 0; background: var(--faint); }
 .studio .say.step { font-weight: 500; }
 .studio .say.step::before { background: var(--ink); }
-.studio .say.check::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink); width: 8px; height: 8px; margin-top: 6px; }
-.studio .say + .say.step, .studio .say + .say.check { margin-top: 6px; }
+.studio .say + .say.step { margin-top: 6px; }
 .studio .say.tool, .studio .say.system { color: var(--soft); }
 .studio .say.tool::before, .studio .say.system::before { background: transparent; box-shadow: inset 0 0 0 1px var(--faint); }
 .studio .say.person { background: var(--white); padding: 8px 10px; }

@@ -168,7 +168,9 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
 
   const row = scene?.parts.find((r) => r.name === selected);
   const stepText = playing !== null && scene ? scene.intents[playing - 1] : null;
-  const progress = scene?.queued ? "Queued for building" : scene?.step ?? "Connecting…";
+  const latest = scene?.feed.at(-1);
+  const checking = latest?.kind === "check" && scene?.step === latest.text;
+  const progress = scene?.queued ? "Queued for building" : checking ? "Checking the assembly" : scene?.step ?? "Connecting…";
   const unbuilt = !viewable;
   const right = (
     <>
@@ -254,7 +256,7 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
               <div className="feed" aria-live="polite">
                 <h2>Build</h2>
                 <ul>
-                  {(scene ? wholeSteps(scene.feed, scene.intents) : []).map((item, k) => <li key={k} className={`say ${item.kind}`}>{item.text}</li>)}
+                  {(scene ? wholeSteps(scene.feed, scene.intents) : []).filter((item) => item.kind !== "check").map((item, k) => <li key={k} className={`say ${item.kind}`}>{item.text}</li>)}
                 </ul>
                 <div ref={feedEnd} />
               </div>

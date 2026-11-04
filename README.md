@@ -116,6 +116,14 @@ automatically reprocessed. `POST /api/studio/{id}/presentation` starts their fin
 reuse a pending or completed result. The Modal finishing service is separate from the generation sandbox;
 both disable network access during Blender execution. Finishing logs record its Modal call id and timing.
 
+Explore finished materials while selecting, hiding and pulling apart the model:
+
+![Interactive Studio with a selected membrane and separated parts](docs/studio-rendering-3d.png)
+
+Switch to **Image** for the optional Blender render:
+
+![Blender studio render displayed inside Setout](docs/studio-rendering-image.png)
+
 ## Backend diagnostics
 
 The checker still runs during generation; its report and the later geometry measurements stay out of the
