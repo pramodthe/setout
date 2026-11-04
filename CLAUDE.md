@@ -27,8 +27,8 @@ Built for the **Meta Global AI Developer Hackathon 2026**, Indie Developer track
 - **Sizes are assumptions.** Drawings aren't to scale, nothing is measured from pixels, and every scene is
   marked "Not verified". Never claim otherwise.
 - **The checker is independent.** It never sees the builder's words, code decides from its ticks, and it
-  is never loosened to make a scene pass. Measuring (`builder/measure.py`) runs after the build, for the person
-  only: it never changes the verdict. Part names and a model's own materials never reach the model that matches parts.
+  is never loosened to make a scene pass. Measuring (`builder/measure.py`) runs after the build, for backend
+  diagnostics only: it never changes the verdict. Part names and a model's own materials never reach the model that matches parts.
 - **Model code runs only in the no-network Modal sandbox,** after `check()` in `builder/loop.py`.
 - **No compliance verdict on real installations.** It shows a detail, and doesn't grade real work.
 
@@ -48,6 +48,7 @@ python -m pytest tests/ -q                                  # no network: model 
 python -m pytest tests/test_studio.py -q -k undo            # one file, or the tests matching a name
 SETOUT_VAR=var python -m uvicorn app.main:app --port 8000   # API and web/dist, with an embedded worker
 modal deploy builder/sandbox.py                             # after changing the sandbox
+modal deploy builder/render_sandbox.py                      # after changing the finishing service
 python -m builder.loop <drawing> <name>                     # one build from the command line, saved in var/live/<name>
 
 cd web
@@ -55,14 +56,15 @@ npm run build     # tsc -b && vite build -> web/dist, which the server serves
 npm run dev       # Vite dev server, /api proxied to :8000
 npx tsc -b        # type-check
 npm run lint      # oxlint
+npm test          # Node test runner, web/tests/*.test.ts; no network
 ```
 
 To run the worker apart, start the server with `SETOUT_WORKER=external` and run `python -m app.worker` beside it
 (`--once` takes one job). The variable only stops the server starting its own worker, so it does nothing on the
 worker's command.
 
-CI (`.github/workflows/checks.yml`) runs pytest, `tsc -b`, lint and the build, on Python 3.13 and Node 24. The web
-app has no tests, and Python has no linter. `tests/conftest.py` points the store at a temp folder, so tests never
+CI (`.github/workflows/checks.yml`) runs pytest, frontend logic tests, `tsc -b`, lint and the build, on Python 3.13 and Node 24.
+Frontend tests use Node's built-in test runner; Python has no linter. `tests/conftest.py` points the store at a temp folder, so tests never
 touch `var/`.
 
 The owner's scenes are in `var/`. Old drawings and backups are in `~/Desktop/setout-archive`, outside the repo.
@@ -87,7 +89,7 @@ web/src/Studio.tsx  polls the scene, then shows model.glb in three.js (viewport.
 ```
 
 Routes: `#/` Setout house story · `#/anatomy` redirects to `#/` · `#/app` Studio upload/gallery · `#/studio/<id>` a scene. API: `/api/studio` (GET, POST), `/api/studio/{id}` (GET, PATCH, DELETE),
-`/api/studio/{id}/{drawing|preview|model.glb}`, `/feedback`, `/undo`, `/relations/{index}`, `/api/ai/status`.
+`/api/studio/{id}/{drawing|preview|model.glb}`, `/diagnostics`, `/feedback`, `/undo`, `/relations/{index}`, `/api/ai/status`.
 
 How it fits together, and what isn't obvious from any one file:
 
@@ -130,12 +132,14 @@ How it fits together, and what isn't obvious from any one file:
 - **The contract:** the source's parts and how they relate, read once and then kept, because two readings agree on
   only about 60% of their relations. Its parts are matched to objects by number and extent, and `measure.py` decides
   each relation from the geometry. It tests touching, order and overlap, never a size. A person can strike out a
-  relation Muse misread.
+  relation Muse misread through the backend `/relations/{index}` endpoint.
 - **Measuring never slows a build.** Matching alone takes about 4 minutes of model time, so the build ends first
   and a `studio_measure` job follows. If it fails, the scene simply has no measurements. Low reasoning effort is
   3 to 10 times faster but matched parts wrongly, and a wrong match is a false alarm.
-- **Measuring goes to the person, never to the builder.** The Checker panel shows it, and a person can strike out a
-  misreading or send a fault to Muse as feedback. Sent to Muse automatically it did harm: told after every step it
+- **Checker reports and measurements stay in backend diagnostics.** The viewer shows the scene tree and selected
+  part properties. `GET /api/studio/{id}/diagnostics` reads the saved report, model notes, progress feed, token usage and current
+  build/measurement job event logs; it never starts work. Results remain in SQLite. Measurements never go to the
+  builder automatically: told after every step it
   chased overlaps, and told at `finish` it rebuilt a passing parapet and the checker then failed it. Of 14 relations
   that failed across 11 scenes, 4 were Muse misreading the source. Blocking on `covers` or `on` is the owner's call,
   by eye, over more scenes.
@@ -162,8 +166,21 @@ How it fits together, and what isn't obvious from any one file:
 - **Long CPU work on the server starves the job heartbeat,** and a job loses its lease. Keep it out of the worker.
 - **Muse reads alone.** Examples in its prompt make it copy them onto a different drawing.
 - **Image embeddings can't compare line drawings.** To an image model they all look alike.
-- **Colours:** Blender's renders have procedural surfaces, and the GLB carries plain colours
-  (`flatten_materials`). The shapes are the same.
+- **Presentation runs on Modal.** Finishing is enabled by default; `SETOUT_RENDERER=off` disables it.
+  A `studio_render` job is queued atomically when a model becomes ready. A separate worker lane keeps
+  rendering out of the build queue. The trusted
+  `builder/presentation.py` reads only embedded GLB data, never generated Python. It bakes generic surface
+  textures, preserves mesh geometry and part metadata, and renders one still. Unknown or textured materials
+  stay intact. Original geometry, checker reports and measurements remain unchanged. The frontend upgrades
+  surfaces in place and offers a Realistic 3D/Image switch; a failure keeps the original model usable. Existing
+  scenes and retries use the Studio's Enhance 3D action (`POST /api/studio/{id}/presentation`); reads never
+  start chargeable work. Duplicate clicks reuse the same job. Source model ids,
+  job fencing and a renderer version prevent stale results. Artifacts and timings live in `presentation` and
+  job logs, including the Modal function call id. The separate, network-disabled `setout-presentation` app
+  is deployed with `modal deploy builder/render_sandbox.py`; there is no local Blender fallback.
+  Muse Spark remains the LLM for generation and checking; finishing needs no additional LLM call.
+  The still uses fixed studio lighting; it doesn't reproduce hidden
+  parts or an exploded view. The base GLB stays at `/model.glb`; finished assets are `/surface.glb` and `/render`.
 - **Schema changes need a migration.** `tests/test_migrations.py` fails when `app/database.py` and
   `migrations/` differ. Migrations run when `Repository` opens the store, and a store whose revision is no longer in
   `migrations/` is refused, not upgraded.

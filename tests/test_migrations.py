@@ -55,7 +55,7 @@ def test_migrations_create_exactly_the_declared_schema(empty_engine):
     d.migrate(empty_engine)
     assert drift(empty_engine, d.metadata) == [], "app/database.py changed without a migration"
     with empty_engine.connect() as con:
-        assert con.scalar(sa.text("SELECT version_num FROM alembic_version")) == "0001_initial"
+        assert con.scalar(sa.text("SELECT version_num FROM alembic_version")) == "0002_presentation"
         assert dict(con.execute(sa.select(d.resource_limits.c.id, d.resource_limits.c.capacity)).all()) == {
             "meta": 4}
 
@@ -112,4 +112,23 @@ def test_migrating_a_current_database_changes_nothing(empty_engine):
     d.migrate(empty_engine)
     d.migrate(empty_engine)
     with empty_engine.connect() as connection:
-        assert connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar() == "0001_initial"
+        assert connection.execute(sa.text("SELECT version_num FROM alembic_version")).scalar() == "0002_presentation"
+
+
+def test_presentation_migration_preserves_existing_scenes(empty_engine):
+    from pathlib import Path
+    from alembic import command
+    from alembic.config import Config
+    root = Path(__file__).resolve().parents[1]
+    config = Config(str(root / "alembic.ini"))
+    config.set_main_option("script_location", str(root / "migrations"))
+    with d.transaction(empty_engine) as con:
+        config.attributes["connection"] = con
+        command.upgrade(config, "0001_initial")
+        con.execute(sa.text("INSERT INTO studio_scenes (id, title, state, steps, checks) VALUES (:id, :title, :state, :steps, :checks)"),
+                    {"id": "existing", "title": "Existing detail", "state": "ready", "steps": '["original code"]', "checks": '{"last":{"passed":false}}'})
+    d.migrate(empty_engine)
+    with empty_engine.connect() as con:
+        row = con.execute(sa.select(d.studio_scenes)).mappings().one()
+        assert row["title"] == "Existing detail" and row["steps"] == ["original code"]
+        assert row["checks"] == {"last": {"passed": False}} and row["presentation"] is None

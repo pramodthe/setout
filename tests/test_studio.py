@@ -87,6 +87,77 @@ def test_a_drawing_becomes_a_scene_of_code_steps(sandbox):
     assert studio.file_of(made["id"], "model.glb")[0] == b"glb"
 
 
+def test_scene_distinguishes_a_queued_build_from_a_running_build(sandbox):
+    made = studio.start("d.png", png())
+    assert made["queued"] and made["state"] == "working"
+    muse = Muse([STEP])
+
+    def during_build(payload):
+        held = studio.get(made["id"])
+        assert not held["queued"] and held["state"] == "working"
+        return muse(payload)
+
+    assert Worker(repository(), responder=during_build).run_once(only_ids=[made["job_id"]])
+    held = studio.get(made["id"])
+    assert not held["queued"] and held["state"] == "ready"
+    work(muse)
+
+
+@pytest.mark.parametrize("finished", [False, True])
+def test_diagnostics_reads_saved_checks_and_job_logs_without_running_work(sandbox, finished):
+    made = studio.start("d.png", png())
+    if finished:
+        work(Muse([STEP], [("finish", {"what": "a slab", "unsure": ["thickness is assumed"]})], items=["a slab"]))
+    repo = repository()
+    before = repo.get(d.studio_scenes, made["id"])
+    jobs = repo.list(d.jobs)
+    executions = len(sandbox)
+
+    response = TestClient(app).get(f"/api/studio/{made['id']}/diagnostics")
+    assert response.status_code == 200
+    found = response.json()
+    assert found["checks"] == before["checks"]
+    assert found["feed"] == before["feed"] and found["tokens"] == before["tokens"]
+    assert found["unsure"] == before["unsure"]
+    assert found["model_artifact_id"] == before["model_artifact_id"]
+    assert found["state"] == ("ready" if finished else "working")
+    assert {job["kind"] for job in found["jobs"]} == ({"studio_build", "studio_measure"} if finished else {"studio_build"})
+    for job in found["jobs"]:
+        assert job["state"] == ("succeeded" if finished else "queued")
+        assert job["events"][0]["kind"] == "queued"
+        assert job["events"][-1]["kind"] == job["state"]
+        assert [event["seq"] for event in job["events"]] == sorted(event["seq"] for event in job["events"])
+        assert "payload" not in job
+    if finished:
+        assert found["checks"]["last"]["passed"]
+        assert "measured" in found["checks"]
+        assert found["unsure"] == ["thickness is assumed"]
+    assert "steps" not in found and "drawing_artifact_id" not in found
+    assert repo.get(d.studio_scenes, made["id"]) == before
+    assert repo.list(d.jobs) == jobs and len(sandbox) == executions
+    if not finished:
+        work(Muse([STEP], items=["a slab"]))
+
+
+def test_diagnostics_exposes_measurement_failure_without_changing_the_scene(sandbox):
+    made = studio.start("d.png", png())
+    work(Muse([STEP], items=["a slab"]))
+    repo = repository()
+    before = studio.get(made["id"])
+    job_id = before["checks"]["measure_job"]
+    error = {"code": "provider_error", "message": "Measurement service unavailable"}
+    with d.transaction(repo.engine) as con:
+        con.execute(d.jobs.update().where(d.jobs.c.id == job_id).values(state="failed", error=error))
+
+    response = TestClient(app).get(f"/api/studio/{made['id']}/diagnostics")
+    assert response.status_code == 200
+    found = response.json()
+    assert found["state"] == "ready" and not found["measuring"]
+    assert found["checks"] == before["checks"]
+    measurement = next(job for job in found["jobs"] if job["id"] == job_id)
+    assert measurement["state"] == "failed" and measurement["error"] == error
+
+
 def test_a_failed_step_is_feedback_and_is_not_kept(sandbox):
     muse = Muse([("run_python", {"intent": "bad", "code": "boom = 1"})], [STEP])
     made = studio.start("d.png", png())
@@ -198,6 +269,7 @@ def test_a_budget_stop_keeps_what_was_built(sandbox, monkeypatch):
 def test_unknown_scenes(sandbox):
     client = TestClient(app)
     assert client.get("/api/studio/none").status_code == 404
+    assert client.get("/api/studio/none/diagnostics").status_code == 404
     assert client.post("/api/studio/none/undo").status_code == 404
     assert client.get("/api/studio/none/drawing").status_code == 404
     assert client.post("/api/studio/none/feedback", json={"text": "x"}).status_code == 404

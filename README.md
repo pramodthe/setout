@@ -24,9 +24,8 @@ Meta Global AI Developer Hackathon 2026 · Indie Developer Track · Build for Yo
 - **Explore it.** Isometric, front, side and top views, a scene tree of named parts with their sizes,
   pull apart, and a step-by-step playback of the build.
 - **Change it.** Tell Muse what's wrong, and it edits the scene it already has. Undo steps, rename a scene, or delete it.
-- **See what was checked.** A separate check compares the model with your drawing from five sides, and shows
-  you what it found.
-- **Take it with you.** Download any model as a GLB file.
+- **Take it with you.** Download any model as a GLB file. When finishing is enabled, switch between
+  textured 3D and a studio render, and download the image too.
 
 ## How it works
 
@@ -49,8 +48,8 @@ Drawing ──> Muse reads it ──> writes a step ──> Blender runs it in a
   place suitable whole meshes from the owner's library, without stretching or scaling them.
 - **Parallel building is experimental.** Select **Try parallel build** before uploading. One shared
   assembly plan defines interfaces; up to three component calls run concurrently. The assembled scene
-  becomes interactive while it is checked independently, and gets at most one visual repair pass. Unresolved findings
-  remain visible. Feedback uses the existing step-by-step builder.
+  becomes interactive while it is checked independently, and gets at most one visual repair pass. Findings
+  are saved in backend diagnostics. Feedback uses the existing step-by-step builder.
   Invalid programs or self-crossing sheets are rejected; bounded repairs can still dominate total time.
   This path is not yet a demonstrated end-to-end speed or fidelity improvement.
 - **A scene is its list of code steps,** replayed in order. Undo is instant, feedback carries on from the
@@ -64,11 +63,11 @@ Drawing ──> Muse reads it ──> writes a step ──> Blender runs it in a
   Builds reserve tokens for a final check; an unchecked revision never inherits an earlier model's pass.
 - **Measuring stands beside it.** Before any 3D exists, Muse also reads how the drawing's parts relate. Code then
   measures the model: what floats, what passes through what, and whether each relation holds. It tests touching,
-  order and overlap, never a size. It never changes the verdict and never reaches the builder: you see what it
-  found, strike out a misreading, or send a fault to Muse.
+  order and overlap, never a size. It never changes the verdict and never reaches the builder. Its findings
+  are saved alongside the checker report for debugging, outside the viewer.
 - **Model code is sandboxed.** It passes a static check, then runs in Blender on Modal with no network.
-- **Viewing costs nothing.** Blender only runs during a build. The viewer is three.js on the exported
-  GLB, in your browser.
+- **Viewing costs nothing.** The viewer uses three.js and saved assets in your browser. Finishing
+  runs Blender on Modal once in the background after a build; it incurs normal service usage.
 
 ## Quickstart
 
@@ -83,6 +82,7 @@ cp .env.example .env            # add META_API_KEY
 
 modal token new                 # once
 modal deploy builder/sandbox.py
+modal deploy builder/render_sandbox.py
 
 (cd web && npm ci && npm run build)
 
@@ -98,6 +98,41 @@ For a fresh checkout or deployment, generate or supply those assets before build
 
 A `var/` folder from before the Studio-only release can't be upgraded. The app says so when it starts: move
 that folder away and it starts with an empty one.
+
+### Studio rendering
+
+Blender runs on Modal for both generation and finishing. Meta Muse Spark (`muse-spark-1.3-contributor`)
+is the LLM for building and checking; finishing uses saved geometry without another LLM call.
+Deploy `modal deploy builder/render_sandbox.py` as shown above. Finishing uses Modal by default, with no
+local Blender dependency or fallback. To disable it, export `SETOUT_RENDERER=off` in the server/worker
+environment. New or revised scenes become interactive first; a separate worker then bakes surface
+textures and makes one still. The interactive model gains its finished materials automatically; the
+**Realistic 3D / Image** switch offers an optional still. Existing models have an **Enhance 3D** action in the
+Studio, and failed finishing can be retried there without rebuilding geometry. Both embedded workers and
+`python -m app.worker` run separate build and render lanes; `--lane render` can run the renderer on its own.
+Failures leave the original model available. The finishing pass changes presentation, not geometry or
+checker results; it cannot supply missing fixings or other unmodelled detail. Existing scenes are not
+automatically reprocessed. `POST /api/studio/{id}/presentation` starts their finishing job; repeated clicks
+reuse a pending or completed result. The Modal finishing service is separate from the generation sandbox;
+both disable network access during Blender execution. Finishing logs record its Modal call id and timing.
+
+Explore finished materials while selecting, hiding and pulling apart the model:
+
+![Interactive Studio with a selected membrane and separated parts](docs/studio-rendering-3d.png)
+
+Switch to **Image** for the optional Blender render:
+
+![Blender studio render displayed inside Setout](docs/studio-rendering-image.png)
+
+## Backend diagnostics
+
+The checker still runs during generation; its report and the later geometry measurements stay out of the
+viewer. They are saved in SQLite with each scene. Read the saved findings, model notes, progress feed, token usage and
+current build/measurement job logs without starting work:
+
+```sh
+curl -s http://127.0.0.1:8000/api/studio/SCENE_ID/diagnostics | python -m json.tool
+```
 
 ## Layout
 
@@ -133,6 +168,7 @@ geometry throughout. Neither method verifies dimensions or guarantees source fid
 ```sh
 python -m pytest tests/ -q            # no network needed
 cd web && npx tsc -b && npm run lint  # type-check and lint
+npm test                            # frontend logic regressions; no network
 npm run dev                           # dev server, /api proxied to :8000
 ```
 

@@ -24,11 +24,12 @@ def ensure_worker():
     if os.environ.get("SETOUT_WORKER", "embedded") != "embedded":
         return
     repo = repository()
-    key = str(repo.engine.url)
     with _lock:
-        if key not in _workers or not _workers[key][1].is_alive():
-            from .worker import Worker
-            worker = Worker(repo)
-            thread = threading.Thread(target=worker.serve, daemon=True, name="setout-worker")
-            _workers[key] = worker, thread
-            thread.start()
+        from .worker import Worker
+        for lane, kinds in (("build", ("studio_build", "studio_measure")), ("render", ("studio_render",))):
+            key = (str(repo.engine.url), lane)
+            if key not in _workers or not _workers[key][1].is_alive():
+                worker = Worker(repo, kinds=kinds)
+                thread = threading.Thread(target=worker.serve, daemon=True, name=f"setout-{lane}-worker")
+                _workers[key] = worker, thread
+                thread.start()

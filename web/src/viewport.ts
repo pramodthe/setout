@@ -9,10 +9,9 @@ export type Look = "material" | "clay";
 export type View = "iso" | "other" | "perspective" | "front" | "side" | "top";
 export type Tool = "select" | "pan" | "orbit";
 
-const CLAY = new THREE.MeshStandardMaterial({ color: 0xb9b6ae, roughness: 0.92, metalness: 0 });
+const CLAY = new THREE.MeshStandardMaterial({ color: new THREE.Color(0xa4adb7).convertSRGBToLinear(), roughness: 0.92, metalness: 0 });
 const HOVER = 0x3b82f6;
 const CHOSEN = 0xf59e0b;
-const GHOST = 0.1;  /* the rest of the model while some parts are marked, so a buried part still shows */
 const STEP_MS = 650;
 const FOV = 32;
 const MARGIN = 1.22;  /* room left around a fitted view */
@@ -21,6 +20,21 @@ const TALL = 0.6;  /* of the model's height */
 const SLENDER = 0.15;  /* a tall part this thin, against its height, is left out of framing */
 
 type Part = { mesh: THREE.Mesh; own: THREE.Material | THREE.Material[]; edges: THREE.LineSegments; home: THREE.Vector3; push: THREE.Vector3; step: number };
+
+function release(root: THREE.Object3D, extra: THREE.Material[] = []): void {
+  const materials = new Set(extra);
+  const textures = new Set<THREE.Texture>();
+  root.traverse((node) => {
+    const mesh = node as THREE.Mesh;
+    mesh.geometry?.dispose();
+    if (mesh.material) (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach((m) => materials.add(m));
+  });
+  for (const material of materials) {
+    for (const value of Object.values(material)) if (value instanceof THREE.Texture) textures.add(value);
+    material.dispose();
+  }
+  textures.forEach((texture) => texture.dispose());
+}
 
 export class StudioViewport {
   private renderer: THREE.WebGLRenderer;
@@ -40,15 +54,18 @@ export class StudioViewport {
   private raycaster = new THREE.Raycaster();
   private pointer = new THREE.Vector2();
   private selected: string | null = null;
-  private marked = new Set<string>();
   private hovered: string | null = null;
   private tool: Tool = "select";
   private look: Look = "material";
   private spread = 0;
   private playing = 0;
+  private playStep: number | null = null;
+  private visible = true;
+  private finished = false;
   private frameId = 0;
   private downAt: [number, number] | null = null;
   private observer: ResizeObserver;
+  private disposed = false;
 
   private host: HTMLElement;
   private onPick: (name: string | null) => void;
@@ -62,17 +79,19 @@ export class StudioViewport {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.72;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     host.append(this.renderer.domElement);
     const environment = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = environment.fromScene(new RoomEnvironment(), 0.04).texture;
+    environment.dispose();
     const sun = this.sun;
     sun.position.set(-4, 6, 3);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.bias = -0.0004;
+    sun.shadow.radius = 3;
     this.scene.add(sun, sun.target);
-    this.ground = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.ShadowMaterial({ opacity: 0.32 }));
+    this.ground = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.ShadowMaterial({ opacity: 0.12 }));
     this.ground.rotation.x = -Math.PI / 2;
     this.ground.receiveShadow = true;
     this.scene.add(this.root, this.ground);
@@ -88,14 +107,18 @@ export class StudioViewport {
     this.observer = new ResizeObserver(() => this.resize());
     this.observer.observe(host);
     this.resize();
-    const loop = () => { this.frameId = requestAnimationFrame(loop); this.controls.update(); this.renderer.render(this.scene, this.camera); };
+    const loop = () => { this.frameId = requestAnimationFrame(loop); if (this.visible) { this.controls.update(); this.renderer.render(this.scene, this.camera); } };
     loop();
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.stopPlay();
     cancelAnimationFrame(this.frameId);
     this.observer.disconnect();
     this.controls.dispose();
+    release(this.scene, [...this.parts.values()].flatMap((part) => Array.isArray(part.own) ? part.own : [part.own]));
+    this.scene.environment?.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
@@ -109,19 +132,23 @@ export class StudioViewport {
     this.fitOrtho();
   }
 
-  async load(url: string): Promise<void> {
+  async load(url: string, preserveView = false, finished = false): Promise<void> {
     const gltf = await new GLTFLoader().loadAsync(url);
+    if (this.disposed) { release(gltf.scene); return; }
+    this.finished = finished;
+    this.sun.intensity = finished ? 0.65 : 0.95;
+    this.renderer.toneMappingExposure = finished ? 0.78 : 0.72;
+    release(this.root, [...this.parts.values()].flatMap((part) => Array.isArray(part.own) ? part.own : [part.own]));
     this.root.clear();
     this.parts.clear();
-    this.hidden.clear();
-    this.marked.clear();
+    if (!preserveView) this.hidden.clear();
     this.root.add(gltf.scene);
     gltf.scene.updateMatrixWorld(true);
     this.box.setFromObject(gltf.scene);
     this.focus = this.detailBox(gltf.scene);
     const centre = this.focus.getCenter(new THREE.Vector3());
     const reach = this.focus.getSize(new THREE.Vector3()).length();
-    const edge = new THREE.LineBasicMaterial({ color: 0x17181a, transparent: true, opacity: 0.32 });
+    const edge = new THREE.LineBasicMaterial({ color: 0x17181a, transparent: true, opacity: 0.52 });
     gltf.scene.traverse((node) => {
       const mesh = node as THREE.Mesh;
       if (!mesh.isMesh) return;
@@ -131,8 +158,9 @@ export class StudioViewport {
       const thin = new THREE.Box3().setFromObject(mesh).getSize(new THREE.Vector3()).toArray().sort((a, b) => a - b)[0] < THIN;
       const own = (m: THREE.Material) => {
         const held = m.clone() as THREE.MeshStandardMaterial;
+        for (const texture of [held.map, held.normalMap, held.roughnessMap]) if (texture) texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
         held.side = THREE.DoubleSide;
-        held.envMapIntensity = 0.55;
+        held.envMapIntensity = finished ? 0.85 : 0.55;
         held.polygonOffset = thin;
         held.polygonOffsetFactor = held.polygonOffsetUnits = -2;
         return held;
@@ -150,7 +178,7 @@ export class StudioViewport {
     this.ground.position.y = this.box.min.y - 0.002;
     this.setLook(this.look);
     this.apply();
-    this.setView("iso");
+    if (!preserveView) this.setView("iso");
   }
 
   /* What to frame: the whole model, less anything tall and thin standing above the rest, such as a door over a sill. A tall mass of concrete is the detail, and stays. */
@@ -178,7 +206,7 @@ export class StudioViewport {
 
   private apply(): void {
     for (const [name, part] of this.parts) {
-      part.mesh.visible = !this.hidden.has(name);
+      part.mesh.visible = !this.hidden.has(name) && (this.playStep === null || part.step <= this.playStep);
       part.mesh.position.copy(part.home).addScaledVector(part.push, this.spread);
       this.tint(name);
     }
@@ -187,16 +215,12 @@ export class StudioViewport {
   private tint(name: string): void {
     const part = this.parts.get(name);
     if (!part) return;
-    const chosen = name === this.selected || this.marked.has(name);
-    const ghost = this.marked.size > 0 && !this.marked.has(name);
+    const chosen = name === this.selected;
     const colour = chosen ? CHOSEN : name === this.hovered ? HOVER : 0x000000;
     const strength = chosen ? 0.42 : name === this.hovered ? 0.24 : 0;
     const paint = (m: THREE.MeshStandardMaterial) => {
       m.emissive.setHex(colour);
       m.emissiveIntensity = strength;
-      m.transparent = ghost;
-      m.opacity = ghost ? GHOST : 1;
-      m.depthWrite = !ghost;
     };
     if (Array.isArray(part.mesh.material)) (part.mesh.material as THREE.MeshStandardMaterial[]).forEach(paint); else paint(part.mesh.material as THREE.MeshStandardMaterial);
   }
@@ -204,6 +228,7 @@ export class StudioViewport {
   setLook(look: Look): void {
     this.look = look;
     for (const part of this.parts.values()) {
+      part.edges.visible = look === "clay" || !this.finished;
       if (look === "clay") {
         const clay = CLAY.clone();
         clay.side = THREE.DoubleSide;
@@ -222,6 +247,8 @@ export class StudioViewport {
     this.controls.mouseButtons = { LEFT: tool === "pan" ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
   }
 
+  setVisible(visible: boolean): void { this.visible = visible; this.controls.enabled = visible; }
+
   setSpread(share: number): void { this.spread = share; this.apply(); }
 
   setHidden(names: string[], hide: boolean): void {
@@ -234,12 +261,6 @@ export class StudioViewport {
     this.selected = name;
     if (before) this.tint(before);
     if (name) this.tint(name);
-  }
-
-  /* Light up the parts of one measurement and let the rest go faint. An empty list brings everything back. */
-  mark(names: string[]): void {
-    this.marked = new Set(names);
-    for (const name of this.parts.keys()) this.tint(name);
   }
 
   /* Isometric and the flat views have no perspective, so they read like drawings from different sides. */
@@ -300,18 +321,22 @@ export class StudioViewport {
   async play(onStep: (step: number) => void): Promise<void> {
     const run = ++this.playing;
     const steps = [...new Set([...this.parts.values()].map((p) => p.step))].sort((a, b) => a - b);
-    for (const part of this.parts.values()) part.mesh.visible = false;
+    this.playStep = 0;
+    this.apply();
     for (const step of steps) {
       if (run !== this.playing) return;
+      this.playStep = step;
       onStep(step);
-      for (const [name, part] of this.parts) if (part.step === step && !this.hidden.has(name)) part.mesh.visible = true;
+      this.apply();
       await new Promise((done) => setTimeout(done, STEP_MS));
     }
+    if (run !== this.playing) return;
+    this.playStep = null;
     this.apply();
     onStep(-1);
   }
 
-  stopPlay(): void { this.playing++; this.apply(); }
+  stopPlay(): void { this.playing++; this.playStep = null; this.apply(); }
 
   private pick(e: PointerEvent): string | null {
     const rect = this.renderer.domElement.getBoundingClientRect();
@@ -329,7 +354,6 @@ export class StudioViewport {
     this.downAt = null;
     if (moved > 4) return;
     const name = this.pick(e);
-    this.mark([]);
     this.select(name);
     this.onPick(name);
   }
