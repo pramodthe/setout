@@ -66,8 +66,8 @@ Drawing ──> Muse reads it ──> writes a step ──> Blender runs it in a
   order and overlap, never a size. It never changes the verdict and never reaches the builder. Its findings
   are saved alongside the checker report for debugging, outside the viewer.
 - **Model code is sandboxed.** It passes a static check, then runs in Blender on Modal with no network.
-- **Viewing costs nothing.** The viewer uses three.js and saved assets in your browser. Optional finishing
-  runs Blender once in the background after a build; Modal rendering incurs normal service usage.
+- **Viewing costs nothing.** The viewer uses three.js and saved assets in your browser. Finishing
+  runs Blender on Modal once in the background after a build; it incurs normal service usage.
 
 ## Quickstart
 
@@ -82,6 +82,7 @@ cp .env.example .env            # add META_API_KEY
 
 modal token new                 # once
 modal deploy builder/sandbox.py
+modal deploy builder/render_sandbox.py
 
 (cd web && npm ci && npm run build)
 
@@ -98,12 +99,13 @@ For a fresh checkout or deployment, generate or supply those assets before build
 A `var/` folder from before the Studio-only release can't be upgraded. The app says so when it starts: move
 that folder away and it starts with an empty one.
 
-### Optional studio rendering
+### Studio rendering
 
-Export `SETOUT_RENDERER=local` in the server/worker environment to use an installed Blender (or specify
-its executable with `SETOUT_BLENDER`), for example `SETOUT_RENDERER=local python -m uvicorn app.main:app --port 8000`.
-For a server without Blender, deploy `modal deploy builder/render_sandbox.py` and set `SETOUT_RENDERER=modal`.
-This is off by default. New or revised scenes become interactive first; a separate worker then bakes surface
+Blender runs on Modal for both generation and finishing. Meta Muse Spark (`muse-spark-1.3-contributor`)
+is the LLM for building and checking; finishing uses saved geometry without another LLM call.
+Deploy `modal deploy builder/render_sandbox.py` as shown above. Finishing uses Modal by default, with no
+local Blender dependency or fallback. To disable it, export `SETOUT_RENDERER=off` in the server/worker
+environment. New or revised scenes become interactive first; a separate worker then bakes surface
 textures and makes one still. The interactive model gains its finished materials automatically; the
 **Realistic 3D / Image** switch offers an optional still. Existing models have an **Enhance 3D** action in the
 Studio, and failed finishing can be retried there without rebuilding geometry. Both embedded workers and
@@ -111,7 +113,8 @@ Studio, and failed finishing can be retried there without rebuilding geometry. B
 Failures leave the original model available. The finishing pass changes presentation, not geometry or
 checker results; it cannot supply missing fixings or other unmodelled detail. Existing scenes are not
 automatically reprocessed. `POST /api/studio/{id}/presentation` starts their finishing job; repeated clicks
-reuse a pending or completed result. The Modal finishing service is separate from the generation sandbox.
+reuse a pending or completed result. The Modal finishing service is separate from the generation sandbox;
+both disable network access during Blender execution. Finishing logs record its Modal call id and timing.
 
 ## Backend diagnostics
 

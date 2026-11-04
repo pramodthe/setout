@@ -1,16 +1,12 @@
-"""Trusted Blender finishing pass. Reads a self-contained GLB, never model Python.
+"""Trusted Blender finishing pass loaded by the network-disabled Modal service.
 
-Run with Blender --background --factory-startup --disable-autoexec --python this.py
--- input.glb output-directory. Only surface shading, UVs, camera and light change.
+Reads an embedded GLB, never model Python. Only shading, UVs, camera and light change.
 """
 from __future__ import annotations
 
 import json
 import math
-import platform
-import sys
 import time
-from pathlib import Path
 
 import bpy
 from mathutils import Vector
@@ -235,15 +231,6 @@ def run(source, out):
     mat.node_tree.nodes["Principled BSDF"].inputs["Roughness"].default_value = .85
     ground.data.materials.append(mat)
     scene.cycles.samples = 48
-    # CPU baking is inexpensive; the still can use the local Mac's GPU.
-    if platform.system() == "Darwin":
-        prefs = bpy.context.preferences.addons["cycles"].preferences
-        prefs.compute_device_type = "METAL"
-        prefs.refresh_devices()
-        if any(device.type == "METAL" for device in prefs.devices):
-            for device in prefs.devices:
-                device.use = device.type == "METAL"
-            scene.cycles.device = "GPU"
     scene.cycles.adaptive_threshold = .035
     scene.view_settings.view_transform = "AgX"
     scene.view_settings.look = "AgX - Medium High Contrast"
@@ -255,8 +242,3 @@ def run(source, out):
     bpy.ops.render.render(write_still=True)
     (out / "render.json").write_text(json.dumps({"parts": len(objects), "textured_materials": len(baked),
         "bake_seconds": round(bake_seconds, 2), "seconds": round(time.monotonic() - started, 2)}))
-
-
-if __name__ == "__main__":
-    args = sys.argv[sys.argv.index("--") + 1:]
-    run(Path(args[0]).resolve(), Path(args[1]).resolve())

@@ -1,24 +1,20 @@
-"""Optional, durable finishing jobs. The base model is always available first."""
+"""Durable Blender finishing jobs on Modal. The base model is available first."""
 from __future__ import annotations
 
 import json
 import os
-import shutil
 import struct
-import subprocess
-import tempfile
-from pathlib import Path
 
 import sqlalchemy as sa
 
 from . import database as d
 
-VERSION = "surface-studio-2"
+VERSION = "surface-studio-3-modal"
 OUTPUTS = {"model.glb": "model/gltf-binary", "render.jpg": "image/jpeg"}
 
 
 def enabled():
-    return os.environ.get("SETOUT_RENDERER", "off") in ("local", "modal")
+    return os.environ.get("SETOUT_RENDERER", "modal") == "modal"
 
 
 def validate_glb(data):
@@ -37,31 +33,17 @@ def validate_glb(data):
 
 def render_assets(data):
     validate_glb(data)
-    backend = os.environ.get("SETOUT_RENDERER", "off")
-    if backend == "modal":
-        import modal
-        found = {}
-        for name, chunk in modal.Function.from_name("setout-presentation", "finish_model").remote_gen(data):
-            found[name] = found.get(name, b"") + chunk
-        return found
-    if backend != "local":
-        raise ValueError("Presentation rendering is disabled")
-    blender = os.environ.get("SETOUT_BLENDER") or shutil.which("blender")
-    if not blender and Path("/Applications/Blender.app/Contents/MacOS/Blender").is_file():
-        blender = "/Applications/Blender.app/Contents/MacOS/Blender"
-    if not blender:
-        raise ValueError("Set SETOUT_BLENDER to the Blender executable")
-    script = Path(__file__).resolve().parents[1] / "builder" / "presentation.py"
-    with tempfile.TemporaryDirectory(prefix="setout-render-") as folder:
-        root = Path(folder)
-        source = root / "input.glb"
-        source.write_bytes(data)
-        process = subprocess.run([blender, "--background", "--factory-startup", "--disable-autoexec",
-            "--python-exit-code", "1", "--python", str(script), "--", str(source), str(root / "out")],
-            capture_output=True, timeout=240, env={k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "TMPDIR", "SYSTEMROOT")})
-        if process.returncode:
-            raise RuntimeError("Blender presentation failed: " + process.stdout.decode(errors="replace")[-1500:])
-        return {name: (root / "out" / name).read_bytes() for name in (*OUTPUTS, "render.json")}
+    if not enabled():
+        raise ValueError("Modal presentation rendering is disabled")
+    import modal
+    found = {}
+    for name, chunk in modal.Function.from_name("setout-presentation", "finish_model").remote_gen(data):
+        if name not in (*OUTPUTS, "render.json"):
+            raise ValueError("Unexpected rendering output")
+        found[name] = found.get(name, b"") + chunk
+    if any(name not in found for name in (*OUTPUTS, "render.json")):
+        raise ValueError("Modal returned an incomplete render")
+    return found
 
 
 def schedule_in(repo, con, row):

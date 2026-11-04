@@ -48,6 +48,7 @@ python -m pytest tests/ -q                                  # no network: model 
 python -m pytest tests/test_studio.py -q -k undo            # one file, or the tests matching a name
 SETOUT_VAR=var python -m uvicorn app.main:app --port 8000   # API and web/dist, with an embedded worker
 modal deploy builder/sandbox.py                             # after changing the sandbox
+modal deploy builder/render_sandbox.py                      # after changing the finishing service
 python -m builder.loop <drawing> <name>                     # one build from the command line, saved in var/live/<name>
 
 cd web
@@ -165,8 +166,9 @@ How it fits together, and what isn't obvious from any one file:
 - **Long CPU work on the server starves the job heartbeat,** and a job loses its lease. Keep it out of the worker.
 - **Muse reads alone.** Examples in its prompt make it copy them onto a different drawing.
 - **Image embeddings can't compare line drawings.** To an image model they all look alike.
-- **Presentation is optional.** `SETOUT_RENDERER=local|modal` queues a `studio_render` job atomically when
-  a model becomes ready. A separate worker lane keeps rendering out of the build queue. The trusted
+- **Presentation runs on Modal.** Finishing is enabled by default; `SETOUT_RENDERER=off` disables it.
+  A `studio_render` job is queued atomically when a model becomes ready. A separate worker lane keeps
+  rendering out of the build queue. The trusted
   `builder/presentation.py` reads only embedded GLB data, never generated Python. It bakes generic surface
   textures, preserves mesh geometry and part metadata, and renders one still. Unknown or textured materials
   stay intact. Original geometry, checker reports and measurements remain unchanged. The frontend upgrades
@@ -174,8 +176,10 @@ How it fits together, and what isn't obvious from any one file:
   scenes and retries use the Studio's Enhance 3D action (`POST /api/studio/{id}/presentation`); reads never
   start chargeable work. Duplicate clicks reuse the same job. Source model ids,
   job fencing and a renderer version prevent stale results. Artifacts and timings live in `presentation` and
-  job logs. Local rendering needs Blender; Modal uses the separate `setout-presentation` app, deployed with
-  `modal deploy builder/render_sandbox.py`. The still uses fixed studio lighting; it doesn't reproduce hidden
+  job logs, including the Modal function call id. The separate, network-disabled `setout-presentation` app
+  is deployed with `modal deploy builder/render_sandbox.py`; there is no local Blender fallback.
+  Muse Spark remains the LLM for generation and checking; finishing needs no additional LLM call.
+  The still uses fixed studio lighting; it doesn't reproduce hidden
   parts or an exploded view. The base GLB stays at `/model.glb`; finished assets are `/surface.glb` and `/render`.
 - **Schema changes need a migration.** `tests/test_migrations.py` fails when `app/database.py` and
   `migrations/` differ. Migrations run when `Repository` opens the store, and a store whose revision is no longer in

@@ -20,7 +20,7 @@ def glb(doc=None):
 @pytest.fixture
 def repo(tmp_path, monkeypatch):
     repo = Repository("sqlite:///" + str(tmp_path / "db.sqlite"), tmp_path / "artifacts")
-    monkeypatch.setenv("SETOUT_RENDERER", "local")
+    monkeypatch.setenv("SETOUT_RENDERER", "modal")
     monkeypatch.setattr(studio, "repository", lambda: repo)
     monkeypatch.setattr(studio, "ensure_worker", lambda: None)
     monkeypatch.setattr(presentation, "render_assets", lambda _: {
@@ -45,8 +45,8 @@ def finish(repo, made):
     return studio.get(made["id"])
 
 
-def test_finishing_is_opt_in(repo, monkeypatch):
-    monkeypatch.delenv("SETOUT_RENDERER")
+def test_finishing_can_be_disabled(repo, monkeypatch):
+    monkeypatch.setenv("SETOUT_RENDERER", "off")
     made = scene(repo)
     assert made["presentation"] is None
     assert not repo.list(d.jobs)
@@ -71,7 +71,7 @@ def test_app_can_enhance_an_existing_model_without_an_ai_call(repo, monkeypatch)
     monkeypatch.setenv("SETOUT_RENDERER", "off")
     made = scene(repo)
     assert not made["can_render"] and made["presentation"] is None
-    monkeypatch.setenv("SETOUT_RENDERER", "local")
+    monkeypatch.setenv("SETOUT_RENDERER", "modal")
     monkeypatch.setattr(studio.meta_client, "configured", lambda: False)
     client = TestClient(app)
     first = client.post(f"/api/studio/{made['id']}/presentation")
@@ -107,7 +107,7 @@ def test_render_action_rejects_unavailable_models_or_disabled_service(repo, monk
     made = scene(repo)
     studio._set(repo, made["id"], state=state, model_artifact_id=made["model_artifact_id"] if model else None)
     if enabled:
-        monkeypatch.setenv("SETOUT_RENDERER", "local")
+        monkeypatch.setenv("SETOUT_RENDERER", "modal")
     response = TestClient(app).post(f"/api/studio/{made['id']}/presentation")
     assert response.status_code == expected
     assert not repo.list(d.jobs)
