@@ -92,13 +92,30 @@ def get(ident) -> dict:
     repo = repository()
     row = repo.get(d.studio_scenes, ident)
     live_model = False
+    queued = False
     if row["state"] == "working" and row["job_id"]:
         job = repo.get(d.jobs, row["job_id"])
+        queued = job["state"] == "queued"
         live_model = job["payload"].get("method") == "hybrid" and bool(row["model_artifact_id"])
         if job["state"] in ("failed", "needs_review"):
             row = {**row, "state": "failed", "error": (job["error"] or {}).get("message") or "the job stopped"}
     waiting = (row["checks"] or {}).get("measure_job")
-    return {k: v for k, v in row.items() if k != "steps"} | {"step_count": len(row["steps"] or []), "live_model": live_model and row["state"] == "working", "measuring": bool(waiting) and repo.get(d.jobs, waiting)["state"] in ("queued", "running")}
+    return {k: v for k, v in row.items() if k != "steps"} | {"step_count": len(row["steps"] or []), "queued": queued, "live_model": live_model and row["state"] == "working", "measuring": bool(waiting) and repo.get(d.jobs, waiting)["state"] in ("queued", "running")}
+
+
+def diagnostics(ident) -> dict:
+    """Read the saved checker report and current job logs without running any checks."""
+    repo = repository()
+    scene = get(ident)
+    job_ids = dict.fromkeys(filter(None, (scene["job_id"], (scene["checks"] or {}).get("measure_job"))))
+    jobs = []
+    for job_id in job_ids:
+        job = repo.get(d.jobs, job_id)
+        events = repo.list(d.events, d.events.c.job_id == job_id, order=d.events.c.seq)
+        jobs.append({k: job[k] for k in ("id", "kind", "state", "error", "created_at", "updated_at")} | {
+            "events": [{k: event[k] for k in ("seq", "at", "kind", "message", "data")} for event in events],
+        })
+    return {k: scene[k] for k in ("id", "state", "error", "updated_at", "model_artifact_id", "checks", "measuring", "tokens", "feed", "unsure")} | {"jobs": jobs}
 
 
 def listing() -> list:

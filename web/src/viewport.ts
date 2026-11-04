@@ -9,10 +9,9 @@ export type Look = "material" | "clay";
 export type View = "iso" | "other" | "perspective" | "front" | "side" | "top";
 export type Tool = "select" | "pan" | "orbit";
 
-const CLAY = new THREE.MeshStandardMaterial({ color: 0xb9b6ae, roughness: 0.92, metalness: 0 });
+const CLAY = new THREE.MeshStandardMaterial({ color: new THREE.Color(0xa4adb7).convertSRGBToLinear(), roughness: 0.92, metalness: 0 });
 const HOVER = 0x3b82f6;
 const CHOSEN = 0xf59e0b;
-const GHOST = 0.1;  /* the rest of the model while some parts are marked, so a buried part still shows */
 const STEP_MS = 650;
 const FOV = 32;
 const MARGIN = 1.22;  /* room left around a fitted view */
@@ -40,7 +39,6 @@ export class StudioViewport {
   private raycaster = new THREE.Raycaster();
   private pointer = new THREE.Vector2();
   private selected: string | null = null;
-  private marked = new Set<string>();
   private hovered: string | null = null;
   private tool: Tool = "select";
   private look: Look = "material";
@@ -62,7 +60,7 @@ export class StudioViewport {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.72;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     host.append(this.renderer.domElement);
     const environment = new THREE.PMREMGenerator(this.renderer);
     this.scene.environment = environment.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -71,8 +69,9 @@ export class StudioViewport {
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.bias = -0.0004;
+    sun.shadow.radius = 3;
     this.scene.add(sun, sun.target);
-    this.ground = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.ShadowMaterial({ opacity: 0.32 }));
+    this.ground = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.ShadowMaterial({ opacity: 0.12 }));
     this.ground.rotation.x = -Math.PI / 2;
     this.ground.receiveShadow = true;
     this.scene.add(this.root, this.ground);
@@ -114,14 +113,13 @@ export class StudioViewport {
     this.root.clear();
     this.parts.clear();
     this.hidden.clear();
-    this.marked.clear();
     this.root.add(gltf.scene);
     gltf.scene.updateMatrixWorld(true);
     this.box.setFromObject(gltf.scene);
     this.focus = this.detailBox(gltf.scene);
     const centre = this.focus.getCenter(new THREE.Vector3());
     const reach = this.focus.getSize(new THREE.Vector3()).length();
-    const edge = new THREE.LineBasicMaterial({ color: 0x17181a, transparent: true, opacity: 0.32 });
+    const edge = new THREE.LineBasicMaterial({ color: 0x17181a, transparent: true, opacity: 0.52 });
     gltf.scene.traverse((node) => {
       const mesh = node as THREE.Mesh;
       if (!mesh.isMesh) return;
@@ -187,16 +185,12 @@ export class StudioViewport {
   private tint(name: string): void {
     const part = this.parts.get(name);
     if (!part) return;
-    const chosen = name === this.selected || this.marked.has(name);
-    const ghost = this.marked.size > 0 && !this.marked.has(name);
+    const chosen = name === this.selected;
     const colour = chosen ? CHOSEN : name === this.hovered ? HOVER : 0x000000;
     const strength = chosen ? 0.42 : name === this.hovered ? 0.24 : 0;
     const paint = (m: THREE.MeshStandardMaterial) => {
       m.emissive.setHex(colour);
       m.emissiveIntensity = strength;
-      m.transparent = ghost;
-      m.opacity = ghost ? GHOST : 1;
-      m.depthWrite = !ghost;
     };
     if (Array.isArray(part.mesh.material)) (part.mesh.material as THREE.MeshStandardMaterial[]).forEach(paint); else paint(part.mesh.material as THREE.MeshStandardMaterial);
   }
@@ -234,12 +228,6 @@ export class StudioViewport {
     this.selected = name;
     if (before) this.tint(before);
     if (name) this.tint(name);
-  }
-
-  /* Light up the parts of one measurement and let the rest go faint. An empty list brings everything back. */
-  mark(names: string[]): void {
-    this.marked = new Set(names);
-    for (const name of this.parts.keys()) this.tint(name);
   }
 
   /* Isometric and the flat views have no perspective, so they read like drawings from different sides. */
@@ -329,7 +317,6 @@ export class StudioViewport {
     this.downAt = null;
     if (moved > 4) return;
     const name = this.pick(e);
-    this.mark([]);
     this.select(name);
     this.onPick(name);
   }

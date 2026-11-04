@@ -24,8 +24,6 @@ Meta Global AI Developer Hackathon 2026 · Indie Developer Track · Build for Yo
 - **Explore it.** Isometric, front, side and top views, a scene tree of named parts with their sizes,
   pull apart, and a step-by-step playback of the build.
 - **Change it.** Tell Muse what's wrong, and it edits the scene it already has. Undo steps, rename a scene, or delete it.
-- **See what was checked.** A separate check compares the model with your drawing from five sides, and shows
-  you what it found.
 - **Take it with you.** Download any model as a GLB file.
 
 ## How it works
@@ -49,8 +47,8 @@ Drawing ──> Muse reads it ──> writes a step ──> Blender runs it in a
   place suitable whole meshes from the owner's library, without stretching or scaling them.
 - **Parallel building is experimental.** Select **Try parallel build** before uploading. One shared
   assembly plan defines interfaces; up to three component calls run concurrently. The assembled scene
-  becomes interactive while it is checked independently, and gets at most one visual repair pass. Unresolved findings
-  remain visible. Feedback uses the existing step-by-step builder.
+  becomes interactive while it is checked independently, and gets at most one visual repair pass. Findings
+  are saved in backend diagnostics. Feedback uses the existing step-by-step builder.
   Invalid programs or self-crossing sheets are rejected; bounded repairs can still dominate total time.
   This path is not yet a demonstrated end-to-end speed or fidelity improvement.
 - **A scene is its list of code steps,** replayed in order. Undo is instant, feedback carries on from the
@@ -64,8 +62,8 @@ Drawing ──> Muse reads it ──> writes a step ──> Blender runs it in a
   Builds reserve tokens for a final check; an unchecked revision never inherits an earlier model's pass.
 - **Measuring stands beside it.** Before any 3D exists, Muse also reads how the drawing's parts relate. Code then
   measures the model: what floats, what passes through what, and whether each relation holds. It tests touching,
-  order and overlap, never a size. It never changes the verdict and never reaches the builder: you see what it
-  found, strike out a misreading, or send a fault to Muse.
+  order and overlap, never a size. It never changes the verdict and never reaches the builder. Its findings
+  are saved alongside the checker report for debugging, outside the viewer.
 - **Model code is sandboxed.** It passes a static check, then runs in Blender on Modal with no network.
 - **Viewing costs nothing.** Blender only runs during a build. The viewer is three.js on the exported
   GLB, in your browser.
@@ -98,6 +96,16 @@ For a fresh checkout or deployment, generate or supply those assets before build
 
 A `var/` folder from before the Studio-only release can't be upgraded. The app says so when it starts: move
 that folder away and it starts with an empty one.
+
+## Backend diagnostics
+
+The checker still runs during generation; its report and the later geometry measurements stay out of the
+viewer. They are saved in SQLite with each scene. Read the saved findings, model notes, progress feed, token usage and
+current build/measurement job logs without starting work:
+
+```sh
+curl -s http://127.0.0.1:8000/api/studio/SCENE_ID/diagnostics | python -m json.tool
+```
 
 ## Layout
 
@@ -133,6 +141,7 @@ geometry throughout. Neither method verifies dimensions or guarantees source fid
 ```sh
 python -m pytest tests/ -q            # no network needed
 cd web && npx tsc -b && npm run lint  # type-check and lint
+npm test                            # frontend logic regressions; no network
 npm run dev                           # dev server, /api proxied to :8000
 ```
 

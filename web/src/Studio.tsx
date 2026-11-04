@@ -7,10 +7,11 @@ import AppBar from "./AppBar";
 import ConfirmDelete from "./ConfirmDelete";
 import Home from "./Home";
 import { ICONS } from "./icons";
-import { Checker, Props } from "./Inspector";
+import { Props } from "./Inspector";
 import SceneTree from "./SceneTree";
 import { wholeSteps } from "./scene";
 import type { Card, Scene } from "./scene";
+import { watchScene } from "./scenePolling";
 import { StudioViewport } from "./viewport";
 import type { Look, Tool, View } from "./viewport";
 
@@ -27,8 +28,8 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
   const [doomed, setDoomed] = useState<{ id: string; title: string } | null>(null);
   const [name, setName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
-  const [marked, setMarked] = useState<string | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [tool, setTool] = useState<Tool>("select");
   const [look, setLook] = useState<Look>("material");
@@ -48,24 +49,14 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
   }, []);
   useEffect(() => { void refreshList().catch(() => {}); }, [refreshList, sceneId]);
 
-  const look_ = useCallback(async () => {
-    if (!sceneId) return;
-    const response = await fetch(`/api/studio/${encodeURIComponent(sceneId)}`);
-    if (!response.ok) throw new Error("This scene could not be found");
-    const found = (await response.json()) as Scene;
-    setScene(found);
-    setShot(found.updated_at);
-    return found;
-  }, [sceneId]);
-
-  useEffect(() => { void look_().catch((e: Error) => setError(e.message)); }, [look_]);
   const working = scene?.state === "working";
-  const waiting = working || !!scene?.measuring;
   useEffect(() => {
-    if (!waiting) return;
-    const timer = setInterval(() => void look_().catch((e: Error) => setError(e.message)), 2000);
-    return () => clearInterval(timer);
-  }, [waiting, look_]);
+    if (!sceneId) return;
+    return watchScene(`/api/studio/${encodeURIComponent(sceneId)}`, (found) => {
+      setScene(found);
+      setShot(found.updated_at);
+    }, setLoadError);
+  }, [sceneId, working]);
   useEffect(() => { feedEnd.current?.scrollIntoView?.({ block: "end" }); }, [scene?.feed.length]);
 
   const ready = scene?.state === "ready" && !!scene.model_artifact_id;
@@ -73,7 +64,7 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
   const model = viewable && scene ? `/api/studio/${scene.id}/model.glb?v=${scene.model_artifact_id}` : null;
   useEffect(() => {
     if (!model || !stage.current) return;
-    const created = new StudioViewport(stage.current, (name) => { setSelected(name); setMarked(null); });
+    const created = new StudioViewport(stage.current, setSelected);
     view.current = created;
     void created.load(model).catch((e: Error) => setError(e.message));
     return () => { created.dispose(); view.current = null; };
@@ -93,8 +84,7 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
     }
   };
 
-  const mark = (key: string | null, names: string[] = []) => { const next = key === marked ? null : key; setMarked(next); view.current?.mark(next ? names : []); };
-  const select = (name: string | null) => { mark(null); setSelected(name); view.current?.select(name); };
+  const select = (name: string | null) => { setSelected(name); view.current?.select(name); };
   const hide = (names: string[], off: boolean) => {
     setHidden((held) => { const next = new Set(held); names.forEach((n) => (off ? next.add(n) : next.delete(n))); return next; });
     view.current?.setHidden(names, off);
@@ -113,7 +103,6 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
     const response = await fetch(`/api/studio/${scene.id}/feedback`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: words }) });
     if (!response.ok) { setError(((await response.json().catch(() => ({}))) as { detail?: string }).detail ?? "Muse couldn't take that"); return; }
     setText("");
-    mark(null);
     setScene((await response.json()) as Scene);
   };
   const send = (e: FormEvent) => { e.preventDefault(); void tell(text); };
@@ -133,17 +122,11 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
     const response = await fetch(`/api/studio/${scene.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title }) });
     if (response.ok) setScene((await response.json()) as Scene); else setError("That name couldn't be saved");
   };
-  const strike = async (index: number, struck: boolean) => {
-    if (!scene) return;
-    const response = await fetch(`/api/studio/${scene.id}/relations/${index}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ struck }) });
-    if (response.ok) setScene((await response.json()) as Scene); else setError("That couldn't be changed");
-  };
   const undo = async () => {
     if (!scene) return;
     setBusy(true);
     const response = await fetch(`/api/studio/${scene.id}/undo`, { method: "POST" });
     setBusy(false);
-    setMarked(null);
     if (response.ok) setScene((await response.json()) as Scene); else setError("That step couldn't be undone");
   };
 
@@ -151,10 +134,10 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
 
   const row = scene?.parts.find((r) => r.name === selected);
   const stepText = playing !== null && scene ? scene.intents[playing - 1] : null;
+  const progress = scene?.queued ? "Queued for building" : scene?.step ?? "Connecting…";
   const unbuilt = !viewable;
   const right = (
     <>
-      {scene && scene.tokens > 0 && <span className="quiet tokens">{scene.tokens.toLocaleString()} tokens</span>}
       {scene && !working && <button className="icon" aria-label="Delete this scene" title="Delete" onClick={() => setDoomed({ id: scene.id, title: scene.title })}>{ICONS.trash}</button>}
       <a className="icon" href={ready ? `/api/studio/${scene.id}/model.glb` : undefined} download="detail.glb" aria-label="Download model" title="Download GLB" aria-disabled={!ready}>{ICONS.download}</a>
       <button className={`icon${panel ? " on" : ""}`} aria-label="Toggle the side panel" aria-pressed={panel} onClick={() => setPanel(!panel)}>{ICONS.panel}</button>
@@ -173,7 +156,7 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
             </form>
           )}
           {scene && name === null && <button className="icon" aria-label="Rename" title="Rename" onClick={() => setName(scene.title)}>{ICONS.pencil}</button>}
-          {scene && <span className="quiet">{working ? "Muse is building" : `${scene.parts.length} parts`}</span>}
+          {scene && <span className="quiet">{working ? (scene.queued ? "Queued" : "Muse is building") : `${scene.parts.length} parts`}</span>}
           <span className="tag">Not verified</span>
         </div>
       </AppBar>
@@ -184,13 +167,14 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
             <div className="liveshot">
               {scene?.preview_artifact_id
                 ? <img key={shot} src={`/api/studio/${scene.id}/preview?v=${shot}`} alt="Muse's latest render of the scene" />
-                : <div className="thinking">{scene?.state === "failed" ? <span>This scene stopped</span> : <><div className="pulse" /><span>{scene?.step ?? "Starting"}</span></>}</div>}
+                : <div className="thinking">{scene?.state === "failed" ? <span>This scene stopped</span> : <><div className="pulse" /><span>{progress}</span></>}</div>}
             </div>
           )}
-          {working && scene?.preview_artifact_id && scene.step && <div className="stepnote" role="status">{scene.step}</div>}
+          {working && scene?.preview_artifact_id && <div className="stepnote" role="status">{progress}</div>}
           {stepText && <div className="stepnote" role="status">Step {playing}: {stepText}</div>}
           {scene && <button className={`pip${big ? " big" : ""}`} onClick={() => setBig(!big)} aria-label={big ? "Make the drawing smaller" : "Make the drawing bigger"}><img src={`/api/studio/${scene.id}/drawing`} alt="Your drawing" /></button>}
           {error && <div className="alert" role="alert">{error}</div>}
+          {!error && loadError && <div className="alert" role="status">{loadError}</div>}
           {scene?.state === "failed" && <div className="alert" role="alert">{scene.error}</div>}
           {viewable && (
             <>
@@ -221,9 +205,7 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
             {ready ? (
               <>
                 <div className="tree"><h2>Scene tree</h2>{scene && <SceneTree rows={scene.parts} selected={selected} hidden={hidden} onSelect={select} onHide={hide} />}</div>
-                {row ? <Props row={row} intent={scene?.intents[row.step - 1]} /> : scene?.checks?.last ? <Checker checks={scene.checks} measuring={scene.measuring} marked={marked} onMark={mark} onStrike={(index, struck) => void strike(index, struck)} onFix={(words) => void tell(words)} /> : scene && scene.unsure.length > 0 ? (
-                  <section className="props"><h3>Muse wasn't sure about</h3><ul className="unsure">{scene.unsure.map((u) => <li key={u}>{u}</li>)}</ul></section>
-                ) : null}
+                {row && <Props row={row} intent={scene?.intents[row.step - 1]} />}
               </>
             ) : (
               <div className="feed" aria-live="polite">

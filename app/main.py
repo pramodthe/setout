@@ -91,6 +91,11 @@ async def delete(ident: str) -> None:
     await run_in_threadpool(_call, studio.delete, ident)
 
 
+@app.get("/api/studio/{ident}/diagnostics")
+async def scene_diagnostics(ident: str) -> dict:
+    return await run_in_threadpool(_call, studio.diagnostics, ident)
+
+
 @app.get("/api/studio/{ident}/{which}")
 async def scene_file(ident: str, which: str) -> Response:
     data, media = await run_in_threadpool(_call, studio.file_of, ident, which)
