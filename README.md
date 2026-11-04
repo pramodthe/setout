@@ -24,7 +24,8 @@ Meta Global AI Developer Hackathon 2026 · Indie Developer Track · Build for Yo
 - **Explore it.** Isometric, front, side and top views, a scene tree of named parts with their sizes,
   pull apart, and a step-by-step playback of the build.
 - **Change it.** Tell Muse what's wrong, and it edits the scene it already has. Undo steps, rename a scene, or delete it.
-- **Take it with you.** Download any model as a GLB file.
+- **Take it with you.** Download any model as a GLB file. When finishing is enabled, switch between
+  textured 3D and a studio render, and download the image too.
 
 ## How it works
 
@@ -65,8 +66,8 @@ Drawing ──> Muse reads it ──> writes a step ──> Blender runs it in a
   order and overlap, never a size. It never changes the verdict and never reaches the builder. Its findings
   are saved alongside the checker report for debugging, outside the viewer.
 - **Model code is sandboxed.** It passes a static check, then runs in Blender on Modal with no network.
-- **Viewing costs nothing.** Blender only runs during a build. The viewer is three.js on the exported
-  GLB, in your browser.
+- **Viewing costs nothing.** The viewer uses three.js and saved assets in your browser. Optional finishing
+  runs Blender once in the background after a build; Modal rendering incurs normal service usage.
 
 ## Quickstart
 
@@ -96,6 +97,18 @@ For a fresh checkout or deployment, generate or supply those assets before build
 
 A `var/` folder from before the Studio-only release can't be upgraded. The app says so when it starts: move
 that folder away and it starts with an empty one.
+
+### Optional studio rendering
+
+Export `SETOUT_RENDERER=local` in the server/worker environment to use an installed Blender (or specify
+its executable with `SETOUT_BLENDER`), for example `SETOUT_RENDERER=local python -m uvicorn app.main:app --port 8000`.
+For a server without Blender, deploy `modal deploy builder/render_sandbox.py` and set `SETOUT_RENDERER=modal`.
+This is off by default. New or revised scenes become interactive first; a separate worker then bakes surface
+textures and makes one still. The **3D / Render** switch appears when it finishes. Both embedded workers and
+`python -m app.worker` run separate build and render lanes; `--lane render` can run the renderer on its own.
+Failures leave the original model available. The finishing pass changes presentation, not geometry or
+checker results; it cannot supply missing fixings or other unmodelled detail. Existing scenes are not
+automatically reprocessed. The Modal finishing service is separate from the generation sandbox.
 
 ## Backend diagnostics
 

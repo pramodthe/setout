@@ -199,6 +199,7 @@ def mesh_part(name, triangles, origin, direction, material, group, roll=0):
 def _material(name, base, roughness=0.6, metallic=0.0, noise=0.0, bump=0.0, scale=60.0, vary=0.0, transmission=0.0, ior=1.45):
     material = bpy.data.materials.new(name)
     material["base"] = list(base)
+    material["setout_surface"] = {"noise": noise, "bump": bump, "scale": scale}
     material.diffuse_color = (*base, 1)
     material.use_nodes = True
     tree = material.node_tree

@@ -13,7 +13,7 @@ import urllib.error
 import sqlalchemy as sa
 from PIL import Image
 
-from . import database as d, meta_client
+from . import database as d, meta_client, presentation
 from .model_gateway import ModelGateway, ProviderRejected
 from .repository import BudgetExceeded, billed_tokens, sha, uid
 from .runtime import ensure_worker, repository
@@ -43,6 +43,9 @@ def _clip(text, limit=400):
 def _set(repo, ident, **values):
     with d.transaction(repo.engine) as con:
         con.execute(d.studio_scenes.update().where(d.studio_scenes.c.id == ident).values(**values, updated_at=d.now(con)))
+        if values.get("state") == "ready":
+            row = con.execute(sa.select(d.studio_scenes).where(d.studio_scenes.c.id == ident)).mappings().one()
+            presentation.schedule_in(repo, con, row)
 
 
 def _keep(repo, data, media):
@@ -100,14 +103,14 @@ def get(ident) -> dict:
         if job["state"] in ("failed", "needs_review"):
             row = {**row, "state": "failed", "error": (job["error"] or {}).get("message") or "the job stopped"}
     waiting = (row["checks"] or {}).get("measure_job")
-    return {k: v for k, v in row.items() if k != "steps"} | {"step_count": len(row["steps"] or []), "queued": queued, "live_model": live_model and row["state"] == "working", "measuring": bool(waiting) and repo.get(d.jobs, waiting)["state"] in ("queued", "running")}
+    return {k: v for k, v in row.items() if k != "steps"} | {"step_count": len(row["steps"] or []), "queued": queued, "live_model": live_model and row["state"] == "working", "measuring": bool(waiting) and repo.get(d.jobs, waiting)["state"] in ("queued", "running"), "presentation": presentation.status(repo, row)}
 
 
 def diagnostics(ident) -> dict:
     """Read the saved checker report and current job logs without running any checks."""
     repo = repository()
     scene = get(ident)
-    job_ids = dict.fromkeys(filter(None, (scene["job_id"], (scene["checks"] or {}).get("measure_job"))))
+    job_ids = dict.fromkeys(filter(None, (scene["job_id"], (scene["checks"] or {}).get("measure_job"), (scene["presentation"] or {}).get("job_id"))))
     jobs = []
     for job_id in job_ids:
         job = repo.get(d.jobs, job_id)
@@ -115,7 +118,7 @@ def diagnostics(ident) -> dict:
         jobs.append({k: job[k] for k in ("id", "kind", "state", "error", "created_at", "updated_at")} | {
             "events": [{k: event[k] for k in ("seq", "at", "kind", "message", "data")} for event in events],
         })
-    return {k: scene[k] for k in ("id", "state", "error", "updated_at", "model_artifact_id", "checks", "measuring", "tokens", "feed", "unsure")} | {"jobs": jobs}
+    return {k: scene[k] for k in ("id", "state", "error", "updated_at", "model_artifact_id", "checks", "measuring", "tokens", "feed", "unsure", "presentation")} | {"jobs": jobs}
 
 
 def listing() -> list:
@@ -126,6 +129,12 @@ def listing() -> list:
 def file_of(ident, which) -> tuple[bytes, str]:
     repo = repository()
     row = repo.get(d.studio_scenes, ident)
+    if which in ("surface.glb", "render"):
+        finished = presentation.status(repo, row) or {}
+        field, media = ("surface_artifact_id", "model/gltf-binary") if which == "surface.glb" else ("render_artifact_id", "image/jpeg")
+        if finished.get("state") != "succeeded" or not finished.get(field):
+            raise KeyError(which)
+        return repo.artifacts.read(finished[field]), media
     column, media = {"drawing": ("drawing_artifact_id", "image/png"), "model.glb": ("model_artifact_id", "model/gltf-binary"), "preview": ("preview_artifact_id", "image/jpeg")}.get(which, (None, None))
     if column is None or not row[column]:
         raise KeyError(which)
@@ -179,9 +188,12 @@ def delete(ident) -> None:
     row = repo.get(d.studio_scenes, ident)
     if get(ident)["state"] == "working":
         raise Busy("Muse is working on this scene")
-    jobs = [j["id"] for j in repo.list(d.jobs) if (j["payload"] or {}).get("scene_id") == ident]
+    scene_jobs = [j for j in repo.list(d.jobs) if (j["payload"] or {}).get("scene_id") == ident]
+    jobs = [j["id"] for j in scene_jobs]
     runs = [r["id"] for r in repo.list(d.runs, d.runs.c.job_id.in_(jobs))]
     mine = {row[k] for k in ("drawing_artifact_id", "model_artifact_id", "preview_artifact_id") if row[k]}
+    mine |= presentation.artifacts(row["presentation"])
+    mine |= {a for job in scene_jobs for a in presentation.artifacts(job["result"])}
     mine |= {a for step in repo.list(d.steps, d.steps.c.run_id.in_(runs)) for a in PICTURE.findall(json.dumps(step["request"]))}
     with d.transaction(repo.engine) as con:
         con.execute(d.studio_scenes.delete().where(d.studio_scenes.c.id == ident))
@@ -191,6 +203,8 @@ def delete(ident) -> None:
         con.execute(d.resource_leases.delete().where(d.resource_leases.c.job_id.in_(jobs)))
         con.execute(d.jobs.delete().where(d.jobs.c.id.in_(jobs)))
         kept = {r[k] for r in con.execute(sa.select(d.studio_scenes)).mappings() for k in ("drawing_artifact_id", "model_artifact_id", "preview_artifact_id") if r[k]}
+        kept |= {a for r in con.execute(sa.select(d.studio_scenes.c.presentation)) for a in presentation.artifacts(r[0])}
+        kept |= {a for r in con.execute(sa.select(d.jobs.c.result)) for a in presentation.artifacts(r[0])}
         kept |= {a for r in con.execute(sa.select(d.steps.c.request)) for a in PICTURE.findall(json.dumps(r[0]))}
         unused = mine - kept
         con.execute(d.artifacts.delete().where(d.artifacts.c.id.in_(unused)))
@@ -379,4 +393,4 @@ def run_job(repo, fence, job, gateway):
     repo.end(fence, "succeeded", {"scene_id": ident})
 
 
-JOBS = {"studio_build": run_job, "studio_measure": measure}
+JOBS = {"studio_build": run_job, "studio_measure": measure, "studio_render": presentation.run_job}

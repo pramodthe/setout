@@ -136,7 +136,7 @@ class Repository:
         self._event(con, ident, "queued")
         return row(con, d.jobs, ident)
 
-    def claim(self, owner, only_ids=None):
+    def claim(self, owner, only_ids=None, kinds=None):
         with d.transaction(self.engine) as con:
             at = d.now(con)
             expired = con.execute(sa.select(d.jobs).where(d.jobs.c.state == "running",
@@ -151,7 +151,8 @@ class Repository:
                     con.execute(d.runs.update().where(d.runs.c.job_id == job["id"]).values(outcome=state))
                 self._event(con, job["id"], state, "worker lease expired")
             job = con.execute(sa.select(d.jobs).where(d.jobs.c.state == "queued",
-                         d.jobs.c.available_at <= at, d.jobs.c.id.in_(only_ids) if only_ids else sa.true())
+                         d.jobs.c.available_at <= at, d.jobs.c.id.in_(only_ids) if only_ids else sa.true(),
+                         d.jobs.c.kind.in_(kinds) if kinds is not None else sa.true())
                          .order_by(d.jobs.c.created_at, d.jobs.c.id)
                          .limit(1)).mappings().first()
             if not job:

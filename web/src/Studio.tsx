@@ -41,6 +41,8 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
   const [busy, setBusy] = useState(false);
   const [shot, setShot] = useState(0);
   const [current, setCurrent] = useState<View>("iso");
+  const [display, setDisplay] = useState<"3d" | "render">("3d");
+  const modelLoaded = useRef<Promise<void> | null>(null);
   const feedEnd = useRef<HTMLDivElement>(null);
 
   const refreshList = useCallback(async () => {
@@ -50,25 +52,40 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
   useEffect(() => { void refreshList().catch(() => {}); }, [refreshList, sceneId]);
 
   const working = scene?.state === "working";
+  const rendering = ["queued", "running"].includes(scene?.presentation?.state ?? "");
   useEffect(() => {
     if (!sceneId) return;
     return watchScene(`/api/studio/${encodeURIComponent(sceneId)}`, (found) => {
       setScene(found);
       setShot(found.updated_at);
     }, setLoadError);
-  }, [sceneId, working]);
+  }, [sceneId, working, rendering]);
   useEffect(() => { feedEnd.current?.scrollIntoView?.({ block: "end" }); }, [scene?.feed.length]);
 
   const ready = scene?.state === "ready" && !!scene.model_artifact_id;
   const viewable = ready || !!scene?.live_model;
   const model = viewable && scene ? `/api/studio/${scene.id}/model.glb?v=${scene.model_artifact_id}` : null;
+  const finished = scene?.presentation?.state === "succeeded" ? scene.presentation : null;
+  const surface = model && finished?.surface_artifact_id ? `/api/studio/${sceneId}/surface.glb?v=${finished.surface_artifact_id}` : null;
+  const render = finished?.render_artifact_id ? `/api/studio/${sceneId}/render?v=${finished.render_artifact_id}` : null;
+  const showingRender = display === "render" && !!render;
   useEffect(() => {
     if (!model || !stage.current) return;
     const created = new StudioViewport(stage.current, setSelected);
     view.current = created;
-    void created.load(model).catch((e: Error) => setError(e.message));
+    modelLoaded.current = created.load(model);
+    void modelLoaded.current.catch((e: Error) => setError(e.message));
     return () => { created.dispose(); view.current = null; };
   }, [model]);
+  useEffect(() => {
+    const created = view.current;
+    let cancelled = false;
+    if (surface && created) void modelLoaded.current?.then(async () => {
+      if (!cancelled) await created.load(surface, true);
+    }).catch(() => { /* Keep the original model if its surface download fails. */ });
+    return () => { cancelled = true; };
+  }, [model, surface]);
+  useEffect(() => { view.current?.setVisible(!showingRender); }, [model, showingRender]);
 
   const upload = async (file: File, method: "serial" | "hybrid") => {
     setError(null);
@@ -84,8 +101,9 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
     }
   };
 
-  const select = (name: string | null) => { setSelected(name); view.current?.select(name); };
+  const select = (name: string | null) => { setDisplay("3d"); setSelected(name); view.current?.select(name); };
   const hide = (names: string[], off: boolean) => {
+    setDisplay("3d");
     setHidden((held) => { const next = new Set(held); names.forEach((n) => (off ? next.add(n) : next.delete(n))); return next; });
     view.current?.setHidden(names, off);
   };
@@ -93,6 +111,7 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
   const chooseLook = () => { const next = look === "clay" ? "material" : "clay"; setLook(next); view.current?.setLook(next); };
   const pick = (name: View) => { setCurrent(name); view.current?.setView(name); };
   const play = () => {
+    setDisplay("3d");
     if (playing !== null) { view.current?.stopPlay(); setPlaying(null); return; }
     setPlaying(0);
     void view.current?.play((step) => setPlaying(step < 0 ? null : step));
@@ -139,7 +158,7 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
   const right = (
     <>
       {scene && !working && <button className="icon" aria-label="Delete this scene" title="Delete" onClick={() => setDoomed({ id: scene.id, title: scene.title })}>{ICONS.trash}</button>}
-      <a className="icon" href={ready ? `/api/studio/${scene.id}/model.glb` : undefined} download="detail.glb" aria-label="Download model" title="Download GLB" aria-disabled={!ready}>{ICONS.download}</a>
+      <a className="icon" href={ready ? (showingRender ? render! : surface ?? model!) : undefined} download={showingRender ? "detail.jpg" : "detail.glb"} aria-label={showingRender ? "Download render" : "Download model"} title={showingRender ? "Download image" : "Download GLB"} aria-disabled={!ready}>{ICONS.download}</a>
       <button className={`icon${panel ? " on" : ""}`} aria-label="Toggle the side panel" aria-pressed={panel} onClick={() => setPanel(!panel)}>{ICONS.panel}</button>
       <button className="solid" onClick={play} disabled={!ready}>{playing !== null ? "Stop" : "Play build"}<span className="square">{playing !== null ? ICONS.stop : ICONS.play}</span></button>
     </>
@@ -162,7 +181,14 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
       </AppBar>
       <div className={`work${panel ? "" : " wide"}`}>
         <div className="stagewrap">
-          <div ref={stage} className="gl" />
+          <div ref={stage} className={`gl${showingRender ? " concealed" : ""}`} aria-hidden={showingRender} />
+          {showingRender && <figure className="presentation"><img src={render!} alt={`Studio render of ${scene?.title}`} /><figcaption>Full assembly · Studio lighting</figcaption></figure>}
+          {viewable && (render || rendering || scene?.presentation?.state === "failed") && <div className="presentation-tools">
+            {render ? <div className="view-switch" role="group" aria-label="Presentation view">
+              <button aria-pressed={!showingRender} onClick={() => setDisplay("3d")}>3D</button>
+              <button aria-pressed={showingRender} onClick={() => { view.current?.stopPlay(); setPlaying(null); setDisplay("render"); }}>Render</button>
+            </div> : <span className="render-status" role="status">{rendering ? "Preparing studio render…" : "Render unavailable · 3D is ready"}</span>}
+          </div>}
           {unbuilt && (
             <div className="liveshot">
               {scene?.preview_artifact_id
@@ -176,7 +202,7 @@ export default function Studio({ sceneId }: { sceneId: string | null }): JSX.Ele
           {error && <div className="alert" role="alert">{error}</div>}
           {!error && loadError && <div className="alert" role="status">{loadError}</div>}
           {scene?.state === "failed" && <div className="alert" role="alert">{scene.error}</div>}
-          {viewable && (
+          {viewable && !showingRender && (
             <>
               <div className="rail" role="toolbar" aria-label="View tools">
                 <button className={`icon${tool === "select" ? " on" : ""}`} aria-label="Select parts" data-tip="Select parts" onClick={() => chooseTool("select")}>{ICONS.pointer}</button>

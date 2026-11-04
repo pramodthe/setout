@@ -20,7 +20,7 @@ export function watchScene(url: string, onScene: (scene: Scene) => void, onError
       if (stopped) return;
       onScene(scene);
       onError(null);
-      again = scene.state === "working";
+      again = scene.state === "working" || ["queued", "running"].includes(scene.presentation?.state ?? "");
     } catch {
       if (!stopped) onError("Connection lost. Reconnecting…");
     } finally {

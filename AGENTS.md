@@ -26,6 +26,7 @@ python -m pytest tests/ -q               # offline regression suite
 ```
 
 Live builds require Modal authentication and `modal deploy builder/sandbox.py`; redeploy after sandbox changes. Kit changes travel with each call.
+Optional finishing uses `SETOUT_RENDERER=local` with Blender, or `modal` after `modal deploy builder/render_sandbox.py`. It runs separately from builds and never executes generated Python locally.
 
 ## Coding Style & Naming Conventions
 

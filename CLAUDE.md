@@ -165,8 +165,16 @@ How it fits together, and what isn't obvious from any one file:
 - **Long CPU work on the server starves the job heartbeat,** and a job loses its lease. Keep it out of the worker.
 - **Muse reads alone.** Examples in its prompt make it copy them onto a different drawing.
 - **Image embeddings can't compare line drawings.** To an image model they all look alike.
-- **Colours:** Blender's renders have procedural surfaces, and the GLB carries plain colours
-  (`flatten_materials`). The shapes are the same.
+- **Presentation is optional.** `SETOUT_RENDERER=local|modal` queues a `studio_render` job atomically when
+  a model becomes ready. A separate worker lane keeps rendering out of the build queue. The trusted
+  `builder/presentation.py` reads only embedded GLB data, never generated Python. It bakes generic surface
+  textures, preserves mesh geometry and part metadata, and renders one still. Unknown or textured materials
+  stay intact. Original geometry, checker reports and measurements remain unchanged. The frontend upgrades
+  surfaces in place and offers a 3D/Render switch; a failure keeps the original model usable. Source model ids,
+  job fencing and a renderer version prevent stale results. Artifacts and timings live in `presentation` and
+  job logs. Local rendering needs Blender; Modal uses the separate `setout-presentation` app, deployed with
+  `modal deploy builder/render_sandbox.py`. The still uses fixed studio lighting; it doesn't reproduce hidden
+  parts or an exploded view. The base GLB stays at `/model.glb`; finished assets are `/surface.glb` and `/render`.
 - **Schema changes need a migration.** `tests/test_migrations.py` fails when `app/database.py` and
   `migrations/` differ. Migrations run when `Repository` opens the store, and a store whose revision is no longer in
   `migrations/` is refused, not upgraded.

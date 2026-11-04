@@ -3,6 +3,18 @@ import { setImmediate } from "node:timers/promises";
 import { test } from "node:test";
 import { watchScene } from "../src/scenePolling.ts";
 
+for (const terminal of ["succeeded", "failed"]) test(`ready scenes keep polling while rendering, then stop on ${terminal}`, async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const states = ["queued", "running", terminal];
+  const fetch = t.mock.method(globalThis, "fetch", async () => Response.json({ state: "ready", presentation: { state: states.shift() } }));
+  const seen: string[] = [];
+  t.after(watchScene("/scene", (scene) => seen.push(scene.presentation!.state), () => {}));
+  await setImmediate();
+  for (let i = 0; i < 3; i++) { t.mock.timers.tick(2000); await setImmediate(); }
+  assert.deepEqual(seen, ["queued", "running", terminal]);
+  assert.equal(fetch.mock.callCount(), 3);
+});
+
 test("an initial network failure retries and clears its message on recovery", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   let calls = 0;

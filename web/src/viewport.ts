@@ -21,6 +21,21 @@ const SLENDER = 0.15;  /* a tall part this thin, against its height, is left out
 
 type Part = { mesh: THREE.Mesh; own: THREE.Material | THREE.Material[]; edges: THREE.LineSegments; home: THREE.Vector3; push: THREE.Vector3; step: number };
 
+function release(root: THREE.Object3D, extra: THREE.Material[] = []): void {
+  const materials = new Set(extra);
+  const textures = new Set<THREE.Texture>();
+  root.traverse((node) => {
+    const mesh = node as THREE.Mesh;
+    mesh.geometry?.dispose();
+    if (mesh.material) (Array.isArray(mesh.material) ? mesh.material : [mesh.material]).forEach((m) => materials.add(m));
+  });
+  for (const material of materials) {
+    for (const value of Object.values(material)) if (value instanceof THREE.Texture) textures.add(value);
+    material.dispose();
+  }
+  textures.forEach((texture) => texture.dispose());
+}
+
 export class StudioViewport {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
@@ -44,9 +59,12 @@ export class StudioViewport {
   private look: Look = "material";
   private spread = 0;
   private playing = 0;
+  private playStep: number | null = null;
+  private visible = true;
   private frameId = 0;
   private downAt: [number, number] | null = null;
   private observer: ResizeObserver;
+  private disposed = false;
 
   private host: HTMLElement;
   private onPick: (name: string | null) => void;
@@ -87,14 +105,18 @@ export class StudioViewport {
     this.observer = new ResizeObserver(() => this.resize());
     this.observer.observe(host);
     this.resize();
-    const loop = () => { this.frameId = requestAnimationFrame(loop); this.controls.update(); this.renderer.render(this.scene, this.camera); };
+    const loop = () => { this.frameId = requestAnimationFrame(loop); if (this.visible) { this.controls.update(); this.renderer.render(this.scene, this.camera); } };
     loop();
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.stopPlay();
     cancelAnimationFrame(this.frameId);
     this.observer.disconnect();
     this.controls.dispose();
+    release(this.scene, [...this.parts.values()].flatMap((part) => Array.isArray(part.own) ? part.own : [part.own]));
+    this.scene.environment?.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
@@ -108,11 +130,13 @@ export class StudioViewport {
     this.fitOrtho();
   }
 
-  async load(url: string): Promise<void> {
+  async load(url: string, preserveView = false): Promise<void> {
     const gltf = await new GLTFLoader().loadAsync(url);
+    if (this.disposed) { release(gltf.scene); return; }
+    release(this.root, [...this.parts.values()].flatMap((part) => Array.isArray(part.own) ? part.own : [part.own]));
     this.root.clear();
     this.parts.clear();
-    this.hidden.clear();
+    if (!preserveView) this.hidden.clear();
     this.root.add(gltf.scene);
     gltf.scene.updateMatrixWorld(true);
     this.box.setFromObject(gltf.scene);
@@ -129,6 +153,7 @@ export class StudioViewport {
       const thin = new THREE.Box3().setFromObject(mesh).getSize(new THREE.Vector3()).toArray().sort((a, b) => a - b)[0] < THIN;
       const own = (m: THREE.Material) => {
         const held = m.clone() as THREE.MeshStandardMaterial;
+        for (const texture of [held.map, held.normalMap, held.roughnessMap]) if (texture) texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
         held.side = THREE.DoubleSide;
         held.envMapIntensity = 0.55;
         held.polygonOffset = thin;
@@ -148,7 +173,7 @@ export class StudioViewport {
     this.ground.position.y = this.box.min.y - 0.002;
     this.setLook(this.look);
     this.apply();
-    this.setView("iso");
+    if (!preserveView) this.setView("iso");
   }
 
   /* What to frame: the whole model, less anything tall and thin standing above the rest, such as a door over a sill. A tall mass of concrete is the detail, and stays. */
@@ -176,7 +201,7 @@ export class StudioViewport {
 
   private apply(): void {
     for (const [name, part] of this.parts) {
-      part.mesh.visible = !this.hidden.has(name);
+      part.mesh.visible = !this.hidden.has(name) && (this.playStep === null || part.step <= this.playStep);
       part.mesh.position.copy(part.home).addScaledVector(part.push, this.spread);
       this.tint(name);
     }
@@ -215,6 +240,8 @@ export class StudioViewport {
     this.tool = tool;
     this.controls.mouseButtons = { LEFT: tool === "pan" ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
   }
+
+  setVisible(visible: boolean): void { this.visible = visible; this.controls.enabled = visible; }
 
   setSpread(share: number): void { this.spread = share; this.apply(); }
 
@@ -288,18 +315,22 @@ export class StudioViewport {
   async play(onStep: (step: number) => void): Promise<void> {
     const run = ++this.playing;
     const steps = [...new Set([...this.parts.values()].map((p) => p.step))].sort((a, b) => a - b);
-    for (const part of this.parts.values()) part.mesh.visible = false;
+    this.playStep = 0;
+    this.apply();
     for (const step of steps) {
       if (run !== this.playing) return;
+      this.playStep = step;
       onStep(step);
-      for (const [name, part] of this.parts) if (part.step === step && !this.hidden.has(name)) part.mesh.visible = true;
+      this.apply();
       await new Promise((done) => setTimeout(done, STEP_MS));
     }
+    if (run !== this.playing) return;
+    this.playStep = null;
     this.apply();
     onStep(-1);
   }
 
-  stopPlay(): void { this.playing++; this.apply(); }
+  stopPlay(): void { this.playing++; this.playStep = null; this.apply(); }
 
   private pick(e: PointerEvent): string | null {
     const rect = this.renderer.domElement.getBoundingClientRect();

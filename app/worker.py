@@ -12,14 +12,15 @@ from . import database as d, studio
 
 
 class Worker:
-    def __init__(self, repo, responder=None):
+    def __init__(self, repo, responder=None, kinds=None):
         self.repo = repo
         self.owner = uuid.uuid4().hex
         self.responder = responder
+        self.kinds = kinds
         self.stop = threading.Event()
 
     def run_once(self, only_ids=None):
-        fence = self.repo.claim(self.owner, only_ids)
+        fence = self.repo.claim(self.owner, only_ids, kinds=self.kinds)
         if fence is None:
             return False
         heartbeat_stop = threading.Event()
@@ -75,12 +76,22 @@ class Worker:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--once", action="store_true")
+    parser.add_argument("--lane", choices=("all", "build", "render"), default="all")
     args = parser.parse_args()
-    worker = Worker(Repository())
+    repo = Repository()
+    kinds = {"build": ("studio_build", "studio_measure"), "render": ("studio_render",)}
+    worker = Worker(repo, kinds=kinds.get(args.lane))
     if args.once:
         worker.run_once()
     else:
+        render_worker = None
+        if args.lane == "all":
+            worker.kinds = kinds["build"]
+            render_worker = Worker(repo, kinds=kinds["render"])
+            threading.Thread(target=render_worker.serve, daemon=True, name="setout-render-worker").start()
         try:
             worker.serve()
         except KeyboardInterrupt:
             worker.stop.set()
+            if render_worker:
+                render_worker.stop.set()
